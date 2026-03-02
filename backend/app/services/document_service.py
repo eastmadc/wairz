@@ -1,4 +1,5 @@
 import hashlib
+import mimetypes
 import os
 import uuid
 
@@ -8,7 +9,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.models.document import Document
-from app.schemas.document import MAX_DOCUMENT_SIZE_MB, MAX_DOCUMENTS_PER_PROJECT
+from app.schemas.document import (
+    ALLOWED_EXTENSIONS,
+    MAX_DOCUMENT_SIZE_MB,
+    MAX_DOCUMENTS_PER_PROJECT,
+)
 
 
 class DocumentService:
@@ -164,6 +169,66 @@ class DocumentService:
             original_filename=filename,
             description=None,
             content_type="text/markdown",
+            file_size=file_size,
+            sha256=sha256,
+            storage_path=storage_path,
+        )
+        self.db.add(document)
+        await self.db.flush()
+        return document
+
+    async def create_document(
+        self,
+        project_id: uuid.UUID,
+        filename: str,
+        content: str,
+        description: str | None = None,
+    ) -> Document:
+        """Create a project document from a filename and text content."""
+        ext = os.path.splitext(filename)[1].lower()
+        if ext not in ALLOWED_EXTENSIONS:
+            raise ValueError(
+                f"File extension '{ext}' not allowed. "
+                f"Allowed: {', '.join(sorted(ALLOWED_EXTENSIONS))}"
+            )
+
+        # Check document count limit
+        count_result = await self.db.execute(
+            select(func.count()).select_from(Document).where(
+                Document.project_id == project_id,
+            )
+        )
+        current_count = count_result.scalar_one()
+        if current_count >= MAX_DOCUMENTS_PER_PROJECT:
+            raise ValueError(
+                f"Maximum of {MAX_DOCUMENTS_PER_PROJECT} documents per project reached"
+            )
+
+        content_bytes = content.encode("utf-8")
+        sha256 = hashlib.sha256(content_bytes).hexdigest()
+        file_size = len(content_bytes)
+
+        content_type = mimetypes.guess_type(filename)[0] or "text/plain"
+
+        safe_filename = filename.replace("/", "_").replace("\\", "_")
+
+        settings = get_settings()
+        doc_id = uuid.uuid4()
+        storage_dir = os.path.join(
+            settings.storage_root, "projects", str(project_id), "documents"
+        )
+        os.makedirs(storage_dir, exist_ok=True)
+        storage_path = os.path.join(storage_dir, f"{doc_id}_{safe_filename}")
+
+        with open(storage_path, "w", encoding="utf-8") as f:
+            f.write(content)
+
+        document = Document(
+            id=doc_id,
+            project_id=project_id,
+            original_filename=filename,
+            description=description,
+            content_type=content_type,
             file_size=file_size,
             sha256=sha256,
             storage_path=storage_path,

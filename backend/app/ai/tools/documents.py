@@ -46,6 +46,37 @@ def register_document_tools(registry: ToolRegistry) -> None:
     )
 
     registry.register(
+        name="save_document",
+        description=(
+            "Save a document (script, code, notes, etc.) to the current project. "
+            "Use this to persist POC exploit scripts, analysis notes, configuration files, "
+            "or any other text artifacts. The document will appear in the project's "
+            "documents list and can be downloaded from the web UI. "
+            "Allowed extensions: .py, .sh, .bash, .js, .ts, .c, .h, .cpp, .rs, .go, .java, "
+            ".yaml, .yml, .toml, .ini, .cfg, .rb, .pl, .lua, .txt, .md, .csv, .json, .xml, .html."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "filename": {
+                    "type": "string",
+                    "description": "Filename with extension, e.g. 'poc_exploit.py', 'analysis_notes.md'",
+                },
+                "content": {
+                    "type": "string",
+                    "description": "The text content of the document",
+                },
+                "description": {
+                    "type": "string",
+                    "description": "Optional description of the document's purpose",
+                },
+            },
+            "required": ["filename", "content"],
+        },
+        handler=_handle_save_document,
+    )
+
+    registry.register(
         name="read_project_instructions",
         description=(
             "Read the WAIRZ.md project instructions file. "
@@ -93,6 +124,37 @@ def register_document_tools(registry: ToolRegistry) -> None:
             "required": ["document_id"],
         },
         handler=_handle_read_document,
+    )
+
+
+async def _handle_save_document(input: dict, context: ToolContext) -> str:
+    filename = input.get("filename", "").strip()
+    content = input.get("content", "")
+    description = input.get("description")
+
+    if not filename:
+        return "Error: filename is required."
+    if not content:
+        return "Error: content is required and cannot be empty."
+
+    svc = DocumentService(context.db)
+    try:
+        document = await svc.create_document(
+            project_id=context.project_id,
+            filename=filename,
+            content=content,
+            description=description,
+        )
+    except ValueError as exc:
+        return f"Error: {exc}"
+
+    size_kb = document.file_size / 1024
+    return (
+        f"Document saved successfully.\n"
+        f"  Filename: {document.original_filename}\n"
+        f"  Size: {size_kb:.1f} KB\n"
+        f"  Type: {document.content_type}\n"
+        f"  ID: {document.id}"
     )
 
 
