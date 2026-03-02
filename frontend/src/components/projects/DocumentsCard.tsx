@@ -22,7 +22,7 @@ import { formatFileSize, formatDate } from '@/utils/format'
 import type { ProjectDocument } from '@/types'
 
 const MAX_DOCUMENTS = 20
-const ALLOWED_EXTENSIONS = '.txt,.md,.pdf,.doc,.docx,.csv,.json,.xml,.html'
+const ALLOWED_EXTENSIONS = '.txt,.md,.pdf,.doc,.docx,.csv,.json,.xml,.html,.py,.sh,.bash,.js,.ts,.c,.h,.cpp,.rs,.go,.java,.yaml,.yml,.toml,.ini,.cfg,.rb,.pl,.lua'
 
 interface DocumentsCardProps {
   projectId: string

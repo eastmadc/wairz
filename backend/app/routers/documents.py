@@ -57,7 +57,13 @@ async def upload_document(
     return document
 
 
-EDITABLE_EXTENSIONS = {".md", ".txt", ".json", ".xml", ".html", ".csv"}
+EDITABLE_EXTENSIONS = {
+    ".md", ".txt", ".json", ".xml", ".html", ".csv",
+    ".py", ".sh", ".bash", ".js", ".ts",
+    ".c", ".h", ".cpp", ".rs", ".go", ".java",
+    ".yaml", ".yml", ".toml", ".ini", ".cfg",
+    ".rb", ".pl", ".lua",
+}
 
 
 @router.post("/notes", response_model=DocumentResponse, status_code=201)

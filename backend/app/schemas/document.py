@@ -7,6 +7,10 @@ from pydantic import BaseModel
 ALLOWED_EXTENSIONS = {
     ".txt", ".md", ".pdf", ".doc", ".docx",
     ".csv", ".json", ".xml", ".html",
+    ".py", ".sh", ".bash", ".js", ".ts",
+    ".c", ".h", ".cpp", ".rs", ".go", ".java",
+    ".yaml", ".yml", ".toml", ".ini", ".cfg",
+    ".rb", ".pl", ".lua",
 }
 
 MAX_DOCUMENT_SIZE_MB = 10
