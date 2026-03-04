@@ -151,14 +151,20 @@ For live device access via UART, run the bridge on the host machine (USB serial 
 
 ```bash
 pip install pyserial
-python scripts/wairz-uart-bridge.py --port /dev/ttyUSB0 --baud 115200
+python3 scripts/wairz-uart-bridge.py --bind 0.0.0.0 --port 9999
 ```
 
-The bridge listens on TCP port 9999. The Docker backend connects to it via `host.docker.internal`. You may need to allow Docker bridge traffic:
+The bridge is a TCP server — the serial device path and baud rate are specified via the `uart_connect` MCP tool, not on the command line.
+
+On Linux, allow Docker traffic to reach the bridge and ensure `.env` is configured correctly:
 
 ```bash
-sudo iptables -A INPUT -i docker0 -p tcp --dport 9999 -j ACCEPT
+sudo iptables -I INPUT -p tcp --dport 9999 -j ACCEPT
 ```
+
+`UART_BRIDGE_HOST` in `.env` must be `host.docker.internal` (not `localhost`). Restart the backend after changing `.env`: `docker compose restart backend`.
+
+See [UART Console docs](docs/features/uart.md) for full setup details.
 
 ## Tech Stack
 

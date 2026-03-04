@@ -34,7 +34,8 @@ export default function McpConnectionCard({ projectId }: McpConnectionCardProps)
 
   const claudeCodeCmd = `claude mcp add wairz -- docker exec -i ${containerName} uv run wairz-mcp --project-id ${projectId}`
 
-  const uartBridgeCmd = 'python scripts/wairz-uart-bridge.py --bind 0.0.0.0 --port 9999'
+  const uartBridgeCmd = 'python3 scripts/wairz-uart-bridge.py --bind 0.0.0.0 --port 9999'
+  const iptablesCmd = 'sudo iptables -I INPUT -p tcp --dport 9999 -j ACCEPT'
 
   const claudeDesktopConfig = JSON.stringify(
     {
@@ -169,15 +170,35 @@ export default function McpConnectionCard({ projectId }: McpConnectionCardProps)
             </pre>
           </div>
 
+          <div className="space-y-1.5">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-medium text-muted-foreground">3. Allow Docker traffic to the bridge</span>
+              <CopyButton text={iptablesCmd} id="uart-iptables" />
+            </div>
+            <pre className="rounded bg-muted p-2.5 text-xs overflow-x-auto whitespace-pre-wrap break-all">
+              {iptablesCmd}
+            </pre>
+            <p className="text-xs text-muted-foreground">
+              Required on Linux so the Docker container can reach the bridge on the host.
+              This rule is not persisted across reboots.
+            </p>
+          </div>
+
           <p className="text-xs text-muted-foreground">
             The bridge must bind to <code className="bg-muted px-1 rounded">0.0.0.0</code> so
-            the Docker container can reach it. Once running, Claude can use UART tools
-            (<code className="bg-muted px-1 rounded">uart_connect</code>,{' '}
-            <code className="bg-muted px-1 rounded">uart_send_command</code>, etc.)
-            to interact with the device.
+            the Docker container can reach it. Ensure{' '}
+            <code className="bg-muted px-1 rounded">UART_BRIDGE_HOST=host.docker.internal</code>{' '}
+            is set in your <code className="bg-muted px-1 rounded">.env</code> file (not{' '}
+            <code className="bg-muted px-1 rounded">localhost</code>, which refers to the container itself).
+            If you change <code className="bg-muted px-1 rounded">.env</code>, restart the backend:{' '}
+            <code className="bg-muted px-1 rounded">docker compose restart backend</code>.
           </p>
 
           <p className="text-xs text-muted-foreground">
+            Once running, Claude can use UART tools
+            (<code className="bg-muted px-1 rounded">uart_connect</code>,{' '}
+            <code className="bg-muted px-1 rounded">uart_send_command</code>, etc.)
+            to interact with the device.
             Common serial devices:{' '}
             <code className="bg-muted px-1 rounded">/dev/ttyUSB0</code>,{' '}
             <code className="bg-muted px-1 rounded">/dev/ttyACM0</code>.{' '}
