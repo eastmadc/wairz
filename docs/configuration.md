@@ -51,8 +51,10 @@ cp .env.example .env
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `UART_BRIDGE_HOST` | `host.docker.internal` | Hostname of the UART bridge on the host machine |
+| `UART_BRIDGE_HOST` | `host.docker.internal` | Hostname of the UART bridge on the host machine. Must **not** be `localhost` (that refers to the container itself). |
 | `UART_BRIDGE_PORT` | `9999` | TCP port the UART bridge listens on |
+
+> **Important:** After changing UART bridge settings, restart the backend: `docker compose restart backend`. You may also need an iptables rule to allow Docker traffic: `sudo iptables -I INPUT -p tcp --dport 9999 -j ACCEPT`.
 
 ### External APIs
 

@@ -111,6 +111,27 @@ Emulation troubleshooting — follow this workflow when emulation fails:
    - Check what's listening: 'netstat -tlnp' or parse /proc/net/tcp if netstat is unavailable
 5. If all else fails, fall back to user-mode emulation for testing individual binaries
 
+UART serial console (live device interaction):
+- The UART tools let you interact with a physical device's serial console through a host-side bridge
+- Architecture: USB-UART adapter → host machine → wairz-uart-bridge.py (TCP:9999) → Docker backend → MCP tools
+- The bridge runs on the HOST (not in Docker) because USB serial adapters can't easily pass through to containers
+- The bridge is a plain TCP server — it does NOT take a serial device path on the command line
+- The device_path (e.g. /dev/ttyUSB0) and baudrate are specified when calling uart_connect, NOT when starting the bridge
+
+Setup instructions to give the user:
+1. Start the bridge on the host: python3 scripts/wairz-uart-bridge.py --bind 0.0.0.0 --port 9999
+2. The bridge will print "UART bridge listening on ..." when ready
+
+If uart_connect or uart_status returns "Bridge unreachable", instruct the user to check these things:
+1. Is the bridge running? (user should see the "listening" message)
+2. UART_BRIDGE_HOST in .env must be 'host.docker.internal' (NOT 'localhost') — the backend runs in Docker and 'localhost' refers to the container itself
+3. An iptables rule is needed to allow Docker bridge traffic to reach the host:
+   sudo iptables -I INPUT -i docker0 -p tcp --dport 9999 -j ACCEPT
+4. After changing .env, restart the backend: docker compose restart backend
+5. After restarting the backend, the user must reconnect MCP (e.g. /mcp in Claude Code)
+
+Once connected, use uart_send_command for interactive shell commands, uart_read for passive output capture (boot logs), and uart_send_break to interrupt U-Boot autoboot. Always uart_disconnect when done.
+
 Automated fuzzing:
 - Use AFL++ in QEMU mode to automatically discover crashes in firmware binaries
 - Workflow: analyze_fuzzing_target → generate_fuzzing_dictionary → generate_seed_corpus → start_fuzzing_campaign → check_fuzzing_status → triage_fuzzing_crash → add_finding

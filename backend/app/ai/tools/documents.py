@@ -52,6 +52,8 @@ def register_document_tools(registry: ToolRegistry) -> None:
             "Use this to persist POC exploit scripts, analysis notes, configuration files, "
             "or any other text artifacts. The document will appear in the project's "
             "documents list and can be downloaded from the web UI. "
+            "If a document with the same filename already exists, it will be updated "
+            "in-place rather than creating a duplicate. "
             "Allowed extensions: .py, .sh, .bash, .js, .ts, .c, .h, .cpp, .rs, .go, .java, "
             ".yaml, .yml, .toml, .ini, .cfg, .rb, .pl, .lua, .txt, .md, .csv, .json, .xml, .html."
         ),
@@ -137,6 +139,15 @@ async def _handle_save_document(input: dict, context: ToolContext) -> str:
     if not content:
         return "Error: content is required and cannot be empty."
 
+    # Check if a document with this filename already exists (to report create vs update)
+    existing_result = await context.db.execute(
+        select(Document).where(
+            Document.project_id == context.project_id,
+            Document.original_filename == filename,
+        )
+    )
+    is_update = existing_result.scalar_one_or_none() is not None
+
     svc = DocumentService(context.db)
     try:
         document = await svc.create_document(
@@ -148,9 +159,10 @@ async def _handle_save_document(input: dict, context: ToolContext) -> str:
     except ValueError as exc:
         return f"Error: {exc}"
 
+    action = "updated" if is_update else "created"
     size_kb = document.file_size / 1024
     return (
-        f"Document saved successfully.\n"
+        f"Document {action} successfully.\n"
         f"  Filename: {document.original_filename}\n"
         f"  Size: {size_kb:.1f} KB\n"
         f"  Type: {document.content_type}\n"

@@ -184,7 +184,11 @@ class DocumentService:
         content: str,
         description: str | None = None,
     ) -> Document:
-        """Create a project document from a filename and text content."""
+        """Create or update a project document from a filename and text content.
+
+        If a document with the same filename already exists in the project,
+        it is updated in-place rather than creating a duplicate.
+        """
         ext = os.path.splitext(filename)[1].lower()
         if ext not in ALLOWED_EXTENSIONS:
             raise ValueError(
@@ -192,7 +196,35 @@ class DocumentService:
                 f"Allowed: {', '.join(sorted(ALLOWED_EXTENSIONS))}"
             )
 
-        # Check document count limit
+        content_bytes = content.encode("utf-8")
+        sha256 = hashlib.sha256(content_bytes).hexdigest()
+        file_size = len(content_bytes)
+        content_type = mimetypes.guess_type(filename)[0] or "text/plain"
+
+        # Check if a document with this filename already exists
+        result = await self.db.execute(
+            select(Document).where(
+                Document.project_id == project_id,
+                Document.original_filename == filename,
+            )
+        )
+        existing = result.scalar_one_or_none()
+
+        if existing is not None:
+            # Update existing document in-place
+            existing.sha256 = sha256
+            existing.file_size = file_size
+            existing.content_type = content_type
+            if description is not None:
+                existing.description = description
+
+            with open(existing.storage_path, "w", encoding="utf-8") as f:
+                f.write(content)
+
+            await self.db.flush()
+            return existing
+
+        # New document — check count limit
         count_result = await self.db.execute(
             select(func.count()).select_from(Document).where(
                 Document.project_id == project_id,
@@ -203,12 +235,6 @@ class DocumentService:
             raise ValueError(
                 f"Maximum of {MAX_DOCUMENTS_PER_PROJECT} documents per project reached"
             )
-
-        content_bytes = content.encode("utf-8")
-        sha256 = hashlib.sha256(content_bytes).hexdigest()
-        file_size = len(content_bytes)
-
-        content_type = mimetypes.guess_type(filename)[0] or "text/plain"
 
         safe_filename = filename.replace("/", "_").replace("\\", "_")
 

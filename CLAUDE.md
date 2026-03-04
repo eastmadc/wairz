@@ -184,12 +184,30 @@ The server uses a mutable `ProjectState` dataclass so all project context (proje
 
 ## UART Bridge Architecture
 
-The bridge runs on the host (not in Docker) because USB serial adapters can't easily pass through to containers:
+The bridge runs on the host (not in Docker) because USB serial adapters can't easily pass through to containers.
 
-- **Host:** `scripts/wairz-uart-bridge.py` (standalone, only requires pyserial) listens on TCP 9999
-- **Docker:** `uart_service.py` connects to bridge via `host.docker.internal`
+**How it works:**
+- **Host:** `scripts/wairz-uart-bridge.py` is a standalone TCP server (only requires pyserial). It listens on TCP 9999 and proxies serial I/O.
+- **Docker:** `uart_service.py` in the backend container connects to the bridge via `host.docker.internal:9999`
 - **Protocol:** Newline-delimited JSON, request/response matched by `id` field
-- Must bind to `0.0.0.0` for Docker connectivity; may need iptables rule for Docker bridge traffic
+- **Important:** The bridge does NOT take a serial device path or baudrate on its command line. Those are specified by the MCP `uart_connect` tool at connection time.
+
+**Starting the bridge:**
+```bash
+python3 scripts/wairz-uart-bridge.py --bind 0.0.0.0 --port 9999
+```
+The bridge will print "UART bridge listening on ..." when ready. It waits for connection commands from the backend.
+
+**Connecting via MCP:** Call `uart_connect` with the `device_path` (e.g., `/dev/ttyUSB0`) and `baudrate` (e.g., 115200). The backend sends these to the bridge, which opens the serial port.
+
+**Common setup issues (Bridge unreachable):**
+1. `UART_BRIDGE_HOST` in `.env` must be `host.docker.internal` (NOT `localhost` — `localhost` inside Docker refers to the container, not the host)
+2. An iptables rule is required to allow Docker bridge traffic to reach the host:
+   ```bash
+   sudo iptables -I INPUT -i docker0 -p tcp --dport 9999 -j ACCEPT
+   ```
+3. After changing `.env`, restart the backend: `docker compose restart backend`
+4. After restarting the backend, reconnect MCP (e.g., `/mcp` in Claude Code)
 
 ---
 

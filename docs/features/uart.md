@@ -29,8 +29,41 @@ pip install pyserial
 ### 2. Start the Bridge
 
 ```bash
-python scripts/wairz-uart-bridge.py --port /dev/ttyUSB0 --baud 115200
+python3 scripts/wairz-uart-bridge.py --bind 0.0.0.0 --port 9999
 ```
+
+The bridge is a TCP server — it does **not** take a serial device path or baud rate on the command line. Those are specified when the AI calls `uart_connect`.
+
+The bridge must bind to `0.0.0.0` so the Docker container can reach it.
+
+### 3. Allow Docker Traffic
+
+On Linux, you need to allow Docker bridge traffic to reach the bridge:
+
+```bash
+sudo iptables -I INPUT -p tcp --dport 9999 -j ACCEPT
+```
+
+> **Note:** This rule is not persisted across reboots. Re-run it after restarting.
+
+### 4. Verify `.env` Configuration
+
+Ensure your `.env` file has:
+
+```
+UART_BRIDGE_HOST=host.docker.internal
+UART_BRIDGE_PORT=9999
+```
+
+`UART_BRIDGE_HOST` must be `host.docker.internal`, **not** `localhost` — inside the Docker container, `localhost` refers to the container itself.
+
+If you change `.env`, restart the backend:
+
+```bash
+docker compose restart backend
+```
+
+### Reference
 
 Common serial devices:
 
@@ -40,14 +73,6 @@ Common serial devices:
 | macOS | `/dev/tty.usbserial-*` |
 
 Common baud rates: 115200 (most common), 9600, 57600, 38400.
-
-### 3. Allow Docker Traffic
-
-On Linux, you may need to allow Docker bridge traffic to reach the bridge:
-
-```bash
-sudo iptables -A INPUT -i docker0 -p tcp --dport 9999 -j ACCEPT
-```
 
 ## Using the Console
 
