@@ -9,12 +9,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.services.analysis_service import check_binary_protections
+from app.services.file_service import FileService
 from app.services.firmware_service import FirmwareService
 from app.services.ghidra_service import (
     decompile_function as ghidra_decompile,
     get_analysis_cache,
 )
-from app.utils.sandbox import validate_path
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +44,16 @@ async def _resolve_firmware(
     return firmware
 
 
+def _resolve_path(firmware, path: str) -> str:
+    """Resolve a virtual firmware path using FileService.
+
+    Handles virtual prefixes like /rootfs/ that the file explorer adds,
+    so analysis endpoints work consistently with the file browser.
+    """
+    svc = FileService(firmware.extracted_path, extraction_dir=firmware.extraction_dir)
+    return svc._resolve(path)
+
+
 @router.get("/functions")
 async def list_functions(
     path: str = Query(..., description="Path to ELF binary in firmware filesystem"),
@@ -52,7 +62,7 @@ async def list_functions(
 ):
     """List functions found in an ELF binary, sorted by size (largest first)."""
     try:
-        full_path = validate_path(firmware.extracted_path, path)
+        full_path = _resolve_path(firmware, path)
     except Exception:
         raise HTTPException(403, "Invalid path")
 
@@ -89,7 +99,7 @@ async def list_imports(
     function comes from which library.
     """
     try:
-        full_path = validate_path(firmware.extracted_path, path)
+        full_path = _resolve_path(firmware, path)
     except Exception:
         raise HTTPException(403, "Invalid path")
 
@@ -217,7 +227,7 @@ async def disassemble_function(
 ):
     """Disassemble a function from an ELF binary."""
     try:
-        full_path = validate_path(firmware.extracted_path, path)
+        full_path = _resolve_path(firmware, path)
     except Exception:
         raise HTTPException(403, "Invalid path")
 
@@ -246,7 +256,7 @@ async def get_binary_info(
 ):
     """Get binary metadata and security protections."""
     try:
-        full_path = validate_path(firmware.extracted_path, path)
+        full_path = _resolve_path(firmware, path)
     except Exception:
         raise HTTPException(403, "Invalid path")
 
@@ -276,7 +286,7 @@ async def get_cleaned_code(
 ):
     """Check if AI-cleaned decompiled code exists for a function."""
     try:
-        full_path = validate_path(firmware.extracted_path, path)
+        full_path = _resolve_path(firmware, path)
     except Exception:
         raise HTTPException(403, "Invalid path")
 
@@ -299,7 +309,7 @@ async def decompile_function(
 ):
     """Decompile a function from an ELF binary using Ghidra headless."""
     try:
-        full_path = validate_path(firmware.extracted_path, path)
+        full_path = _resolve_path(firmware, path)
     except Exception:
         raise HTTPException(403, "Invalid path")
 

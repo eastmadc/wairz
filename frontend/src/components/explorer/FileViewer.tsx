@@ -219,6 +219,7 @@ function BinaryTabs({
   const [imports, setImports] = useState<ImportInfo[]>([])
   const [functionsLoading, setFunctionsLoading] = useState(false)
   const [functionsLoaded, setFunctionsLoaded] = useState(false)
+  const [functionsError, setFunctionsError] = useState<string | null>(null)
   const [selectedFunction, setSelectedFunction] = useState<string | null>(null)
   const [disasm, setDisasm] = useState<string | null>(null)
   const [disasmLoading, setDisasmLoading] = useState(false)
@@ -234,6 +235,7 @@ function BinaryTabs({
     setFunctions([])
     setImports([])
     setFunctionsLoaded(false)
+    setFunctionsError(null)
     setSelectedFunction(null)
     setDisasm(null)
     setDecompilation(null)
@@ -249,6 +251,7 @@ function BinaryTabs({
       setActiveTab(tab)
       if (tab === 'functions' && !functionsLoaded && !functionsLoading && isElf) {
         setFunctionsLoading(true)
+        setFunctionsError(null)
         Promise.all([
           listFunctions(projectId, filePath),
           listImports(projectId, filePath).catch(() => ({ imports: [] as ImportInfo[] })),
@@ -258,7 +261,16 @@ function BinaryTabs({
             setImports(impResp.imports)
             setFunctionsLoaded(true)
           })
-          .catch(() => setFunctions([]))
+          .catch((err) => {
+            const detail = err?.response?.data?.detail
+            const status = err?.response?.status
+            if (status === 504 || (typeof detail === 'string' && detail.toLowerCase().includes('timed out'))) {
+              setFunctionsError('Analysis timed out — this binary may be too large. Try again or increase GHIDRA_TIMEOUT.')
+            } else {
+              setFunctionsError(typeof detail === 'string' ? detail : 'Failed to analyze binary.')
+            }
+            setFunctions([])
+          })
           .finally(() => setFunctionsLoading(false))
       }
       if (tab === 'decompile' && selectedFunction && decompilationFunction !== selectedFunction) {
@@ -324,6 +336,7 @@ function BinaryTabs({
             functions={functions}
             imports={imports}
             loading={functionsLoading}
+            error={functionsError}
             selectedFunction={selectedFunction}
             onSelectFunction={handleSelectFunction}
           />
@@ -366,12 +379,14 @@ function FunctionListPanel({
   functions,
   imports,
   loading,
+  error,
   selectedFunction,
   onSelectFunction,
 }: {
   functions: FunctionInfo[]
   imports: ImportInfo[]
   loading: boolean
+  error: string | null
   selectedFunction: string | null
   onSelectFunction: (name: string) => void
 }) {
@@ -405,7 +420,18 @@ function FunctionListPanel({
       <div className="flex flex-1 items-center justify-center">
         <div className="flex flex-col items-center gap-2 text-muted-foreground">
           <Loader2 className="h-5 w-5 animate-spin" />
-          <span className="text-xs">Analyzing binary (this may take 10-30s)…</span>
+          <span className="text-xs">Analyzing binary (this may take a few minutes for large binaries)…</span>
+        </div>
+      </div>
+    )
+  }
+
+  if (error) {
+    return (
+      <div className="flex flex-1 items-center justify-center">
+        <div className="flex flex-col items-center gap-3 px-4 text-center">
+          <AlertTriangle className="h-6 w-6 text-yellow-500" />
+          <p className="text-sm text-muted-foreground">{error}</p>
         </div>
       </div>
     )
