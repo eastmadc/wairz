@@ -806,6 +806,9 @@ function EmulationTerminal({ projectId, session, onClose }: EmulationTerminalPro
   const termRef = useRef<Terminal | null>(null)
   const fitAddonRef = useRef<FitAddon | null>(null)
   const wsRef = useRef<WebSocket | null>(null)
+  const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const reconnectAttemptRef = useRef(0)
+  const intentionalCloseRef = useRef(false)
 
   useEffect(() => {
     if (!containerRef.current || session.status !== 'running') return
@@ -848,51 +851,79 @@ function EmulationTerminal({ projectId, session, onClose }: EmulationTerminalPro
     term.open(containerRef.current)
     requestAnimationFrame(() => fitAddon.fit())
 
-    // Connect WebSocket
-    const url = buildEmulationTerminalURL(projectId, session.id)
-    const ws = new WebSocket(url)
-    wsRef.current = ws
+    const MAX_RECONNECT_ATTEMPTS = 10
+    const RECONNECT_BASE_DELAY = 1000
 
-    ws.onopen = () => {
-      ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }))
-    }
+    function connectWebSocket() {
+      const url = buildEmulationTerminalURL(projectId, session.id)
+      const ws = new WebSocket(url)
+      wsRef.current = ws
 
-    ws.onmessage = (event) => {
-      try {
-        const msg = JSON.parse(event.data)
-        if (msg.type === 'output' && msg.data) {
-          term.write(msg.data)
-        } else if (msg.type === 'error') {
-          term.write(`\r\n\x1b[31mError: ${msg.data}\x1b[0m\r\n`)
+      ws.onopen = () => {
+        reconnectAttemptRef.current = 0
+        ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }))
+      }
+
+      ws.onmessage = (event) => {
+        try {
+          const msg = JSON.parse(event.data)
+          if (msg.type === 'output' && msg.data) {
+            term.write(msg.data)
+          } else if (msg.type === 'error') {
+            term.write(`\r\n\x1b[31mError: ${msg.data}\x1b[0m\r\n`)
+          }
+          // Ignore ping/pong messages (keepalive)
+        } catch {
+          term.write(event.data)
         }
-      } catch {
-        term.write(event.data)
+      }
+
+      ws.onclose = () => {
+        if (intentionalCloseRef.current) return
+
+        const attempt = reconnectAttemptRef.current
+        if (attempt < MAX_RECONNECT_ATTEMPTS) {
+          const delay = Math.min(RECONNECT_BASE_DELAY * Math.pow(1.5, attempt), 10000)
+          term.write(`\r\n\x1b[90m[Disconnected — reconnecting in ${Math.round(delay / 1000)}s...]\x1b[0m\r\n`)
+          reconnectAttemptRef.current = attempt + 1
+          reconnectTimerRef.current = setTimeout(connectWebSocket, delay)
+        } else {
+          term.write('\r\n\x1b[90m[Session disconnected — max reconnect attempts reached]\x1b[0m\r\n')
+          getSessionLogs(projectId, session.id)
+            .then((logText) => {
+              if (logText && logText !== '(no log available)') {
+                term.write('\r\n\x1b[33m--- QEMU Startup Log ---\x1b[0m\r\n')
+                term.write(logText.replace(/\n/g, '\r\n'))
+                term.write('\r\n\x1b[33m--- End Log ---\x1b[0m\r\n')
+              }
+            })
+            .catch(() => {})
+        }
+      }
+
+      ws.onerror = () => {
+        // onclose will fire after onerror, reconnect handled there
       }
     }
 
-    ws.onclose = () => {
-      term.write('\r\n\x1b[90m[Session disconnected]\x1b[0m\r\n')
-      // Fetch logs to show what happened
-      getSessionLogs(projectId, session.id)
-        .then((logText) => {
-          if (logText && logText !== '(no log available)') {
-            term.write('\r\n\x1b[33m--- QEMU Startup Log ---\x1b[0m\r\n')
-            term.write(logText.replace(/\n/g, '\r\n'))
-            term.write('\r\n\x1b[33m--- End Log ---\x1b[0m\r\n')
-          }
-        })
-        .catch(() => {})
-    }
+    connectWebSocket()
 
     const onData = term.onData((data: string) => {
-      if (ws.readyState === WebSocket.OPEN) {
+      const ws = wsRef.current
+      if (ws && ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({ type: 'input', data }))
       }
     })
 
     return () => {
+      intentionalCloseRef.current = true
       onData.dispose()
-      if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
+      if (reconnectTimerRef.current) {
+        clearTimeout(reconnectTimerRef.current)
+        reconnectTimerRef.current = null
+      }
+      const ws = wsRef.current
+      if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
         ws.close()
       }
       wsRef.current = null

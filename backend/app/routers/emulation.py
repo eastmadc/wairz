@@ -375,8 +375,6 @@ async def websocket_emulation_terminal(
     })
 
     loop = asyncio.get_event_loop()
-    reader_task = None
-    writer_task = None
 
     async def read_container():
         """Read from container socket and send to WebSocket."""
@@ -392,7 +390,7 @@ async def websocket_emulation_terminal(
         except OSError:
             pass
         except Exception:
-            logger.debug("Container reader stopped")
+            logger.debug("Container reader stopped", exc_info=True)
 
     async def write_container():
         """Read from WebSocket and write to container socket."""
@@ -416,19 +414,35 @@ async def websocket_emulation_terminal(
                         client.api.exec_resize(exec_id, height=rows, width=cols)
                     except Exception:
                         pass
+
+                elif msg_type == "ping":
+                    # Respond to client-side keepalive pings
+                    await websocket.send_json({"type": "pong"})
+
         except WebSocketDisconnect:
             pass
         except Exception:
-            logger.debug("Container writer stopped")
+            logger.debug("Container writer stopped", exc_info=True)
+
+    async def keepalive():
+        """Send periodic pings to keep the WebSocket alive."""
+        try:
+            while True:
+                await asyncio.sleep(15)
+                await websocket.send_json({"type": "ping"})
+        except Exception:
+            pass
 
     try:
         reader_task = asyncio.create_task(read_container())
         writer_task = asyncio.create_task(write_container())
+        keepalive_task = asyncio.create_task(keepalive())
         done, pending = await asyncio.wait(
             [reader_task, writer_task], return_when=asyncio.FIRST_COMPLETED
         )
         for task in pending:
             task.cancel()
+        keepalive_task.cancel()
     finally:
         try:
             raw_sock.close()

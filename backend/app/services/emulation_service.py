@@ -5,11 +5,14 @@ Uses the Docker SDK to spawn isolated containers running QEMU in user-mode
 """
 
 import asyncio
+import io
 import logging
 import os
 import platform
 import re
 import shlex
+import tarfile
+
 from datetime import datetime, timezone
 from uuid import UUID
 
@@ -638,6 +641,31 @@ echo "Symlink repair: pass1=$PASS1 pass2=$PASS2 pass3=$PASS3"
         if output:
             logger.info("Firmware symlink repair: %s", output)
 
+    @staticmethod
+    def _put_file_in_container(
+        container: "docker.models.containers.Container",
+        path: str,
+        content: str,
+        mode: int = 0o755,
+    ) -> None:
+        """Write a file into a Docker container using put_archive.
+
+        This avoids heredoc/shell escaping issues that can corrupt file content
+        when using container.exec_run with 'cat << EOF'.
+        """
+        filename = os.path.basename(path)
+        directory = os.path.dirname(path)
+
+        data = content.encode("utf-8")
+        tar_stream = io.BytesIO()
+        with tarfile.open(fileobj=tar_stream, mode="w") as tar:
+            info = tarfile.TarInfo(name=filename)
+            info.size = len(data)
+            info.mode = mode
+            tar.addfile(info, io.BytesIO(data))
+        tar_stream.seek(0)
+        container.put_archive(directory, tar_stream)
+
     # Map stub profile + architecture → list of .so filenames to inject
     STUB_PROFILE_MAP: dict[str, dict[str, list[str]]] = {
         "none": {},
@@ -890,20 +918,12 @@ echo "[wairz] Starting firmware init..."
             init_path, pre_init_script, stub_profile=stub_profile
         )
 
-        # Write the wrapper script
-        container.exec_run([
-            "sh", "-c",
-            f"cat > /firmware/wairz_init.sh << 'WAIRZ_INIT_EOF'\n{wrapper}\nWAIRZ_INIT_EOF\n"
-            "chmod +x /firmware/wairz_init.sh"
-        ])
+        # Write scripts into the container using put_archive (avoids heredoc/escaping issues)
+        EmulationService._put_file_in_container(container, "/firmware/wairz_init.sh", wrapper)
 
         # Write the pre-init script if provided
         if pre_init_script:
-            container.exec_run([
-                "sh", "-c",
-                f"cat > /firmware/wairz_pre_init.sh << 'WAIRZ_PREINIT_EOF'\n{pre_init_script}\nWAIRZ_PREINIT_EOF\n"
-                "chmod +x /firmware/wairz_pre_init.sh"
-            ])
+            EmulationService._put_file_in_container(container, "/firmware/wairz_pre_init.sh", pre_init_script)
             logger.info("Injected pre-init script (%d bytes)", len(pre_init_script))
 
         logger.info(
