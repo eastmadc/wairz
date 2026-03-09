@@ -12,6 +12,14 @@ WAIRZ works with any MCP-compatible AI agent — Claude Code, Claude Desktop, Op
 
 ---
 
+## Demo
+
+<div style="position: relative; padding-bottom: 56.25%; height: 0; overflow: hidden;">
+  <iframe src="https://www.youtube.com/embed/gDLhtMFMmMM" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%;" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>
+</div>
+
+---
+
 ## Key Features
 
 <div class="grid cards" markdown>
