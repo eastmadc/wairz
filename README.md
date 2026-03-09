@@ -8,6 +8,8 @@ Upload firmware images, unpack them, explore the filesystem, analyze binaries, a
 
 Connect any MCP-compatible AI agent to Wairz's 60+ analysis tools — [Claude Code](https://docs.anthropic.com/en/docs/claude-code), [Claude Desktop](https://claude.ai/download), [OpenCode](https://opencode.ai/), [Codex](https://github.com/openai/codex), [Cursor](https://cursor.com/), [VS Code + Copilot](https://code.visualstudio.com/docs/copilot/), [Gemini CLI](https://github.com/google-gemini/gemini-cli), [Windsurf](https://windsurf.com/), and more.
 
+[Watch the demo video](https://www.youtube.com/watch?v=gDLhtMFMmMM)
+
 ## Features
 
 - **Firmware Unpacking** — Automatic extraction of SquashFS, JFFS2, UBIFS, CramFS, ext, and CPIO filesystems via binwalk, with multi-partition support
