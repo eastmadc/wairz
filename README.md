@@ -6,7 +6,7 @@
 
 Upload firmware images, unpack them, explore the filesystem, analyze binaries, and conduct security assessments — all powered by AI analysis via [Model Context Protocol (MCP)](https://modelcontextprotocol.io/).
 
-Connect [Claude Code](https://docs.anthropic.com/en/docs/claude-code) or [Claude Desktop](https://claude.ai/download) to Wairz's 60+ analysis tools through MCP, and use your own Claude subscription for AI-driven firmware security research.
+Connect any MCP-compatible AI agent to Wairz's 60+ analysis tools — [Claude Code](https://docs.anthropic.com/en/docs/claude-code), [Claude Desktop](https://claude.ai/download), [OpenCode](https://opencode.ai/), [Codex](https://github.com/openai/codex), [Cursor](https://cursor.com/), [VS Code + Copilot](https://code.visualstudio.com/docs/copilot/), [Gemini CLI](https://github.com/google-gemini/gemini-cli), [Windsurf](https://windsurf.com/), and more.
 
 ## Features
 
@@ -26,7 +26,7 @@ Connect [Claude Code](https://docs.anthropic.com/en/docs/claude-code) or [Claude
 ## Architecture
 
 ```
-Claude Code / Claude Desktop
+Claude Code / Claude Desktop / OpenCode
         │
         │ MCP (stdio)
         ▼
@@ -99,7 +99,7 @@ Or use the helper script:
 
 ## Connecting AI via MCP
 
-Wairz uses MCP to give Claude access to firmware analysis tools. After starting the backend, register the MCP server with your Claude client:
+Wairz uses MCP to give AI agents access to firmware analysis tools. After starting the backend, register the MCP server with your preferred client:
 
 ### Claude Code
 
@@ -126,7 +126,26 @@ Add to your Claude Desktop config (`~/.config/Claude/claude_desktop_config.json`
 }
 ```
 
-Once connected, Claude can autonomously explore firmware, analyze binaries, run emulation, fuzz targets, and generate security findings. The MCP server supports dynamic project switching via the `switch_project` tool — no restart needed to change projects.
+### OpenCode
+
+Add to your `opencode.json` (project root or `~/.config/opencode/opencode.json`):
+
+```json
+{
+  "mcp": {
+    "wairz": {
+      "type": "local",
+      "command": ["docker", "exec", "-i", "wairz-backend-1", "uv", "run", "wairz-mcp", "--project-id", "<PROJECT_ID>"],
+      "timeout": 30000,
+      "enabled": true
+    }
+  }
+}
+```
+
+> **Note:** The `timeout` must be increased from the default 5000ms because Wairz registers 90+ tools.
+
+Once connected, your AI agent can autonomously explore firmware, analyze binaries, run emulation, fuzz targets, and generate security findings. The MCP server supports dynamic project switching via the `switch_project` tool — no restart needed to change projects.
 
 ### MCP Tools (60+)
 

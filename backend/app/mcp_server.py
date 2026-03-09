@@ -5,7 +5,7 @@ Usage:
 
 Connects to the Wairz database, loads the specified project and firmware,
 then serves all registered analysis tools over stdio for MCP-compatible
-clients (Claude Desktop, Claude Code, etc.).
+clients (Claude Code, Claude Desktop, OpenCode, etc.).
 
 Supports dynamic project switching via the switch_project tool — no need
 to restart the MCP server process when changing projects.

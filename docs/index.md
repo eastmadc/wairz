@@ -8,7 +8,7 @@
 
 Upload firmware images, unpack them, explore the filesystem, analyze binaries, and conduct security assessments — all powered by AI analysis via [Model Context Protocol (MCP)](https://modelcontextprotocol.io/).
 
-Connect [Claude Code](https://docs.anthropic.com/en/docs/claude-code) or [Claude Desktop](https://claude.ai/download) to WAIRZ's 60+ analysis tools through MCP, and use your own Claude subscription for AI-driven firmware security research.
+WAIRZ works with any MCP-compatible AI agent — Claude Code, Claude Desktop, OpenCode, Codex, Cursor, VS Code + Copilot, Gemini CLI, Windsurf, and more. See the [Connecting AI](getting-started/mcp-setup.md) guide for setup instructions.
 
 ---
 
@@ -50,7 +50,7 @@ Connect [Claude Code](https://docs.anthropic.com/en/docs/claude-code) or [Claude
 
 - :material-robot: **AI Analysis via MCP**
 
-    60+ analysis tools exposed to Claude for autonomous security research — from filesystem exploration to vulnerability discovery.
+    60+ analysis tools exposed to any MCP-compatible AI agent for autonomous security research — from filesystem exploration to vulnerability discovery.
 
 - :material-file-document: **Findings & Reports**
 
@@ -78,14 +78,14 @@ docker compose up --build
 
 Then open [http://localhost:3000](http://localhost:3000) to access the web interface.
 
-See the [Installation Guide](getting-started/installation.md) for detailed setup instructions, or jump to [Connecting AI](getting-started/mcp-setup.md) to set up Claude with MCP.
+See the [Installation Guide](getting-started/installation.md) for detailed setup instructions, or jump to [Connecting AI](getting-started/mcp-setup.md) to connect your preferred AI agent.
 
 ---
 
 ## How It Works
 
 ```
-Claude Code / Claude Desktop
+AI Agent (Claude Code, OpenCode, etc.)
         |
         | MCP (stdio)
         v
@@ -107,7 +107,7 @@ Claude Code / Claude Desktop
 1. **Upload** a firmware image through the web UI
 2. **WAIRZ unpacks** the firmware automatically (SquashFS, JFFS2, UBIFS, CramFS, ext, CPIO)
 3. **Explore** the extracted filesystem, analyze binaries, and assess security — through the browser or AI
-4. **Connect Claude** via MCP to run autonomous analysis with 60+ specialized tools
+4. **Connect an AI agent** via MCP to run autonomous analysis with 60+ specialized tools
 
 ---
 
