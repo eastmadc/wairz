@@ -2,7 +2,9 @@ import hashlib
 import os
 import re
 import shutil
+import tarfile
 import uuid
+import zipfile
 
 import aiofiles
 from fastapi import UploadFile
@@ -29,6 +31,61 @@ def _sanitize_filename(name: str) -> str:
     # Limit to 200 chars to stay within filesystem limits
     name = name[:200]
     return name or "firmware.bin"
+
+
+def _extract_firmware_from_zip(zip_path: str, output_dir: str) -> str | None:
+    """Extract the main firmware file from a ZIP archive.
+
+    Picks the largest file in the archive (most likely the firmware image).
+    Returns the path to the extracted file, or None if the archive is empty.
+    """
+    with zipfile.ZipFile(zip_path, "r") as zf:
+        candidates = []
+        for info in zf.infolist():
+            if info.is_dir():
+                continue
+            basename = os.path.basename(info.filename)
+            # Skip hidden files, macOS resource forks, etc.
+            if not basename or basename.startswith(".") or basename.startswith("__"):
+                continue
+            candidates.append(info)
+
+        if not candidates:
+            return None
+
+        best = max(candidates, key=lambda i: i.file_size)
+        target_name = _sanitize_filename(os.path.basename(best.filename))
+        target_path = os.path.join(output_dir, target_name)
+
+        # Extract in chunks to avoid loading entire file into memory
+        with zf.open(best) as src, open(target_path, "wb") as dst:
+            while chunk := src.read(8192):
+                dst.write(chunk)
+
+        return target_path
+
+
+def _extract_archive(archive_path: str, output_dir: str) -> None:
+    """Extract a tar, tar.gz, or zip archive with path traversal prevention."""
+    if tarfile.is_tarfile(archive_path):
+        with tarfile.open(archive_path) as tf:
+            for member in tf.getmembers():
+                # Prevent tar slip (path traversal)
+                target = os.path.realpath(os.path.join(output_dir, member.name))
+                if not target.startswith(os.path.realpath(output_dir) + os.sep) and target != os.path.realpath(output_dir):
+                    raise ValueError(f"Path traversal detected in archive: {member.name}")
+            tf.extractall(output_dir, filter="data")
+    elif zipfile.is_zipfile(archive_path):
+        with zipfile.ZipFile(archive_path, "r") as zf:
+            for info in zf.infolist():
+                target = os.path.realpath(os.path.join(output_dir, info.filename))
+                if not target.startswith(os.path.realpath(output_dir) + os.sep) and target != os.path.realpath(output_dir):
+                    raise ValueError(f"Path traversal detected in archive: {info.filename}")
+            zf.extractall(output_dir)
+    else:
+        raise ValueError(
+            "Unsupported archive format. Please upload a .tar.gz, .tar, or .zip file."
+        )
 
 
 class FirmwareService:
@@ -68,6 +125,22 @@ class FirmwareService:
                 await out_file.write(chunk)
                 file_size += len(chunk)
 
+        # If the uploaded file is a ZIP (by extension), extract the firmware from inside it.
+        # We check the extension rather than zipfile.is_zipfile() alone because firmware
+        # binaries can contain embedded zip data that triggers false positives.
+        if raw_filename.lower().endswith(".zip") and zipfile.is_zipfile(storage_path):
+            extracted = _extract_firmware_from_zip(storage_path, firmware_dir)
+            if extracted:
+                os.remove(storage_path)
+                storage_path = extracted
+                # Recompute hash and size for the actual firmware content
+                sha256_hash = hashlib.sha256()
+                file_size = 0
+                async with aiofiles.open(storage_path, "rb") as f:
+                    while chunk := await f.read(8192):
+                        sha256_hash.update(chunk)
+                        file_size += len(chunk)
+
         firmware = Firmware(
             id=firmware_id,
             project_id=project_id,
@@ -78,6 +151,59 @@ class FirmwareService:
             version_label=version_label,
         )
         self.db.add(firmware)
+        await self.db.flush()
+        return firmware
+
+    async def upload_rootfs(
+        self,
+        firmware: Firmware,
+        file: UploadFile,
+    ) -> Firmware:
+        """Extract a user-supplied rootfs archive into the firmware's extracted dir.
+
+        Accepts .tar.gz, .tar, or .zip archives containing the filesystem root.
+        Runs architecture and OS detection on the extracted contents.
+        """
+        from app.workers.unpack import (
+            detect_architecture,
+            detect_kernel,
+            detect_os_info,
+            find_filesystem_root,
+        )
+
+        firmware_dir = os.path.dirname(firmware.storage_path)
+        extraction_dir = os.path.join(firmware_dir, "extracted")
+        os.makedirs(extraction_dir, exist_ok=True)
+
+        # Save archive to a temp file
+        raw_filename = file.filename or "rootfs.tar.gz"
+        archive_path = os.path.join(firmware_dir, _sanitize_filename(raw_filename))
+        async with aiofiles.open(archive_path, "wb") as out:
+            while chunk := await file.read(8192):
+                await out.write(chunk)
+
+        # Extract the archive
+        try:
+            _extract_archive(archive_path, extraction_dir)
+        finally:
+            os.remove(archive_path)
+
+        # Find the filesystem root
+        fs_root = find_filesystem_root(extraction_dir)
+        if not fs_root:
+            raise ValueError(
+                "Could not locate a filesystem root in the archive. "
+                "Ensure it contains a Linux root filesystem (with etc/, bin/ or usr/)."
+            )
+
+        firmware.extracted_path = fs_root
+        arch, endian = detect_architecture(fs_root)
+        firmware.architecture = arch
+        firmware.endianness = endian
+        firmware.os_info = detect_os_info(fs_root)
+        firmware.kernel_path = detect_kernel(extraction_dir, fs_root)
+        firmware.unpack_log = "Filesystem provided via manual rootfs upload."
+
         await self.db.flush()
         return firmware
 

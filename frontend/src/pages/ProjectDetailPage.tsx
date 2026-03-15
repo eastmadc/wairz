@@ -15,12 +15,13 @@ import {
   Plus,
   Tag,
   Download,
+  Upload,
   Pencil,
   Check,
   X,
 } from 'lucide-react'
 import { useProjectStore } from '@/stores/projectStore'
-import { listFirmware, deleteFirmware, updateFirmware } from '@/api/firmware'
+import { listFirmware, deleteFirmware, updateFirmware, uploadRootfs } from '@/api/firmware'
 import type { FirmwareDetail } from '@/types'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -59,7 +60,10 @@ export default function ProjectDetailPage() {
   const [exportError, setExportError] = useState<string | null>(null)
   const [editingVersionLabel, setEditingVersionLabel] = useState<string | null>(null)
   const [versionLabelDraft, setVersionLabelDraft] = useState('')
+  const [uploadingRootfs, setUploadingRootfs] = useState<string | null>(null)
+  const [rootfsError, setRootfsError] = useState<string | null>(null)
   const versionInputRef = useRef<HTMLInputElement>(null)
+  const rootfsInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     if (projectId) fetchProject(projectId)
@@ -170,6 +174,21 @@ export default function ProjectDetailPage() {
       // error handled by caller
     }
     setEditingVersionLabel(null)
+  }
+
+  const handleRootfsUpload = async (firmwareId: string, file: File) => {
+    if (!projectId) return
+    setUploadingRootfs(firmwareId)
+    setRootfsError(null)
+    try {
+      await uploadRootfs(projectId, firmwareId, file)
+      fetchProject(projectId)
+      listFirmware(projectId).then(setFirmwareList).catch(() => {})
+    } catch (e) {
+      setRootfsError(e instanceof Error ? e.message : 'Upload failed')
+    } finally {
+      setUploadingRootfs(null)
+    }
   }
 
   const handleUploadComplete = () => {
@@ -348,16 +367,44 @@ export default function ProjectDetailPage() {
                         Unpacking Failed
                       </div>
                       <pre className="max-h-40 overflow-auto text-xs">{fwDetail.unpack_log}</pre>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        className="mt-2"
-                        onClick={() => handleUnpack(fw.id)}
-                        disabled={unpacking}
-                      >
-                        {unpacking && <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />}
-                        Retry
-                      </Button>
+                      <div className="flex gap-2 mt-2">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => handleUnpack(fw.id)}
+                          disabled={unpacking}
+                        >
+                          {unpacking && <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />}
+                          Retry
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => rootfsInputRef.current?.click()}
+                          disabled={uploadingRootfs === fw.id}
+                        >
+                          {uploadingRootfs === fw.id ? (
+                            <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
+                          ) : (
+                            <Upload className="mr-2 h-3.5 w-3.5" />
+                          )}
+                          Upload Rootfs
+                        </Button>
+                        <input
+                          ref={rootfsInputRef}
+                          type="file"
+                          accept=".tar,.tar.gz,.tgz,.zip"
+                          className="hidden"
+                          onChange={(e) => {
+                            const file = e.target.files?.[0]
+                            if (file) handleRootfsUpload(fw.id, file)
+                            e.target.value = ''
+                          }}
+                        />
+                      </div>
+                      {rootfsError && uploadingRootfs === null && (
+                        <p className="text-xs text-destructive mt-1">{rootfsError}</p>
+                      )}
                     </div>
                   )}
                 </CardContent>

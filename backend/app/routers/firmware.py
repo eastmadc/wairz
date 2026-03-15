@@ -186,6 +186,38 @@ async def _run_unpack_background(
             logger.exception("Failed to set error status for project %s", project_id)
 
 
+@router.post("/{firmware_id}/upload-rootfs", response_model=FirmwareDetailResponse)
+async def upload_rootfs(
+    project_id: uuid.UUID,
+    firmware_id: uuid.UUID,
+    file: UploadFile,
+    db: AsyncSession = Depends(get_db),
+    service: FirmwareService = Depends(get_firmware_service),
+):
+    """Upload a pre-extracted rootfs archive (.tar.gz, .tar, .zip) for firmware
+    whose automated extraction failed."""
+    proj_result = await db.execute(select(Project).where(Project.id == project_id))
+    project = proj_result.scalar_one_or_none()
+    if not project:
+        raise HTTPException(404, "Project not found")
+
+    firmware = await service.get_by_id(firmware_id)
+    if not firmware or firmware.project_id != project_id:
+        raise HTTPException(404, "Firmware not found")
+
+    if firmware.extracted_path:
+        raise HTTPException(409, "Firmware already has an extracted filesystem")
+
+    try:
+        await service.upload_rootfs(firmware, file)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+    project.status = "ready"
+    await db.commit()
+    return firmware
+
+
 @router.post("/{firmware_id}/redetect-kernel", response_model=FirmwareDetailResponse)
 async def redetect_kernel(
     project_id: uuid.UUID,

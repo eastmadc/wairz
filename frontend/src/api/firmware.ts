@@ -76,6 +76,30 @@ export async function unpackFirmware(
   return data
 }
 
+export async function uploadRootfs(
+  projectId: string,
+  firmwareId: string,
+  file: File,
+  onProgress?: (percent: number) => void,
+): Promise<FirmwareDetail> {
+  const form = new FormData()
+  form.append('file', file)
+
+  const { data } = await apiClient.post<FirmwareDetail>(
+    `/projects/${projectId}/firmware/${firmwareId}/upload-rootfs`,
+    form,
+    {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      onUploadProgress: (e) => {
+        if (e.total && onProgress) {
+          onProgress(Math.round((e.loaded * 100) / e.total))
+        }
+      },
+    },
+  )
+  return data
+}
+
 export async function getFirmwareMetadata(
   projectId: string,
   firmwareId: string,

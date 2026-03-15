@@ -6,6 +6,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     sleuthkit \
     squashfs-tools \
     cramfsswap \
+    util-linux-extra \
     mtd-utils \
     e2fsprogs \
     cpio \
@@ -27,7 +28,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libpangocairo-1.0-0 \
     libgdk-pixbuf-2.0-0 \
     libffi-dev \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && printf '#!/bin/sh\n# Wrapper: translates cramfsck -x <dir> <file> to fsck.cramfs --extract=<dir> <file>\nif [ "$1" = "-x" ]; then shift; dir="$1"; shift; exec fsck.cramfs --extract="$dir" "$@"; fi\nexec fsck.cramfs "$@"\n' > /usr/local/bin/cramfsck \
+    && chmod +x /usr/local/bin/cramfsck
 
 # Install Python-based firmware extraction tools used by binwalk
 RUN pip3 install --no-cache-dir --break-system-packages \

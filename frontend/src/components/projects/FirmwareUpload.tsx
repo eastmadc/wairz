@@ -140,7 +140,7 @@ export default function FirmwareUpload({ projectId, onComplete, showVersionLabel
         <div className="text-center">
           <p className="text-sm font-medium">Drop firmware file here or click to browse</p>
           <p className="text-xs text-muted-foreground mt-1">
-            Supports .bin, .img, .hex, .chk, .trx, and other firmware formats
+            Supports .bin, .img, .hex, .chk, .trx, .zip, and other firmware formats
           </p>
         </div>
         <input ref={inputRef} type="file" className="hidden" onChange={onInputChange} />
