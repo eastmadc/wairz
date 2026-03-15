@@ -8,6 +8,7 @@ RUN npm run build
 
 # Production stage
 FROM nginx:alpine
+ENV MAX_UPLOAD_SIZE_MB=500
 COPY --from=build /app/dist /usr/share/nginx/html
 COPY nginx.conf.template /etc/nginx/templates/default.conf.template
 EXPOSE 3000
