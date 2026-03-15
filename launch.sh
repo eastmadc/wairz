@@ -20,6 +20,7 @@ DATABASE_URL=postgresql+asyncpg://wairz:wairz@localhost:5432/wairz
 REDIS_URL=redis://localhost:6379/0
 ANTHROPIC_API_KEY=
 STORAGE_ROOT=./data/firmware
+MAX_UPLOAD_SIZE_MB=500
 EOF
     echo "Created .env — set ANTHROPIC_API_KEY for AI features"
 fi
