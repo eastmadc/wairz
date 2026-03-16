@@ -624,14 +624,14 @@ export default function EmulationPage() {
           {/* Session list */}
           <div className="space-y-3">
             <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
-              Sessions ({sessions.length})
+              Sessions ({sessions.filter((s) => s.mode === mode).length})
             </h2>
 
-            {sessions.length === 0 && (
-              <p className="text-xs text-muted-foreground/60">No emulation sessions yet</p>
+            {sessions.filter((s) => s.mode === mode).length === 0 && (
+              <p className="text-xs text-muted-foreground/60">No {mode}-mode sessions yet</p>
             )}
 
-            {sessions.map((session) => (
+            {sessions.filter((s) => s.mode === mode).map((session) => (
               <SessionCard
                 key={session.id}
                 session={session}
