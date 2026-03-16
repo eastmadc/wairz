@@ -25,6 +25,7 @@ import { formatDate } from '@/utils/format'
 import {
   startEmulation,
   stopEmulation,
+  deleteSession,
   listSessions,
   getSessionStatus,
   getSessionLogs,
@@ -196,6 +197,16 @@ export default function EmulationPage() {
       }
     } finally {
       setStarting(false)
+    }
+  }
+
+  const handleDismiss = async (sessionId: string) => {
+    if (!projectId) return
+    try {
+      await deleteSession(projectId, sessionId)
+      setSessions((prev) => prev.filter((s) => s.id !== sessionId))
+    } catch {
+      // ignore
     }
   }
 
@@ -624,6 +635,7 @@ export default function EmulationPage() {
                 projectId={projectId!}
                 onConnect={() => handleConnect(session)}
                 onStop={() => handleStop(session.id)}
+                onDismiss={() => handleDismiss(session.id)}
               />
             ))}
           </div>
@@ -663,9 +675,10 @@ interface SessionCardProps {
   projectId: string
   onConnect: () => void
   onStop: () => void
+  onDismiss: () => void
 }
 
-function SessionCard({ session, isActive, projectId, onConnect, onStop }: SessionCardProps) {
+function SessionCard({ session, isActive, projectId, onConnect, onStop, onDismiss }: SessionCardProps) {
   const statusCfg = STATUS_CONFIG[session.status] || STATUS_CONFIG.stopped
   const [showLogs, setShowLogs] = useState(false)
   const [logs, setLogs] = useState<string | null>(null)
@@ -705,11 +718,22 @@ function SessionCard({ session, isActive, projectId, onConnect, onStop }: Sessio
             {session.mode === 'user' ? 'User' : 'System'} Mode
           </span>
         </div>
-        {session.architecture && (
-          <Badge variant="outline" className="text-[10px]">
-            {session.architecture}
-          </Badge>
-        )}
+        <div className="flex items-center gap-2">
+          {session.architecture && (
+            <Badge variant="outline" className="text-[10px]">
+              {session.architecture}
+            </Badge>
+          )}
+          {(session.status === 'stopped' || session.status === 'error') && (
+            <button
+              onClick={onDismiss}
+              className="text-muted-foreground hover:text-destructive transition-colors"
+              title="Delete session"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+            </button>
+          )}
+        </div>
       </div>
 
       {session.binary_path && (

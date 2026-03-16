@@ -19,6 +19,13 @@ export async function startEmulation(
   return data
 }
 
+export async function deleteSession(
+  projectId: string,
+  sessionId: string,
+): Promise<void> {
+  await apiClient.delete(`/projects/${projectId}/emulation/${sessionId}`)
+}
+
 export async function stopEmulation(
   projectId: string,
   sessionId: string,
