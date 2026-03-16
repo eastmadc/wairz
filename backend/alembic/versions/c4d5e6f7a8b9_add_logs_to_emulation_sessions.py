@@ -1,6 +1,6 @@
 """add logs to emulation sessions
 
-Revision ID: b1c2d3e4f5a6
+Revision ID: c4d5e6f7a8b9
 Revises: f6a7b8c9d0e1
 Create Date: 2026-03-16 10:41:14.995621
 
@@ -12,7 +12,7 @@ import sqlalchemy as sa
 
 
 # revision identifiers, used by Alembic.
-revision: str = "b1c2d3e4f5a6"
+revision: str = "c4d5e6f7a8b9"
 down_revision: Union[str, None] = "f6a7b8c9d0e1"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
