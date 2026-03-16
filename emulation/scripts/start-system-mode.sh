@@ -111,11 +111,15 @@ esac
 # Clean up stale files from previous runs
 rm -f "$SERIAL_SOCK" "$ROOTFS_IMG"
 
-# Create a temporary ext4 image from the rootfs
-echo "Creating ext4 rootfs image (256 MB)..."
-dd if=/dev/zero of="$ROOTFS_IMG" bs=1M count=256 2>/dev/null
-if ! mkfs.ext4 -q -d "$ROOTFS" "$ROOTFS_IMG" 2>&1; then
-    echo "WARNING: mkfs.ext4 -d failed, trying without directory copy..."
+# Create a temporary ext4 image sized to fit the rootfs (2x content + 256MB headroom)
+ROOTFS_MB=$(du -sm "$ROOTFS" 2>/dev/null | cut -f1)
+ROOTFS_MB=${ROOTFS_MB:-0}
+IMG_MB=$(( ROOTFS_MB * 2 + 256 ))
+INODE_COUNT=$(( $(find "$ROOTFS" 2>/dev/null | wc -l) * 2 + 4096 ))
+echo "Creating ext4 rootfs image (${IMG_MB} MB, rootfs: ${ROOTFS_MB} MB, inodes: ${INODE_COUNT})..."
+dd if=/dev/zero of="$ROOTFS_IMG" bs=1M count="$IMG_MB" 2>/dev/null
+if ! mkfs.ext4 -q -N "$INODE_COUNT" -d "$ROOTFS" "$ROOTFS_IMG" 2>&1; then
+    echo "WARNING: mkfs.ext4 -d failed — falling back to empty image; init script will be missing and kernel will panic."
     mkfs.ext4 -q "$ROOTFS_IMG" 2>&1 || true
 fi
 echo "Rootfs image created: $(wc -c < "$ROOTFS_IMG") bytes"
