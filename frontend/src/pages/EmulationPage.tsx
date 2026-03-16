@@ -688,6 +688,16 @@ function SessionCard({ session, isActive, projectId, onConnect, onStop, onDismis
   const [logs, setLogs] = useState<string | null>(null)
   const [logsLoading, setLogsLoading] = useState(false)
 
+  // When the session finishes stopping, refresh logs if the panel is open
+  useEffect(() => {
+    if (session.status !== 'stopped' || !showLogs) return
+    setLogsLoading(true)
+    getSessionLogs(projectId, session.id)
+      .then(setLogs)
+      .catch(() => setLogs('Failed to fetch logs'))
+      .finally(() => setLogsLoading(false))
+  }, [session.status]) // eslint-disable-line react-hooks/exhaustive-deps
+
   const handleViewLogs = async () => {
     if (showLogs) {
       setShowLogs(false)
