@@ -1340,6 +1340,19 @@ echo "[wairz] Starting firmware init..."
         await self.db.flush()
         return session
 
+    async def delete_session(self, session_id: UUID) -> None:
+        """Delete a stopped or errored emulation session record."""
+        result = await self.db.execute(
+            select(EmulationSession).where(EmulationSession.id == session_id)
+        )
+        session = result.scalar_one_or_none()
+        if not session:
+            raise ValueError("Session not found")
+        if session.status in ("running", "starting"):
+            raise ValueError("Cannot delete an active session — stop it first")
+        await self.db.delete(session)
+        await self.db.flush()
+
     async def exec_command(
         self,
         session_id: UUID,
