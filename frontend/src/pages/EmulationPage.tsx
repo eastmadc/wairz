@@ -50,6 +50,7 @@ const STATUS_CONFIG: Record<EmulationStatus, { label: string; className: string 
   created: { label: 'Created', className: 'bg-gray-500 text-white' },
   starting: { label: 'Starting', className: 'bg-yellow-500 text-black' },
   running: { label: 'Running', className: 'bg-green-500 text-white' },
+  stopping: { label: 'Stopping...', className: 'bg-orange-500 text-white' },
   stopped: { label: 'Stopped', className: 'bg-zinc-600 text-white' },
   error: { label: 'Error', className: 'bg-red-500 text-white' },
 }
@@ -212,15 +213,18 @@ export default function EmulationPage() {
 
   const handleStop = async (sessionId: string) => {
     if (!projectId) return
+    setSessions((prev) =>
+      prev.map((s) => (s.id === sessionId ? { ...s, status: 'stopping' as const } : s))
+    )
+    if (activeSession?.id === sessionId) {
+      setShowTerminal(false)
+      setActiveSession(null)
+    }
     try {
-      await stopEmulation(projectId, sessionId)
-      if (activeSession?.id === sessionId) {
-        setShowTerminal(false)
-        setActiveSession(null)
-      }
-      await loadSessions()
+      const updated = await stopEmulation(projectId, sessionId)
+      setSessions((prev) => prev.map((s) => (s.id === sessionId ? updated : s)))
     } catch {
-      // ignore
+      await loadSessions()
     }
   }
 
@@ -747,8 +751,8 @@ function SessionCard({ session, isActive, projectId, onConnect, onStop, onDismis
         {formatDate(session.created_at)}
       </div>
 
-      {/* Error message — prominent display */}
-      {session.error_message && (
+      {/* Error message — only shown for errored sessions, not intentional stops */}
+      {session.status === 'error' && session.error_message && (
         <div className="mt-2 rounded-md bg-destructive/10 px-3 py-2 text-xs text-destructive">
           <div className="flex items-start gap-2">
             <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
@@ -784,6 +788,12 @@ function SessionCard({ session, isActive, projectId, onConnect, onStop, onDismis
               Stop
             </Button>
           </>
+        )}
+        {session.status === 'stopping' && (
+          <Button variant="outline" size="sm" className="h-7 text-xs" disabled>
+            <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+            Stopping...
+          </Button>
         )}
         {/* View Logs button — available for any session with a container */}
         <Button

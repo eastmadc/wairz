@@ -1328,6 +1328,7 @@ echo "[wairz] Starting firmware init..."
             try:
                 client = self._get_docker_client()
                 container = client.containers.get(session.container_id)
+                session.logs = self._read_container_qemu_log(container, max_bytes=8000)
                 container.stop(timeout=5)
                 container.remove(force=True)
             except docker.errors.NotFound:
@@ -1590,7 +1591,9 @@ echo "[wairz] Starting firmware init..."
             container = client.containers.get(session.container_id)
             return self._read_container_qemu_log(container, max_bytes=8000)
         except docker.errors.NotFound:
-            # Container removed — return stored error_message
+            # Container removed — return saved logs or error_message
+            if session.logs:
+                return session.logs
             if session.error_message:
                 return session.error_message
             return "Container has been removed — no logs available."

@@ -278,7 +278,7 @@ export interface DocumentContent {
 // ── Emulation types ──
 
 export type EmulationMode = 'user' | 'system'
-export type EmulationStatus = 'created' | 'starting' | 'running' | 'stopped' | 'error'
+export type EmulationStatus = 'created' | 'starting' | 'running' | 'stopping' | 'stopped' | 'error'
 
 export interface PortForward {
   host: number
