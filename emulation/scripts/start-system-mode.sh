@@ -57,6 +57,7 @@ case "$KERNEL_MAGIC" in
     27051956) echo "Kernel format: U-Boot uImage"; KERNEL_VALID=1 ;; # uImage
     1f8b*)    echo "Kernel format: gzip-compressed"; KERNEL_VALID=1 ;; # gzip
     5d0000*)  echo "Kernel format: LZMA-compressed"; KERNEL_VALID=1 ;; # LZMA
+    4d5a*)    echo "Kernel format: x86 bzImage"; KERNEL_VALID=1 ;;   # bzImage (x86/x86_64)
 esac
 # Check ARM zImage magic at offset 0x24
 if [ "$KERNEL_VALID" -eq 0 ]; then
