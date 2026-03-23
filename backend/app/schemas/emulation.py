@@ -34,6 +34,7 @@ class EmulationSessionResponse(BaseModel):
     arguments: str | None
     port_forwards: list[dict] | None
     error_message: str | None
+    logs: str | None
     started_at: datetime | None
     stopped_at: datetime | None
     created_at: datetime

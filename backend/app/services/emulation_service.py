@@ -1328,6 +1328,7 @@ echo "[wairz] Starting firmware init..."
             try:
                 client = self._get_docker_client()
                 container = client.containers.get(session.container_id)
+                session.logs = self._read_container_qemu_log(container, max_bytes=8000)
                 container.stop(timeout=5)
                 container.remove(force=True)
             except docker.errors.NotFound:
@@ -1339,6 +1340,19 @@ echo "[wairz] Starting firmware init..."
         session.stopped_at = datetime.now(timezone.utc)
         await self.db.flush()
         return session
+
+    async def delete_session(self, session_id: UUID) -> None:
+        """Delete a stopped or errored emulation session record."""
+        result = await self.db.execute(
+            select(EmulationSession).where(EmulationSession.id == session_id)
+        )
+        session = result.scalar_one_or_none()
+        if not session:
+            raise ValueError("Session not found")
+        if session.status in ("running", "starting"):
+            raise ValueError("Cannot delete an active session — stop it first")
+        await self.db.delete(session)
+        await self.db.flush()
 
     async def exec_command(
         self,
@@ -1577,7 +1591,9 @@ echo "[wairz] Starting firmware init..."
             container = client.containers.get(session.container_id)
             return self._read_container_qemu_log(container, max_bytes=8000)
         except docker.errors.NotFound:
-            # Container removed — return stored error_message
+            # Container removed — return saved logs or error_message
+            if session.logs:
+                return session.logs
             if session.error_message:
                 return session.error_message
             return "Container has been removed — no logs available."

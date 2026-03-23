@@ -79,6 +79,21 @@ async def start_emulation(
     return session
 
 
+@router.delete("/{session_id}", status_code=204)
+async def delete_session(
+    project_id: uuid.UUID,
+    session_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete a stopped or errored emulation session."""
+    svc = EmulationService(db)
+    try:
+        await svc.delete_session(session_id)
+        await db.commit()
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+
+
 @router.post(
     "/{session_id}/stop",
     response_model=EmulationSessionResponse,

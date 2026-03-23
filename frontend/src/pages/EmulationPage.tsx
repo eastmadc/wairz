@@ -25,6 +25,7 @@ import { formatDate } from '@/utils/format'
 import {
   startEmulation,
   stopEmulation,
+  deleteSession,
   listSessions,
   getSessionStatus,
   getSessionLogs,
@@ -49,6 +50,7 @@ const STATUS_CONFIG: Record<EmulationStatus, { label: string; className: string 
   created: { label: 'Created', className: 'bg-gray-500 text-white' },
   starting: { label: 'Starting', className: 'bg-yellow-500 text-black' },
   running: { label: 'Running', className: 'bg-green-500 text-white' },
+  stopping: { label: 'Stopping...', className: 'bg-orange-500 text-white' },
   stopped: { label: 'Stopped', className: 'bg-zinc-600 text-white' },
   error: { label: 'Error', className: 'bg-red-500 text-white' },
 }
@@ -199,17 +201,30 @@ export default function EmulationPage() {
     }
   }
 
-  const handleStop = async (sessionId: string) => {
+  const handleDismiss = async (sessionId: string) => {
     if (!projectId) return
     try {
-      await stopEmulation(projectId, sessionId)
-      if (activeSession?.id === sessionId) {
-        setShowTerminal(false)
-        setActiveSession(null)
-      }
-      await loadSessions()
+      await deleteSession(projectId, sessionId)
+      setSessions((prev) => prev.filter((s) => s.id !== sessionId))
     } catch {
       // ignore
+    }
+  }
+
+  const handleStop = async (sessionId: string) => {
+    if (!projectId) return
+    setSessions((prev) =>
+      prev.map((s) => (s.id === sessionId ? { ...s, status: 'stopping' as const } : s))
+    )
+    if (activeSession?.id === sessionId) {
+      setShowTerminal(false)
+      setActiveSession(null)
+    }
+    try {
+      const updated = await stopEmulation(projectId, sessionId)
+      setSessions((prev) => prev.map((s) => (s.id === sessionId ? updated : s)))
+    } catch {
+      await loadSessions()
     }
   }
 
@@ -609,14 +624,14 @@ export default function EmulationPage() {
           {/* Session list */}
           <div className="space-y-3">
             <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
-              Sessions ({sessions.length})
+              Sessions ({sessions.filter((s) => s.mode === mode).length})
             </h2>
 
-            {sessions.length === 0 && (
-              <p className="text-xs text-muted-foreground/60">No emulation sessions yet</p>
+            {sessions.filter((s) => s.mode === mode).length === 0 && (
+              <p className="text-xs text-muted-foreground/60">No {mode}-mode sessions yet</p>
             )}
 
-            {sessions.map((session) => (
+            {sessions.filter((s) => s.mode === mode).map((session) => (
               <SessionCard
                 key={session.id}
                 session={session}
@@ -624,6 +639,7 @@ export default function EmulationPage() {
                 projectId={projectId!}
                 onConnect={() => handleConnect(session)}
                 onStop={() => handleStop(session.id)}
+                onDismiss={() => handleDismiss(session.id)}
               />
             ))}
           </div>
@@ -663,13 +679,24 @@ interface SessionCardProps {
   projectId: string
   onConnect: () => void
   onStop: () => void
+  onDismiss: () => void
 }
 
-function SessionCard({ session, isActive, projectId, onConnect, onStop }: SessionCardProps) {
+function SessionCard({ session, isActive, projectId, onConnect, onStop, onDismiss }: SessionCardProps) {
   const statusCfg = STATUS_CONFIG[session.status] || STATUS_CONFIG.stopped
   const [showLogs, setShowLogs] = useState(false)
   const [logs, setLogs] = useState<string | null>(null)
   const [logsLoading, setLogsLoading] = useState(false)
+
+  // When the session finishes stopping, refresh logs if the panel is open
+  useEffect(() => {
+    if (session.status !== 'stopped' || !showLogs) return
+    setLogsLoading(true)
+    getSessionLogs(projectId, session.id)
+      .then(setLogs)
+      .catch(() => setLogs('Failed to fetch logs'))
+      .finally(() => setLogsLoading(false))
+  }, [session.status]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleViewLogs = async () => {
     if (showLogs) {
@@ -705,11 +732,22 @@ function SessionCard({ session, isActive, projectId, onConnect, onStop }: Sessio
             {session.mode === 'user' ? 'User' : 'System'} Mode
           </span>
         </div>
-        {session.architecture && (
-          <Badge variant="outline" className="text-[10px]">
-            {session.architecture}
-          </Badge>
-        )}
+        <div className="flex items-center gap-2">
+          {session.architecture && (
+            <Badge variant="outline" className="text-[10px]">
+              {session.architecture}
+            </Badge>
+          )}
+          {(session.status === 'stopped' || session.status === 'error') && (
+            <button
+              onClick={onDismiss}
+              className="text-muted-foreground hover:text-destructive transition-colors"
+              title="Delete session"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+            </button>
+          )}
+        </div>
       </div>
 
       {session.binary_path && (
@@ -723,8 +761,8 @@ function SessionCard({ session, isActive, projectId, onConnect, onStop }: Sessio
         {formatDate(session.created_at)}
       </div>
 
-      {/* Error message — prominent display */}
-      {session.error_message && (
+      {/* Error message — only shown for errored sessions, not intentional stops */}
+      {session.status === 'error' && session.error_message && (
         <div className="mt-2 rounded-md bg-destructive/10 px-3 py-2 text-xs text-destructive">
           <div className="flex items-start gap-2">
             <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
@@ -760,6 +798,12 @@ function SessionCard({ session, isActive, projectId, onConnect, onStop }: Sessio
               Stop
             </Button>
           </>
+        )}
+        {session.status === 'stopping' && (
+          <Button variant="outline" size="sm" className="h-7 text-xs" disabled>
+            <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+            Stopping...
+          </Button>
         )}
         {/* View Logs button — available for any session with a container */}
         <Button
