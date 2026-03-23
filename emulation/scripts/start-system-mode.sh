@@ -58,6 +58,14 @@ case "$KERNEL_MAGIC" in
     1f8b*)    echo "Kernel format: gzip-compressed"; KERNEL_VALID=1 ;; # gzip
     5d0000*)  echo "Kernel format: LZMA-compressed"; KERNEL_VALID=1 ;; # LZMA
 esac
+# Check x86 bzImage magic at offset 0x202
+if [ "$KERNEL_VALID" -eq 0 ]; then
+    X86_MAGIC=$(xxd -p -l 4 -s 0x202 "$KERNEL" 2>/dev/null)
+    if [ "$X86_MAGIC" = "48647253" ]; then
+        echo "Kernel format: x86 bzImage"
+        KERNEL_VALID=1
+    fi
+fi
 # Check ARM zImage magic at offset 0x24
 if [ "$KERNEL_VALID" -eq 0 ]; then
     ARM_MAGIC=$(xxd -p -l 4 -s 0x24 "$KERNEL" 2>/dev/null)
@@ -103,11 +111,15 @@ esac
 # Clean up stale files from previous runs
 rm -f "$SERIAL_SOCK" "$ROOTFS_IMG"
 
-# Create a temporary ext4 image from the rootfs
-echo "Creating ext4 rootfs image (256 MB)..."
-dd if=/dev/zero of="$ROOTFS_IMG" bs=1M count=256 2>/dev/null
-if ! mkfs.ext4 -q -d "$ROOTFS" "$ROOTFS_IMG" 2>&1; then
-    echo "WARNING: mkfs.ext4 -d failed, trying without directory copy..."
+# Create a temporary ext4 image sized to fit the rootfs (2x content + 256MB headroom)
+ROOTFS_MB=$(du -sm "$ROOTFS" 2>/dev/null | cut -f1)
+ROOTFS_MB=${ROOTFS_MB:-0}
+IMG_MB=$(( ROOTFS_MB * 2 + 256 ))
+INODE_COUNT=$(( $(find "$ROOTFS" 2>/dev/null | wc -l) * 2 + 4096 ))
+echo "Creating ext4 rootfs image (${IMG_MB} MB, rootfs: ${ROOTFS_MB} MB, inodes: ${INODE_COUNT})..."
+dd if=/dev/zero of="$ROOTFS_IMG" bs=1M count="$IMG_MB" 2>/dev/null
+if ! mkfs.ext4 -q -N "$INODE_COUNT" -d "$ROOTFS" "$ROOTFS_IMG" 2>&1; then
+    echo "WARNING: mkfs.ext4 -d failed — falling back to empty image; init script will be missing and kernel will panic."
     mkfs.ext4 -q "$ROOTFS_IMG" 2>&1 || true
 fi
 echo "Rootfs image created: $(wc -c < "$ROOTFS_IMG") bytes"
