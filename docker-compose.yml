@@ -114,3 +114,5 @@ volumes:
 networks:
   emulation_net:
     internal: true
+  default:
+    driver: bridge
