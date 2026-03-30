@@ -8,9 +8,9 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
+from app.routers.deps import resolve_firmware
 from app.services.analysis_service import check_binary_protections
 from app.services.file_service import FileService
-from app.services.firmware_service import FirmwareService
 from app.services.ghidra_service import (
     decompile_function as ghidra_decompile,
     get_analysis_cache,
@@ -22,26 +22,6 @@ router = APIRouter(
     prefix="/api/v1/projects/{project_id}/analysis",
     tags=["analysis"],
 )
-
-
-async def _resolve_firmware(
-    project_id: uuid.UUID,
-    firmware_id: uuid.UUID | None = Query(None, description="Specific firmware ID (defaults to first)"),
-    db: AsyncSession = Depends(get_db),
-):
-    """Resolve project -> firmware, return firmware record."""
-    svc = FirmwareService(db)
-    if firmware_id:
-        firmware = await svc.get_by_id(firmware_id)
-        if not firmware or firmware.project_id != project_id:
-            raise HTTPException(404, "Firmware not found")
-    else:
-        firmware = await svc.get_by_project(project_id)
-        if not firmware:
-            raise HTTPException(404, "No firmware uploaded for this project")
-    if not firmware.extracted_path:
-        raise HTTPException(400, "Firmware not yet unpacked")
-    return firmware
 
 
 def _resolve_path(firmware, path: str) -> str:
@@ -57,7 +37,7 @@ def _resolve_path(firmware, path: str) -> str:
 @router.get("/functions")
 async def list_functions(
     path: str = Query(..., description="Path to ELF binary in firmware filesystem"),
-    firmware=Depends(_resolve_firmware),
+    firmware=Depends(resolve_firmware),
     db: AsyncSession = Depends(get_db),
 ):
     """List functions found in an ELF binary, sorted by size (largest first)."""
@@ -90,7 +70,7 @@ async def list_functions(
 @router.get("/imports")
 async def list_imports(
     path: str = Query(..., description="Path to ELF binary in firmware filesystem"),
-    firmware=Depends(_resolve_firmware),
+    firmware=Depends(resolve_firmware),
 ):
     """List imported symbols with their source library.
 
@@ -104,7 +84,7 @@ async def list_imports(
         raise HTTPException(403, "Invalid path")
 
     extracted_root = firmware.extracted_path
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     imports = await loop.run_in_executor(
         None, _resolve_elf_imports, full_path, extracted_root
     )
@@ -222,7 +202,7 @@ async def disassemble_function(
     path: str = Query(..., description="Path to ELF binary"),
     function: str = Query(..., description="Function name to disassemble"),
     max_instructions: int = Query(100, ge=1, le=200),
-    firmware=Depends(_resolve_firmware),
+    firmware=Depends(resolve_firmware),
     db: AsyncSession = Depends(get_db),
 ):
     """Disassemble a function from an ELF binary."""
@@ -251,7 +231,7 @@ async def disassemble_function(
 @router.get("/binary-info")
 async def get_binary_info(
     path: str = Query(..., description="Path to ELF binary"),
-    firmware=Depends(_resolve_firmware),
+    firmware=Depends(resolve_firmware),
     db: AsyncSession = Depends(get_db),
 ):
     """Get binary metadata and security protections."""
@@ -281,7 +261,7 @@ async def get_binary_info(
 async def get_cleaned_code(
     path: str = Query(..., description="Path to ELF binary"),
     function: str = Query(..., description="Function name"),
-    firmware=Depends(_resolve_firmware),
+    firmware=Depends(resolve_firmware),
     db: AsyncSession = Depends(get_db),
 ):
     """Check if AI-cleaned decompiled code exists for a function."""
@@ -304,7 +284,7 @@ async def get_cleaned_code(
 async def decompile_function(
     path: str = Query(..., description="Path to ELF binary"),
     function: str = Query(..., description="Function name to decompile"),
-    firmware=Depends(_resolve_firmware),
+    firmware=Depends(resolve_firmware),
     db: AsyncSession = Depends(get_db),
 ):
     """Decompile a function from an ELF binary using Ghidra headless."""

@@ -6,7 +6,7 @@ services:
       POSTGRES_PASSWORD: wairz
       POSTGRES_DB: wairz
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -18,7 +18,7 @@ services:
   redis:
     image: redis:7-alpine
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
     volumes:
       - redisdata:/data
     healthcheck:
@@ -64,6 +64,7 @@ services:
         condition: service_healthy
 
   emulation:
+    profiles: ["build"]
     build:
       context: ./emulation
       dockerfile: Dockerfile
@@ -72,8 +73,8 @@ services:
       - firmware_data:/data/firmware:ro
       - ./emulation/kernels:/opt/kernels:ro
     networks:
-      - default
       - emulation_net
+    pids_limit: 256
     deploy:
       resources:
         limits:
@@ -81,14 +82,14 @@ services:
           cpus: "1.0"
 
   fuzzing:
+    profiles: ["build"]
     build:
       context: ./fuzzing
       dockerfile: Dockerfile
     image: wairz-fuzzing
     volumes:
       - firmware_data:/data/firmware:ro
-    networks:
-      - default
+    pids_limit: 256
     deploy:
       resources:
         limits:

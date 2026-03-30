@@ -9,38 +9,18 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.models.analysis_cache import AnalysisCache
+from app.routers.deps import resolve_firmware as _resolve_firmware
 from app.schemas.component_map import (
     ComponentEdgeResponse,
     ComponentGraphResponse,
     ComponentNodeResponse,
 )
 from app.services.component_map_service import ComponentMapService
-from app.services.firmware_service import FirmwareService
 
 router = APIRouter(
     prefix="/api/v1/projects/{project_id}/component-map",
     tags=["component-map"],
 )
-
-
-async def _resolve_firmware(
-    project_id: uuid.UUID,
-    firmware_id: uuid.UUID | None = None,
-    db: AsyncSession = Depends(get_db),
-):
-    """Resolve project -> firmware, return firmware record."""
-    svc = FirmwareService(db)
-    if firmware_id:
-        firmware = await svc.get_by_id(firmware_id)
-        if not firmware or firmware.project_id != project_id:
-            raise HTTPException(404, "Firmware not found")
-    else:
-        firmware = await svc.get_by_project(project_id)
-        if not firmware:
-            raise HTTPException(404, "No firmware uploaded for this project")
-    if not firmware.extracted_path:
-        raise HTTPException(400, "Firmware not yet unpacked")
-    return firmware
 
 
 @router.get("", response_model=ComponentGraphResponse)
@@ -73,7 +53,7 @@ async def get_component_map(
 
     # Build graph (CPU-bound, run in thread)
     service = ComponentMapService(firmware.extracted_path)
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     try:
         graph = await loop.run_in_executor(None, service.build_graph)
     except Exception as e:

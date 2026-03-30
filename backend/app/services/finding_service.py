@@ -39,6 +39,8 @@ class FindingService:
         project_id: uuid.UUID,
         severity: str | None = None,
         status: str | None = None,
+        limit: int | None = None,
+        offset: int | None = None,
     ) -> list[Finding]:
         stmt = select(Finding).where(Finding.project_id == project_id)
         if severity:
@@ -46,6 +48,10 @@ class FindingService:
         if status:
             stmt = stmt.where(Finding.status == status)
         stmt = stmt.order_by(Finding.created_at.desc())
+        if limit is not None:
+            stmt = stmt.limit(limit)
+        if offset is not None:
+            stmt = stmt.offset(offset)
         result = await self.db.execute(stmt)
         return list(result.scalars().all())
 

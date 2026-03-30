@@ -78,5 +78,8 @@ RUN mkdir -p /opt/kernels /data/firmware
 # Default working directory
 WORKDIR /opt
 
+# Run as non-root user
+USER emulator
+
 # Keep container alive — managed by Docker SDK from the backend
 CMD ["sleep", "infinity"]

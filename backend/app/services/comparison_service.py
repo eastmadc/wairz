@@ -1,9 +1,9 @@
 """Service for comparing firmware versions — filesystem and binary diffing."""
 
-import hashlib
 import os
 from dataclasses import dataclass, field
 
+from app.utils.hashing import compute_file_sha256
 from app.utils.sandbox import safe_walk
 
 
@@ -58,13 +58,9 @@ class BinaryDiff:
 
 
 def _file_sha256(path: str) -> str | None:
-    """Compute SHA256 hash of a file."""
+    """Compute SHA256 hash of a file, returning None on error."""
     try:
-        h = hashlib.sha256()
-        with open(path, "rb") as f:
-            for chunk in iter(lambda: f.read(8192), b""):
-                h.update(chunk)
-        return h.hexdigest()
+        return compute_file_sha256(path)
     except (OSError, PermissionError):
         return None
 
