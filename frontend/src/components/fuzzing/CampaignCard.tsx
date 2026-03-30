@@ -1,6 +1,5 @@
 import {
   Square,
-  Loader2,
   AlertCircle,
   Clock,
   Zap,
