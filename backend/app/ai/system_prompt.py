@@ -3,7 +3,6 @@ def build_system_prompt(
     firmware_filename: str,
     architecture: str | None,
     endianness: str | None,
-    extracted_path: str,
 ) -> str:
     """Build the system prompt for the AI firmware analyst."""
     arch_info = architecture or "unknown"

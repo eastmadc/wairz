@@ -1,6 +1,5 @@
 """REST endpoints for AFL++ fuzzing campaigns."""
 
-import asyncio
 import logging
 import uuid
 
@@ -106,20 +105,14 @@ async def list_campaigns(
     """List all fuzzing campaigns for this project."""
     svc = FuzzingService(db)
     campaigns = await svc.list_campaigns(project_id)
-    # Update status for running campaigns concurrently
-    status_tasks = []
-    status_indices = []
+    # Update status for running campaigns sequentially
+    # (AsyncSession is not safe for concurrent coroutine access)
     for i, campaign in enumerate(campaigns):
         if campaign.status == "running":
-            status_tasks.append(svc.get_campaign_status(campaign.id))
-            status_indices.append(i)
-
-    if status_tasks:
-        results = await asyncio.gather(*status_tasks, return_exceptions=True)
-        for idx, result in zip(status_indices, results):
-            if isinstance(result, Exception):
+            try:
+                campaigns[i] = await svc.get_campaign_status(campaign.id)
+            except Exception:
                 continue
-            campaigns[idx] = result
 
     return campaigns
 

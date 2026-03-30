@@ -567,7 +567,6 @@ async def run_server(project_id: uuid.UUID) -> None:
                 firmware_filename=state.firmware_filename,
                 architecture=state.architecture,
                 endianness=state.endianness,
-                extracted_path=state.extracted_path,
             )
             return GetPromptResult(
                 description="Wairz firmware analysis system prompt",

@@ -153,20 +153,14 @@ async def list_sessions(
     """
     svc = EmulationService(db)
     sessions = await svc.list_sessions(project_id)
-    # Update status for running sessions concurrently (detect dead QEMU)
-    status_tasks = []
-    status_indices = []
+    # Update status for running sessions sequentially
+    # (AsyncSession is not safe for concurrent coroutine access)
     for i, session in enumerate(sessions):
         if session.status in ("running", "starting"):
-            status_tasks.append(svc.get_status(session.id))
-            status_indices.append(i)
-
-    if status_tasks:
-        results = await asyncio.gather(*status_tasks, return_exceptions=True)
-        for idx, result in zip(status_indices, results):
-            if isinstance(result, Exception):
+            try:
+                sessions[i] = await svc.get_status(session.id)
+            except Exception:
                 continue
-            sessions[idx] = result
 
     return sessions
 
