@@ -53,7 +53,7 @@ class ImportService:
 
         # Validate: check for zip-slip paths
         for name in zf.namelist():
-            if name.startswith("/") or ".." in name.split("/"):
+            if name.startswith("/") or ".." in name.split("/") or "\\" in name:
                 raise ValueError(f"Invalid archive: suspicious path '{name}'")
 
         # ── Read manifest ──────────────────────────────────────────

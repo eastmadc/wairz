@@ -344,7 +344,7 @@ async def _handle_analyze_init_scripts(input: dict, context: ToolContext) -> str
     raw_entries: list[str] = []
 
     # 1. Check /etc/inittab
-    inittab_path = os.path.join(real_root, "etc", "inittab")
+    inittab_path = validate_path(real_root, "etc/inittab")
     if os.path.isfile(inittab_path):
         try:
             with open(inittab_path, "r", errors="replace") as f:
@@ -363,7 +363,7 @@ async def _handle_analyze_init_scripts(input: dict, context: ToolContext) -> str
             pass
 
     # 2. Check /etc/init.d/ scripts
-    initd_path = os.path.join(real_root, "etc", "init.d")
+    initd_path = validate_path(real_root, "etc/init.d")
     if os.path.isdir(initd_path):
         for script_name in sorted(os.listdir(initd_path)):
             script_path = os.path.join(initd_path, script_name)
@@ -383,14 +383,14 @@ async def _handle_analyze_init_scripts(input: dict, context: ToolContext) -> str
                     services.append(f"    Source: /etc/init.d/{script_name}")
 
     # 3. Check /etc/rc.d/ (common in OpenWrt)
-    rcd_path = os.path.join(real_root, "etc", "rc.d")
+    rcd_path = validate_path(real_root, "etc/rc.d")
     if os.path.isdir(rcd_path):
         for link_name in sorted(os.listdir(rcd_path)):
             raw_entries.append(f"  /etc/rc.d/{link_name}")
 
     # 4. Check systemd units
     for systemd_dir in ("etc/systemd/system", "lib/systemd/system", "usr/lib/systemd/system"):
-        sd_path = os.path.join(real_root, systemd_dir)
+        sd_path = validate_path(real_root, systemd_dir)
         if not os.path.isdir(sd_path):
             continue
         for unit_name in sorted(os.listdir(sd_path)):
@@ -539,8 +539,8 @@ def _find_cert_files(extracted_root: str, search_path: str | None) -> list[str]:
     cert_files: list[str] = []
 
     if search_path:
-        # Scan a specific file or directory
-        full_path = os.path.join(real_root, search_path.lstrip("/"))
+        # Scan a specific file or directory — validate against sandbox
+        full_path = validate_path(real_root, search_path)
         if os.path.isfile(full_path):
             return [full_path]
         if os.path.isdir(full_path):
@@ -555,7 +555,7 @@ def _find_cert_files(extracted_root: str, search_path: str | None) -> list[str]:
 
     # Scan known certificate directories
     for cert_dir in _CERT_SEARCH_DIRS:
-        full_dir = os.path.join(real_root, cert_dir)
+        full_dir = validate_path(real_root, cert_dir)
         if not os.path.isdir(full_dir):
             continue
         for dirpath, _dirs, files in safe_walk(full_dir):

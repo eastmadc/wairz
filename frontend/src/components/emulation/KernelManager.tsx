@@ -12,6 +12,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Progress } from '@/components/ui/progress'
 import { listKernels, uploadKernel, deleteKernel } from '@/api/kernels'
+import { extractErrorMessage } from '@/utils/error'
 import type { KernelInfo } from '@/types'
 
 const SUPPORTED_ARCHITECTURES = ['arm', 'aarch64', 'mips', 'mipsel', 'x86', 'x86_64']
@@ -101,8 +102,7 @@ export default function KernelManager({
       setUploadProgress(0)
       await fetchKernels()
     } catch (err: unknown) {
-      const resp = (err as { response?: { data?: { detail?: string } } }).response
-      setError(resp?.data?.detail || (err instanceof Error ? err.message : 'Upload failed'))
+      setError(extractErrorMessage(err, 'Upload failed'))
     } finally {
       setUploading(false)
     }

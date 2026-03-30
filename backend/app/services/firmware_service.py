@@ -1,3 +1,4 @@
+import asyncio
 import hashlib
 import os
 import re
@@ -182,14 +183,15 @@ class FirmwareService:
             while chunk := await file.read(8192):
                 await out.write(chunk)
 
-        # Extract the archive
+        # Extract the archive (sync I/O — run in executor to avoid blocking)
+        loop = asyncio.get_running_loop()
         try:
-            _extract_archive(archive_path, extraction_dir)
+            await loop.run_in_executor(None, _extract_archive, archive_path, extraction_dir)
         finally:
             os.remove(archive_path)
 
-        # Find the filesystem root
-        fs_root = find_filesystem_root(extraction_dir)
+        # Find the filesystem root (sync I/O — run in executor)
+        fs_root = await loop.run_in_executor(None, find_filesystem_root, extraction_dir)
         if not fs_root:
             raise ValueError(
                 "Could not locate a filesystem root in the archive. "
@@ -197,11 +199,11 @@ class FirmwareService:
             )
 
         firmware.extracted_path = fs_root
-        arch, endian = detect_architecture(fs_root)
+        arch, endian = await loop.run_in_executor(None, detect_architecture, fs_root)
         firmware.architecture = arch
         firmware.endianness = endian
-        firmware.os_info = detect_os_info(fs_root)
-        firmware.kernel_path = detect_kernel(extraction_dir, fs_root)
+        firmware.os_info = await loop.run_in_executor(None, detect_os_info, fs_root)
+        firmware.kernel_path = await loop.run_in_executor(None, detect_kernel, extraction_dir, fs_root)
         firmware.unpack_log = "Filesystem provided via manual rootfs upload."
 
         await self.db.flush()
