@@ -111,5 +111,8 @@ RUN useradd -m -s /bin/bash fuzzer
 
 WORKDIR /opt/fuzzing
 
+# Run as non-root user
+USER fuzzer
+
 # Keep container alive — managed by Docker SDK from the backend
 CMD ["sleep", "infinity"]

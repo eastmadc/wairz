@@ -377,13 +377,22 @@ async def _handle_generate_dictionary(input: dict, context: ToolContext) -> str:
         return f"Error: {exc}"
 
     # Extract strings and build dictionary entries
-    import subprocess
+    import asyncio
     try:
-        proc = subprocess.run(
-            ["strings", "-n", "4", full_path],
-            capture_output=True, timeout=30, text=True,
+        proc = await asyncio.create_subprocess_exec(
+            "strings", "-n", "4", full_path,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
         )
-        all_strings = proc.stdout.strip().split("\n") if proc.stdout else []
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=30)
+        output = stdout.decode("utf-8", errors="replace")
+        all_strings = output.strip().split("\n") if output.strip() else []
+    except asyncio.TimeoutError:
+        try:
+            proc.kill()
+        except ProcessLookupError:
+            pass
+        return "Error: strings extraction timed out after 30 seconds."
     except Exception as exc:
         return f"Error extracting strings: {exc}"
 

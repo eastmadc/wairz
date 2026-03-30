@@ -13,7 +13,6 @@ to restart the MCP server process when changing projects.
 
 import argparse
 import asyncio
-import hashlib
 import logging
 import os
 import sys
@@ -42,6 +41,7 @@ from app.config import get_settings
 from app.models.analysis_cache import AnalysisCache
 from app.models.firmware import Firmware
 from app.models.project import Project
+from app.utils.hashing import compute_file_sha256
 from app.utils.sandbox import validate_path
 
 # Docker volume path translation
@@ -141,15 +141,6 @@ def _translate_path(path: str, host_storage_root: str | None) -> str:
     return path
 
 
-def _compute_sha256(file_path: str) -> str:
-    """Compute SHA256 hash of a file."""
-    sha = hashlib.sha256()
-    with open(file_path, "rb") as f:
-        for chunk in iter(lambda: f.read(8192), b""):
-            sha.update(chunk)
-    return sha.hexdigest()
-
-
 async def _handle_save_code_cleanup(
     input: dict, context: ToolContext
 ) -> str:
@@ -167,8 +158,8 @@ async def _handle_save_code_cleanup(
 
     full_path = context.resolve_path(binary_path_arg)
 
-    binary_sha256 = await asyncio.get_event_loop().run_in_executor(
-        None, _compute_sha256, full_path
+    binary_sha256 = await asyncio.get_running_loop().run_in_executor(
+        None, compute_file_sha256, full_path
     )
 
     operation = f"code_cleanup:{function_name}"

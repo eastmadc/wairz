@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import type { Project, ProjectDetail } from '@/types'
 import { listProjects, getProject, createProject, deleteProject } from '@/api/projects'
 import { uploadFirmware as apiFirmwareUpload, unpackFirmware as apiUnpackFirmware } from '@/api/firmware'
+import { extractErrorMessage } from '@/utils/error'
 
 interface ProjectState {
   projects: Project[]
@@ -129,11 +130,5 @@ function syncProjectInList(
   }
 }
 
-function extractError(e: unknown): string {
-  if (e && typeof e === 'object' && 'response' in e) {
-    const resp = (e as { response?: { data?: { detail?: string } } }).response
-    if (resp?.data?.detail) return resp.data.detail
-  }
-  if (e instanceof Error) return e.message
-  return 'An unexpected error occurred'
-}
+// Use the shared extractErrorMessage utility, aliased for backward compatibility
+const extractError = (e: unknown) => extractErrorMessage(e, 'An unexpected error occurred')

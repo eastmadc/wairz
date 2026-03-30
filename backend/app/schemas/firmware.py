@@ -27,9 +27,6 @@ class FirmwareDetailResponse(BaseModel):
     original_filename: str | None
     sha256: str
     file_size: int | None
-    storage_path: str | None
-    extracted_path: str | None
-    extraction_dir: str | None = None
     architecture: str | None
     endianness: str | None
     os_info: str | None

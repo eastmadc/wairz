@@ -1,5 +1,6 @@
 """Project export and import endpoints."""
 
+import re
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile
@@ -42,7 +43,7 @@ async def export_project(
     except ValueError as e:
         raise HTTPException(400, str(e))
 
-    safe_name = project.name.replace(" ", "_").replace("/", "_")
+    safe_name = re.sub(r'[^\w.-]', '_', project.name)
     filename = f"{safe_name}.wairz"
 
     return StreamingResponse(
