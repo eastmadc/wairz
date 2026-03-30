@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { useParams } from 'react-router-dom'
 import { Loader2, AlertTriangle } from 'lucide-react'
 import { getComponentMap } from '@/api/componentMap'
+import { extractErrorMessage } from '@/utils/error'
 import type { ComponentGraph } from '@/types'
 import ComponentMap from '@/components/component-map/ComponentMap'
 
@@ -22,10 +23,9 @@ export default function ComponentMapPage() {
       .then((data) => {
         if (!cancelled) setGraph(data)
       })
-      .catch((err) => {
+      .catch((err: unknown) => {
         if (!cancelled) {
-          const msg = err.response?.data?.detail ?? err.message ?? 'Failed to load component map'
-          setError(msg)
+          setError(extractErrorMessage(err, 'Failed to load component map'))
         }
       })
       .finally(() => {

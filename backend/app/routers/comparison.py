@@ -48,7 +48,7 @@ async def compare_firmware(
     fw_a = await _get_firmware(body.firmware_a_id, project_id, db)
     fw_b = await _get_firmware(body.firmware_b_id, project_id, db)
 
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     result = await loop.run_in_executor(
         None, diff_filesystems, fw_a.extracted_path, fw_b.extracted_path,
     )
@@ -85,7 +85,7 @@ async def compare_binary(
     except Exception:
         raise HTTPException(404, f"Binary not found in firmware B: {body.binary_path}")
 
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     result = await loop.run_in_executor(
         None, diff_binary, path_a, path_b, body.binary_path,
     )

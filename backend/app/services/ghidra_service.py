@@ -10,7 +10,6 @@ on functions not covered in the initial batch (top 200 by size).
 """
 
 import asyncio
-import hashlib
 import json
 import logging
 import os
@@ -23,6 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.models.analysis_cache import AnalysisCache
+from app.utils.hashing import compute_file_sha256
 
 logger = logging.getLogger(__name__)
 
@@ -42,15 +42,6 @@ _ARCH_MAP = {
     "PowerPC": "ppc",
     "sparc": "sparc",
 }
-
-
-def _compute_sha256(file_path: str) -> str:
-    """Compute SHA256 hash of a file."""
-    sha = hashlib.sha256()
-    with open(file_path, "rb") as f:
-        for chunk in iter(lambda: f.read(8192), b""):
-            sha.update(chunk)
-    return sha.hexdigest()
 
 
 def _map_architecture(ghidra_arch: str) -> str:
@@ -222,8 +213,8 @@ class GhidraAnalysisCache:
 
     async def _get_binary_sha256(self, binary_path: str) -> str:
         """Compute SHA256 in a thread."""
-        loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(None, _compute_sha256, binary_path)
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, compute_file_sha256, binary_path)
 
     async def get_binary_sha256(self, binary_path: str) -> str:
         """Public wrapper: compute SHA256 in a thread."""
@@ -415,17 +406,20 @@ class GhidraAnalysisCache:
             return binary_sha256
 
         # Concurrency guard
+        should_analyze = False
         async with self._lock:
-            if binary_sha256 in self._analysis_locks:
-                # Another coroutine is already analyzing this binary
-                event = self._analysis_locks[binary_sha256]
+            event = self._analysis_locks.get(binary_sha256)
+            if event is not None:
+                # Another coroutine is already analyzing this binary — wait for it
+                pass
             else:
+                # We're the leader — create the event and do the analysis
                 event = asyncio.Event()
                 self._analysis_locks[binary_sha256] = event
-                event = None  # We're the one who will do the analysis
+                should_analyze = True
 
-        if event is not None:
-            # Wait for the other coroutine to finish
+        if not should_analyze:
+            # Wait for the leader coroutine to finish
             await event.wait()
             return binary_sha256
 
@@ -438,10 +432,8 @@ class GhidraAnalysisCache:
                     binary_path, firmware_id, binary_sha256, db,
                 )
         finally:
-            async with self._lock:
-                ev = self._analysis_locks.pop(binary_sha256, None)
-                if ev is not None:
-                    ev.set()
+            self._analysis_locks.pop(binary_sha256, None)
+            event.set()
 
         return binary_sha256
 

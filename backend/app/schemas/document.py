@@ -27,7 +27,6 @@ class DocumentResponse(BaseModel):
     content_type: str
     file_size: int
     sha256: str
-    storage_path: str
     created_at: datetime
 
 

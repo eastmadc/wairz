@@ -238,3 +238,10 @@ Good images for development and testing:
 - **OpenWrt** (MIPS, ARM) — well-structured embedded Linux with lots of components
 - **DD-WRT** — similar to OpenWrt
 - **DVRF** (Damn Vulnerable Router Firmware) — intentionally vulnerable, great for security tool testing
+
+---
+
+## Citadel Harness
+
+This project uses the [Citadel](https://github.com/SethGammon/Citadel) agent
+orchestration harness. Configuration is in `.claude/harness.json`.

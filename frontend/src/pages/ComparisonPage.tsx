@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import {
   GitCompareArrows,
@@ -82,19 +82,24 @@ export default function ComparisonPage() {
   const fwALabel = firmwareList.find((fw) => fw.id === fwAId)
   const fwBLabel = firmwareList.find((fw) => fw.id === fwBId)
 
-  const allEntries: FileDiffEntry[] = fsDiff
-    ? [...fsDiff.added, ...fsDiff.removed, ...fsDiff.modified, ...fsDiff.permissions_changed]
-    : []
-  const filteredEntries = statusFilter === 'all'
-    ? allEntries
-    : allEntries.filter((e) => e.status === statusFilter)
+  const allEntries = useMemo<FileDiffEntry[]>(() =>
+    fsDiff ? [...fsDiff.added, ...fsDiff.removed, ...fsDiff.modified, ...fsDiff.permissions_changed] : [],
+    [fsDiff]
+  )
+  const filteredEntries = useMemo(() =>
+    statusFilter === 'all' ? allEntries : allEntries.filter((e) => e.status === statusFilter),
+    [allEntries, statusFilter]
+  )
 
   // Identify modified ELF binaries (likely binaries: in /bin, /sbin, /usr/bin, /usr/lib, etc.)
-  const modifiedBinaries = fsDiff?.modified.filter((e) => {
-    const p = e.path.toLowerCase()
-    return p.includes('/bin/') || p.includes('/sbin/') || p.includes('/lib/') ||
-           p.endsWith('.so') || p.includes('.so.')
-  }) ?? []
+  const modifiedBinaries = useMemo(() =>
+    fsDiff?.modified.filter((e) => {
+      const p = e.path.toLowerCase()
+      return p.includes('/bin/') || p.includes('/sbin/') || p.includes('/lib/') ||
+             p.endsWith('.so') || p.includes('.so.')
+    }) ?? [],
+    [fsDiff]
+  )
 
   return (
     <div className="space-y-6">
