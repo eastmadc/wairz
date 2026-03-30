@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
@@ -100,7 +100,6 @@ async def generate_sbom(
 
     # Clear existing components if force_rescan
     if force_rescan:
-        from sqlalchemy import delete
         await db.execute(
             delete(SbomComponent).where(SbomComponent.firmware_id == firmware.id)
         )

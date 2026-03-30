@@ -432,7 +432,8 @@ class GhidraAnalysisCache:
                     binary_path, firmware_id, binary_sha256, db,
                 )
         finally:
-            self._analysis_locks.pop(binary_sha256, None)
+            async with self._lock:
+                self._analysis_locks.pop(binary_sha256, None)
             event.set()
 
         return binary_sha256
