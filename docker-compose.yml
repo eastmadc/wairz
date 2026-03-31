@@ -63,6 +63,9 @@ services:
       redis:
         condition: service_healthy
 
+  # To start the background job worker (optional — falls back to asyncio.create_task):
+  # docker compose exec backend uv run arq app.workers.arq_worker.WorkerSettings
+
   emulation:
     profiles: ["build"]
     build:
