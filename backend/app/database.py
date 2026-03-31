@@ -10,9 +10,15 @@ class Base(DeclarativeBase):
     pass
 
 
+settings = get_settings()
 engine = create_async_engine(
-    get_settings().database_url,
+    settings.database_url,
     echo=False,
+    pool_size=settings.database_pool_size,
+    max_overflow=settings.database_max_overflow,
+    pool_timeout=settings.database_pool_timeout,
+    pool_recycle=settings.database_pool_recycle,
+    pool_pre_ping=True,
 )
 
 async_session_factory = async_sessionmaker(
