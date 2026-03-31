@@ -18,6 +18,8 @@ import uuid
 from pathlib import Path
 
 from sqlalchemy import select
+
+from app.utils.redis_client import get_redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
@@ -245,6 +247,11 @@ class GhidraAnalysisCache:
         """Get a cached result by operation key (public API)."""
         return await self._get_cached(firmware_id, binary_sha256, operation, db)
 
+    @staticmethod
+    def _redis_key(firmware_id: uuid.UUID, binary_sha256: str, operation: str) -> str:
+        """Build a Redis cache key."""
+        return f"wairz:cache:{firmware_id}:{binary_sha256}:{operation}"
+
     async def _get_cached(
         self,
         firmware_id: uuid.UUID,
@@ -252,7 +259,24 @@ class GhidraAnalysisCache:
         operation: str,
         db: AsyncSession,
     ) -> dict | None:
-        """Get a cached result by operation key."""
+        """Get a cached result by operation key.
+
+        Checks Redis first (fast path), falls through to PostgreSQL on miss,
+        and back-populates Redis on PG hit.
+        """
+        rkey = self._redis_key(firmware_id, binary_sha256, operation)
+
+        # Fast path: Redis
+        try:
+            async with get_redis() as r:
+                if r is not None:
+                    cached = await r.get(rkey)
+                    if cached is not None:
+                        return json.loads(cached)
+        except Exception:
+            pass  # Redis down — fall through to PG
+
+        # Slow path: PostgreSQL
         stmt = select(AnalysisCache.result).where(
             AnalysisCache.firmware_id == firmware_id,
             AnalysisCache.binary_sha256 == binary_sha256,
@@ -261,6 +285,13 @@ class GhidraAnalysisCache:
         result = await db.execute(stmt)
         row = result.scalars().first()
         if row is not None and isinstance(row, dict):
+            # Back-populate Redis
+            try:
+                async with get_redis() as r:
+                    if r is not None:
+                        await r.set(rkey, json.dumps(row), ex=86400)
+            except Exception:
+                pass
             return row
         return None
 
@@ -287,11 +318,23 @@ class GhidraAnalysisCache:
         result_data: dict,
         db: AsyncSession,
     ) -> None:
-        """Store a result in the cache.
+        """Store a result in the cache (Redis + PostgreSQL).
 
-        Deletes any existing entries with the same composite key first
-        to prevent duplicate rows.
+        Writes to Redis first (best-effort, 24h TTL), then PostgreSQL
+        (authoritative). Deletes existing PG entries with the same
+        composite key to prevent duplicate rows.
         """
+        rkey = self._redis_key(firmware_id, binary_sha256, operation)
+
+        # Best-effort Redis write
+        try:
+            async with get_redis() as r:
+                if r is not None:
+                    await r.set(rkey, json.dumps(result_data), ex=86400)
+        except Exception:
+            pass
+
+        # Authoritative PostgreSQL write
         from sqlalchemy import delete
 
         await db.execute(
