@@ -35,6 +35,10 @@ class Settings(BaseSettings):
     fuzzing_memory_limit_mb: int = 2048
     fuzzing_cpu_limit: float = 2.0
     fuzzing_data_dir: str = "/data/fuzzing"
+    database_pool_size: int = 20
+    database_max_overflow: int = 30
+    database_pool_timeout: int = 60
+    database_pool_recycle: int = 300
     uart_bridge_host: str = "host.docker.internal"
     uart_bridge_port: int = 9999
     uart_command_timeout: int = 30
