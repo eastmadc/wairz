@@ -117,12 +117,60 @@ async def unpack(
     project.status = "unpacking"
     await db.flush()
 
-    # Launch background task (uses its own DB session)
-    asyncio.create_task(
-        _run_unpack_background(project_id, firmware_id, firmware.storage_path)
-    )
+    # Launch background task — prefer arq job queue, fallback to asyncio.create_task
+    await _enqueue_unpack(project_id, firmware_id, firmware.storage_path)
 
     return firmware
+
+
+# --- arq job queue integration (with asyncio.create_task fallback) ---
+
+_arq_pool = None
+_arq_available = True
+
+
+async def _get_arq_pool():
+    """Lazily create and cache an arq connection pool."""
+    global _arq_pool, _arq_available
+    if not _arq_available:
+        return None
+    if _arq_pool is not None:
+        return _arq_pool
+    try:
+        from arq import create_pool
+        from app.workers.arq_worker import get_redis_settings
+        _arq_pool = await create_pool(get_redis_settings())
+        return _arq_pool
+    except Exception:
+        logger.debug("arq unavailable, will use asyncio.create_task fallback")
+        _arq_available = False
+        return None
+
+
+async def _enqueue_unpack(
+    project_id: uuid.UUID,
+    firmware_id: uuid.UUID,
+    storage_path: str,
+) -> None:
+    """Enqueue firmware unpacking — arq if available, else asyncio.create_task."""
+    pool = await _get_arq_pool()
+    if pool is not None:
+        try:
+            await pool.enqueue_job(
+                "run_unpack_job",
+                firmware_id=str(firmware_id),
+                project_id=str(project_id),
+                storage_path=storage_path,
+            )
+            logger.info("Enqueued unpack job via arq for firmware %s", firmware_id)
+            return
+        except Exception:
+            logger.warning("arq enqueue failed, falling back to asyncio.create_task")
+
+    # Fallback: in-process background task
+    asyncio.create_task(
+        _run_unpack_background(project_id, firmware_id, storage_path)
+    )
 
 
 async def _run_unpack_background(
