@@ -9,22 +9,73 @@ class PathTraversalError(ValueError):
 def validate_path(extracted_root: str, requested_path: str) -> str:
     """Resolve and validate that path stays within extracted_root.
 
-    Uses os.path.realpath() to resolve symlinks and canonicalize,
-    then checks the result starts with the real root + os.sep (or is the root itself)
-    to prevent path traversal and prefix collision attacks.
+    Resolves symlinks relative to the firmware root (not the host filesystem).
+    This is critical for firmware with absolute symlinks like /bin -> /system/bin
+    which must resolve within the extracted tree, not on the host.
 
     Raises:
         PathTraversalError: If the resolved path escapes extracted_root.
     """
     real_root = os.path.realpath(extracted_root)
-    # Join and resolve the full path
-    full_path = os.path.realpath(os.path.join(real_root, requested_path.lstrip("/")))
+
+    # Resolve the path within the firmware root, handling absolute symlinks
+    full_path = _resolve_within_root(real_root, requested_path)
 
     # Must be the root itself or under root + separator
     if full_path != real_root and not full_path.startswith(real_root + os.sep):
         raise PathTraversalError("Path traversal detected")
 
     return full_path
+
+
+def _resolve_within_root(root: str, path: str, max_depth: int = 40) -> str:
+    """Resolve a path within a chroot-like root, following symlinks.
+
+    Unlike os.path.realpath() which resolves against the host filesystem,
+    this rewrites absolute symlink targets relative to the root directory.
+    For example, with root=/extracted and bin -> /system/bin, this resolves
+    to /extracted/system/bin instead of the host's /system/bin.
+    """
+    # Normalize: strip leading /, split into components, remove . and empty
+    parts = [p for p in path.strip("/").split("/") if p and p != "."]
+
+    resolved = root
+    seen: set[str] = set()  # cycle detection
+
+    for part in parts:
+        if part == "..":
+            # Go up but never above root
+            parent = os.path.dirname(resolved)
+            if parent.startswith(root):
+                resolved = parent
+            continue
+
+        candidate = os.path.join(resolved, part)
+
+        # Check for symlink and resolve it
+        depth = 0
+        while os.path.islink(candidate) and depth < max_depth:
+            target = os.readlink(candidate)
+            if target.startswith("/"):
+                # Absolute symlink — rewrite relative to root
+                candidate = os.path.join(root, target.lstrip("/"))
+            else:
+                # Relative symlink — resolve from current directory
+                candidate = os.path.normpath(os.path.join(os.path.dirname(candidate), target))
+
+            # Cycle detection
+            if candidate in seen:
+                break
+            seen.add(candidate)
+            depth += 1
+
+            # Ensure we haven't escaped root
+            if not candidate.startswith(root + os.sep) and candidate != root:
+                raise PathTraversalError("Path traversal detected")
+
+        resolved = candidate
+
+    return resolved
 
 
 def safe_walk(
