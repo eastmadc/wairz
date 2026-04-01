@@ -90,7 +90,7 @@ async def websocket_terminal(
     # Parent process
     os.close(slave_fd)
 
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
 
     # Send welcome banner
     banner = f"\r\n  Firmware root: {extracted_path}\r\n\r\n"

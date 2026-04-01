@@ -1,3 +1,4 @@
+import asyncio
 import hashlib
 import os
 import re
@@ -33,6 +34,49 @@ def _sanitize_filename(name: str) -> str:
     return name or "firmware.bin"
 
 
+def _zip_contains_rootfs(zip_path: str) -> bool:
+    """Check if a ZIP archive contains a Linux root filesystem.
+
+    Looks for standard Linux top-level directories (etc/, usr/, bin/, lib/,
+    sbin/) either at the archive root or one level deep (when the ZIP has a
+    single wrapper directory).  If 3+ of these markers are found, we treat
+    the ZIP as a rootfs archive.
+    """
+    rootfs_markers = {"etc", "usr", "bin", "lib", "sbin"}
+
+    with zipfile.ZipFile(zip_path, "r") as zf:
+        names = [
+            info.filename for info in zf.infolist()
+            if not info.filename.startswith(".")
+            and not info.filename.startswith("__")
+        ]
+
+        # Collect top-level directory names
+        top_level_dirs: set[str] = set()
+        for name in names:
+            parts = name.strip("/").split("/")
+            if len(parts) >= 1:
+                top_level_dirs.add(parts[0])
+
+        # Case 1: rootfs directories directly at the archive root
+        if len(rootfs_markers & top_level_dirs) >= 3:
+            return True
+
+        # Case 2: single wrapper directory containing rootfs directories
+        #   e.g., rootfs/etc/, rootfs/usr/, rootfs/bin/
+        if len(top_level_dirs) == 1:
+            wrapper = next(iter(top_level_dirs))
+            second_level_dirs: set[str] = set()
+            for name in names:
+                parts = name.strip("/").split("/")
+                if len(parts) >= 2 and parts[0] == wrapper:
+                    second_level_dirs.add(parts[1])
+            if len(rootfs_markers & second_level_dirs) >= 3:
+                return True
+
+    return False
+
+
 def _extract_firmware_from_zip(zip_path: str, output_dir: str) -> str | None:
     """Extract the main firmware file from a ZIP archive.
 
@@ -65,16 +109,31 @@ def _extract_firmware_from_zip(zip_path: str, output_dir: str) -> str | None:
         return target_path
 
 
+def _firmware_tar_filter(member, dest_path):
+    """Tar filter for firmware archives — allows absolute symlinks.
+
+    Python 3.12's filter="data" rejects symlinks to absolute paths,
+    but firmware rootfs archives legitimately use them. This filter
+    allows symlinks while still preventing path traversal and
+    rejecting device nodes.
+    """
+    name = member.name.lstrip("/")
+    if name != member.name:
+        member = member.replace(name=name, deep=False)
+    resolved = os.path.realpath(os.path.join(dest_path, name))
+    real_dest = os.path.realpath(dest_path)
+    if not resolved.startswith(real_dest + os.sep) and resolved != real_dest:
+        raise ValueError(f"Path traversal detected in archive: {member.name}")
+    if not (member.isreg() or member.isdir() or member.issym() or member.islnk()):
+        return None
+    return member
+
+
 def _extract_archive(archive_path: str, output_dir: str) -> None:
     """Extract a tar, tar.gz, or zip archive with path traversal prevention."""
     if tarfile.is_tarfile(archive_path):
         with tarfile.open(archive_path) as tf:
-            for member in tf.getmembers():
-                # Prevent tar slip (path traversal)
-                target = os.path.realpath(os.path.join(output_dir, member.name))
-                if not target.startswith(os.path.realpath(output_dir) + os.sep) and target != os.path.realpath(output_dir):
-                    raise ValueError(f"Path traversal detected in archive: {member.name}")
-            tf.extractall(output_dir, filter="data")
+            tf.extractall(output_dir, filter=_firmware_tar_filter)
     elif zipfile.is_zipfile(archive_path):
         with zipfile.ZipFile(archive_path, "r") as zf:
             for info in zf.infolist():
@@ -129,6 +188,62 @@ class FirmwareService:
         # We check the extension rather than zipfile.is_zipfile() alone because firmware
         # binaries can contain embedded zip data that triggers false positives.
         if raw_filename.lower().endswith(".zip") and zipfile.is_zipfile(storage_path):
+            if _zip_contains_rootfs(storage_path):
+                # The ZIP contains a Linux root filesystem — extract the entire
+                # archive directly instead of pulling a single file for binwalk.
+                # This mirrors the "Upload Rootfs" path so the user doesn't need
+                # to fall back to manual rootfs upload.
+                from app.workers.unpack import (
+                    detect_architecture,
+                    detect_kernel,
+                    detect_os_info,
+                    find_filesystem_root,
+                )
+
+                extraction_dir = os.path.join(firmware_dir, "extracted")
+                os.makedirs(extraction_dir, exist_ok=True)
+
+                loop = asyncio.get_running_loop()
+                await loop.run_in_executor(
+                    None, _extract_archive, storage_path, extraction_dir
+                )
+                os.remove(storage_path)
+
+                fs_root = await loop.run_in_executor(
+                    None, find_filesystem_root, extraction_dir
+                )
+                if not fs_root:
+                    raise ValueError(
+                        "ZIP appears to contain a rootfs but no filesystem root "
+                        "was found after extraction."
+                    )
+
+                firmware = Firmware(
+                    id=firmware_id,
+                    project_id=project_id,
+                    original_filename=raw_filename,
+                    sha256=sha256_hash.hexdigest(),
+                    file_size=file_size,
+                    storage_path=storage_path,
+                    extracted_path=fs_root,
+                    version_label=version_label,
+                    unpack_log="Rootfs ZIP detected; extracted directly without binwalk.",
+                )
+                arch, endian = await loop.run_in_executor(
+                    None, detect_architecture, fs_root
+                )
+                firmware.architecture = arch
+                firmware.endianness = endian
+                firmware.os_info = await loop.run_in_executor(
+                    None, detect_os_info, fs_root
+                )
+                firmware.kernel_path = await loop.run_in_executor(
+                    None, detect_kernel, extraction_dir, fs_root
+                )
+                self.db.add(firmware)
+                await self.db.flush()
+                return firmware
+
             extracted = _extract_firmware_from_zip(storage_path, firmware_dir)
             if extracted:
                 os.remove(storage_path)
@@ -182,14 +297,15 @@ class FirmwareService:
             while chunk := await file.read(8192):
                 await out.write(chunk)
 
-        # Extract the archive
+        # Extract the archive (sync I/O — run in executor to avoid blocking)
+        loop = asyncio.get_running_loop()
         try:
-            _extract_archive(archive_path, extraction_dir)
+            await loop.run_in_executor(None, _extract_archive, archive_path, extraction_dir)
         finally:
             os.remove(archive_path)
 
-        # Find the filesystem root
-        fs_root = find_filesystem_root(extraction_dir)
+        # Find the filesystem root (sync I/O — run in executor)
+        fs_root = await loop.run_in_executor(None, find_filesystem_root, extraction_dir)
         if not fs_root:
             raise ValueError(
                 "Could not locate a filesystem root in the archive. "
@@ -197,11 +313,11 @@ class FirmwareService:
             )
 
         firmware.extracted_path = fs_root
-        arch, endian = detect_architecture(fs_root)
+        arch, endian = await loop.run_in_executor(None, detect_architecture, fs_root)
         firmware.architecture = arch
         firmware.endianness = endian
-        firmware.os_info = detect_os_info(fs_root)
-        firmware.kernel_path = detect_kernel(extraction_dir, fs_root)
+        firmware.os_info = await loop.run_in_executor(None, detect_os_info, fs_root)
+        firmware.kernel_path = await loop.run_in_executor(None, detect_kernel, extraction_dir, fs_root)
         firmware.unpack_log = "Filesystem provided via manual rootfs upload."
 
         await self.db.flush()
