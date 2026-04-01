@@ -77,6 +77,40 @@ def _zip_contains_rootfs(zip_path: str) -> bool:
     return False
 
 
+def _is_android_firmware_zip(zip_path: str) -> bool:
+    """Check if a ZIP archive contains Android firmware.
+
+    Detects Android OTA/factory ZIPs by looking for payload.bin (A/B OTA),
+    META-INF Android updater files, or 2+ known Android partition images.
+    When detected, the ZIP is kept intact so classify_firmware() returns
+    "android_ota" and _extract_android_ota() handles full extraction.
+    """
+    with zipfile.ZipFile(zip_path, "r") as zf:
+        names = {os.path.basename(n) if "/" not in n else n for n in zf.namelist()}
+        basenames = {os.path.basename(n) for n in zf.namelist()}
+
+        if "payload.bin" in basenames:
+            return True
+
+        android_meta = {
+            "META-INF/com/google/android/updater-script",
+            "META-INF/com/google/android/update-binary",
+            "META-INF/com/android/metadata",
+        }
+        if names & android_meta:
+            return True
+
+        android_partitions = {
+            "system.img", "boot.img", "vendor.img", "super.img",
+            "recovery.img", "vbmeta.img", "dtbo.img", "product.img",
+            "system_ext.img", "odm.img",
+        }
+        if len(basenames & android_partitions) >= 2:
+            return True
+
+    return False
+
+
 def _extract_firmware_from_zip(zip_path: str, output_dir: str) -> str | None:
     """Extract the main firmware file from a ZIP archive.
 
@@ -188,7 +222,9 @@ class FirmwareService:
         # We check the extension rather than zipfile.is_zipfile() alone because firmware
         # binaries can contain embedded zip data that triggers false positives.
         if raw_filename.lower().endswith(".zip") and zipfile.is_zipfile(storage_path):
-            if _zip_contains_rootfs(storage_path):
+            if _is_android_firmware_zip(storage_path):
+                pass  # Keep ZIP intact for the unpack pipeline's _extract_android_ota()
+            elif _zip_contains_rootfs(storage_path):
                 # The ZIP contains a Linux root filesystem — extract the entire
                 # archive directly instead of pulling a single file for binwalk.
                 # This mirrors the "Upload Rootfs" path so the user doesn't need
@@ -244,17 +280,18 @@ class FirmwareService:
                 await self.db.flush()
                 return firmware
 
-            extracted = _extract_firmware_from_zip(storage_path, firmware_dir)
-            if extracted:
-                os.remove(storage_path)
-                storage_path = extracted
-                # Recompute hash and size for the actual firmware content
-                sha256_hash = hashlib.sha256()
-                file_size = 0
-                async with aiofiles.open(storage_path, "rb") as f:
-                    while chunk := await f.read(8192):
-                        sha256_hash.update(chunk)
-                        file_size += len(chunk)
+            else:
+                extracted = _extract_firmware_from_zip(storage_path, firmware_dir)
+                if extracted:
+                    os.remove(storage_path)
+                    storage_path = extracted
+                    # Recompute hash and size for the actual firmware content
+                    sha256_hash = hashlib.sha256()
+                    file_size = 0
+                    async with aiofiles.open(storage_path, "rb") as f:
+                        while chunk := await f.read(8192):
+                            sha256_hash.update(chunk)
+                            file_size += len(chunk)
 
         firmware = Firmware(
             id=firmware_id,
