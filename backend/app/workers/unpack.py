@@ -77,14 +77,31 @@ def _has_linux_markers(path: str) -> bool:
 
 
 def _etc_entry_count(path: str) -> int:
-    """Count entries in the etc/ (or etc_ro/) directory as a quality signal."""
+    """Count entries in the etc/ (or etc_ro/) directory as a quality signal.
+
+    Handles Android's common pattern where etc is a symlink to an absolute
+    path (/system/etc). When the symlink target doesn't resolve, falls back
+    to checking system/etc within the same root (Android layout).
+    """
     for name in ("etc", "etc_ro"):
         etc_path = os.path.join(path, name)
-        if os.path.isdir(etc_path) or os.path.islink(etc_path):
+        if os.path.isdir(etc_path):  # follows symlinks
             try:
                 return len(os.listdir(etc_path))
             except OSError:
-                return 0
+                pass
+        # Android fallback: etc -> /system/etc (absolute, broken symlink)
+        # Try resolving relative to this root
+        if os.path.islink(etc_path):
+            target = os.readlink(etc_path)
+            if target.startswith("/"):
+                # Resolve absolute symlink relative to this root
+                relative_target = os.path.join(path, target.lstrip("/"))
+                if os.path.isdir(relative_target):
+                    try:
+                        return len(os.listdir(relative_target))
+                    except OSError:
+                        pass
     return 0
 
 
@@ -96,7 +113,7 @@ def find_filesystem_root(extraction_dir: str) -> str | None:
     directory has the most entries — empty placeholder dirs from overlapping
     extractions are deprioritised automatically.
     """
-    candidates: list[tuple[str, int, int]] = []  # (path, priority, etc_count)
+    candidates: list[tuple[str, int, int, int]] = []  # (path, priority, etc_count, total_entries)
 
     for root, dirs, _files in os.walk(extraction_dir):
         # os.walk() only lists real directories in `dirs`, not symlinks.
@@ -108,12 +125,23 @@ def find_filesystem_root(extraction_dir: str) -> str | None:
         dirname = os.path.basename(root)
         # Known binwalk root names get priority boost
         priority = 10 if dirname in _FS_ROOT_NAMES else 0
+        # Android system root: has init + system/ + bin/ — this IS the real root
+        try:
+            entries = set(os.listdir(root))
+        except OSError:
+            entries = set()
+        if "init" in entries and "system" in entries and ("bin" in entries or "apex" in entries):
+            priority = 20  # Android system root gets highest priority
         etc_count = _etc_entry_count(root)
-        candidates.append((root, priority, etc_count))
+        try:
+            total_entries = len(os.listdir(root))
+        except OSError:
+            total_entries = 0
+        candidates.append((root, priority, etc_count, total_entries))
 
     if candidates:
-        # Sort by: priority descending, then etc entry count descending
-        candidates.sort(key=lambda c: (c[1], c[2]), reverse=True)
+        # Sort by: priority descending, etc count descending, total entries descending
+        candidates.sort(key=lambda c: (c[1], c[2], c[3]), reverse=True)
         return candidates[0][0]
 
     # Fallback: find largest directory by entry count
