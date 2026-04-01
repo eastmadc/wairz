@@ -242,6 +242,15 @@ class TestRegistration:
             "xrefs_from",
             "get_binary_info",
             "check_binary_protections",
+            "find_string_refs",
+            "resolve_import",
+            "check_all_binary_protections",
+            "trace_dataflow",
+            "find_callers",
+            "search_binary_content",
+            "get_stack_layout",
+            "get_global_layout",
+            "cross_binary_dataflow",
         }
 
     def test_tool_schemas_valid(self, registry):
@@ -251,7 +260,6 @@ class TestRegistration:
             assert "input_schema" in tool
             assert tool["input_schema"]["type"] == "object"
             assert "properties" in tool["input_schema"]
-            assert "required" in tool["input_schema"]
 
     def test_disassemble_has_optional_param(self, registry):
         tools = registry.get_anthropic_tools()
@@ -261,9 +269,13 @@ class TestRegistration:
         assert "num_instructions" not in disasm["input_schema"]["required"]
 
     def test_all_tools_require_binary_path(self, registry):
+        # Tools that operate on directories/multiple binaries don't require binary_path
+        multi_binary_tools = {"check_all_binary_protections", "cross_binary_dataflow"}
         for tool in registry.get_anthropic_tools():
-            assert "binary_path" in tool["input_schema"]["properties"]
-            assert "binary_path" in tool["input_schema"]["required"]
+            if tool["name"] in multi_binary_tools:
+                continue
+            assert "binary_path" in tool["input_schema"]["properties"], f"{tool['name']} missing binary_path"
+            assert "binary_path" in tool["input_schema"]["required"], f"{tool['name']} binary_path not required"
 
 
 # ---------------------------------------------------------------------------

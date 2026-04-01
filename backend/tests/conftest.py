@@ -55,6 +55,77 @@ def firmware_root(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
+def android_firmware_root(tmp_path: Path) -> Path:
+    """Create a minimal Android firmware filesystem for testing.
+
+    Provides a realistic Android layout with build.prop files, APK stubs,
+    init.rc service declarations, SELinux policy, and vendor partition.
+    """
+    # system partition
+    system = tmp_path / "system"
+    system.mkdir()
+    (system / "build.prop").write_text(
+        "# begin build properties\n"
+        "ro.build.version.release=13\n"
+        "ro.build.version.security_patch=2023-09-05\n"
+        "ro.build.display.id=TP1A.220624.014\n"
+        "ro.board.platform=msm8953\n"
+        "ro.product.model=Pixel 4a\n"
+    )
+
+    # APK stubs
+    (system / "app" / "Settings").mkdir(parents=True)
+    (system / "app" / "Settings" / "Settings.apk").write_bytes(b"")
+    (system / "priv-app" / "SystemUI").mkdir(parents=True)
+    (system / "priv-app" / "SystemUI" / "SystemUI.apk").write_bytes(b"")
+
+    # init.rc under system/etc/init
+    (system / "etc" / "init").mkdir(parents=True)
+    (system / "etc" / "init" / "init.test.rc").write_text(
+        "# Test init file\n"
+        "\n"
+        "service healthd /system/bin/healthd\n"
+        "    class core\n"
+        "\n"
+        "service surfaceflinger /system/bin/surfaceflinger\n"
+        "    class core animation\n"
+    )
+
+    # SELinux policy
+    (system / "etc" / "selinux").mkdir(parents=True)
+    (system / "etc" / "selinux" / "plat_sepolicy.cil").write_bytes(b"")
+
+    # system/bin directory
+    (system / "bin").mkdir(exist_ok=True)
+
+    # vendor partition
+    vendor = tmp_path / "vendor"
+    vendor.mkdir()
+    (vendor / "build.prop").write_text(
+        "ro.vendor.build.version.release=13\n"
+        "ro.vendor.build.security_patch_level=2023-09-01\n"
+    )
+    (vendor / "etc" / "init" / "hw").mkdir(parents=True)
+    (vendor / "etc" / "init" / "hw" / "init.vendor.rc").write_text(
+        "service wifi_hal /vendor/bin/hw/android.hardware.wifi@1.0-service\n"
+        "    class hal\n"
+    )
+    (vendor / "lib" / "modules").mkdir(parents=True)
+    (vendor / "lib" / "modules" / "test.ko").write_bytes(b"")
+
+    # Android init binary marker
+    (tmp_path / "init").write_bytes(b"")
+
+    # Symlink: bin -> system/bin
+    try:
+        (tmp_path / "bin").symlink_to(str(system / "bin"))
+    except OSError:
+        pass
+
+    return tmp_path
+
+
+@pytest.fixture
 def tool_context(firmware_root: Path):
     """Create a ToolContext with a mocked DB session pointed at firmware_root.
 
