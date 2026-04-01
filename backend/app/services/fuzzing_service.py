@@ -8,6 +8,8 @@ import base64
 import io
 import logging
 import os
+import re
+import shlex
 import tarfile
 from datetime import datetime, timezone
 from uuid import UUID
@@ -32,7 +34,7 @@ QEMU_TRACE_MAP: dict[str, str] = {
     "mips": "afl-qemu-trace-mips",
     "mipsel": "afl-qemu-trace-mipsel",
     "x86": "afl-qemu-trace-i386",
-    "x86_64": "afl-qemu-trace-x86_64",
+    "i386": "afl-qemu-trace-i386",
 }
 
 # Architecture → stock QEMU user-mode static binary (for crash triage)
@@ -445,9 +447,12 @@ class FuzzingService:
 
             # Extra environment variables for the target
             extra_env = config.get("environment") or {}
-            env_prefix = " ".join(
-                f"{k}={v}" for k, v in extra_env.items()
-            )
+            env_parts = []
+            for k, v in extra_env.items():
+                if not re.match(r"^[A-Z_][A-Z0-9_]*$", k):
+                    raise ValueError(f"Invalid environment variable name: {k!r}")
+                env_parts.append(f"{k}={shlex.quote(str(v))}")
+            env_prefix = " ".join(env_parts)
 
             # QEMU mode requires -m none: QEMU reserves a large virtual
             # address space for the guest (e.g. 2GB for MIPS) which is
@@ -493,7 +498,9 @@ class FuzzingService:
             # Append extra arguments (e.g., @@ for file-based fuzzing)
             arguments = config.get("arguments")
             if arguments:
-                afl_cmd += f" {arguments}"
+                afl_cmd += " " + " ".join(
+                    shlex.quote(arg) for arg in shlex.split(str(arguments))
+                )
 
             # Launch AFL++ in background
             container.exec_run([

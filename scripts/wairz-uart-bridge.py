@@ -408,6 +408,9 @@ class BridgeServer:
         if not device:
             return {"ok": False, "error": "device is required"}
 
+        if not re.match(r'^/dev/(tty[A-Za-z0-9/]*|serial/[A-Za-z0-9/]*)$', device):
+            return {"ok": False, "error": f"Invalid device path: {device}. Must match /dev/tty* or /dev/serial/*"}
+
         await self._serial_mgr.connect(
             device=device,
             baudrate=params.get("baudrate", 115200),
