@@ -1,5 +1,6 @@
 """Project export and import endpoints."""
 
+import re
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile
@@ -42,7 +43,7 @@ async def export_project(
     except ValueError as e:
         raise HTTPException(400, str(e))
 
-    safe_name = project.name.replace(" ", "_").replace("/", "_")
+    safe_name = re.sub(r'[^\w.-]', '_', project.name)
     filename = f"{safe_name}.wairz"
 
     return StreamingResponse(
@@ -65,7 +66,9 @@ async def import_project(
     ):
         raise HTTPException(
             400,
-            "Invalid file type. Please upload a .wairz archive.",
+            "Invalid file type. Please upload a .wairz project archive. "
+            "To analyze a firmware file (.bin, .trx, .img, etc.), "
+            "create a new project first, then upload the firmware there.",
         )
 
     contents = await file.read()
