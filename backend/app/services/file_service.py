@@ -11,7 +11,7 @@ from elftools.elf.elffile import ELFFile
 
 from app.utils.sandbox import safe_walk, validate_path
 
-MAX_ENTRIES = 200
+MAX_ENTRIES = 10000
 MAX_READ_SIZE = 50 * 1024  # 50KB
 MAX_SEARCH_RESULTS = 100
 
@@ -357,6 +357,11 @@ class FileService:
                     # Broken symlink: target does not exist
                     if not os.path.exists(entry_path):
                         is_broken = True
+                    elif os.path.isdir(entry_path):
+                        # Symlink to a directory — report as directory so the
+                        # file explorer allows traversal (symlink_target still
+                        # set so the UI can show the link arrow)
+                        file_type = "directory"
                 entries.append(
                     FileEntry(
                         name=name,
@@ -440,6 +445,9 @@ class FileService:
 
         st = os.lstat(full_path)
         file_type = _file_type_from_stat(st)
+        # Symlinks to directories should be reported as directories
+        if file_type == "symlink" and os.path.isdir(full_path):
+            file_type = "directory"
 
         # MIME type detection
         try:

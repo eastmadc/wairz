@@ -409,23 +409,188 @@ def detect_kernel(extraction_dir: str, fs_root: str | None) -> str | None:
     return candidates[0][0]
 
 
-async def unpack_firmware(firmware_path: str, output_base_dir: str) -> UnpackResult:
-    """Orchestrate the full unpacking pipeline."""
-    result = UnpackResult()
+def _is_rootfs_tar(firmware_path: str) -> bool:
+    """Check if the file is a tar archive containing a Linux rootfs.
 
-    # Step 1: Run binwalk extraction
+    Detects .tar, .tar.gz, .tar.bz2, .tar.xz — any format Python's
+    tarfile module supports. Returns True if the archive contains
+    Linux filesystem markers (etc/, usr/, bin/, etc.) at the top level
+    or one level deep behind a single wrapper directory.
+    """
+    import tarfile as _tarfile
+
     try:
-        extraction_dir = os.path.join(output_base_dir, "extracted")
-        os.makedirs(extraction_dir, exist_ok=True)
-        result.unpack_log = await run_binwalk_extraction(firmware_path, extraction_dir)
-    except TimeoutError as e:
-        result.error = str(e)
-        result.unpack_log = str(e)
+        if not _tarfile.is_tarfile(firmware_path):
+            return False
+    except Exception:
+        return False
+
+    linux_dirs = {"etc", "usr", "bin", "lib", "sbin", "var", "tmp", "dev", "proc"}
+    try:
+        with _tarfile.open(firmware_path) as tf:
+            top_names: set[str] = set()
+            second_names: set[str] = set()
+            count = 0
+            for member in tf:
+                parts = member.name.strip("/").split("/")
+                if len(parts) >= 1:
+                    top_names.add(parts[0])
+                if len(parts) >= 2:
+                    second_names.add(parts[1])
+                count += 1
+                # Early exit once we've seen enough unique path prefixes
+                if len(top_names & linux_dirs) >= 3:
+                    return True
+                if len(top_names) <= 3 and len(second_names & linux_dirs) >= 3:
+                    return True
+                # Safety cap — if we haven't matched after 5000 entries, it's not a rootfs
+                if count >= 5000:
+                    break
+            # Final check after loop
+            if len(top_names & linux_dirs) >= 3:
+                return True
+            if len(top_names) <= 3 and len(second_names & linux_dirs) >= 3:
+                return True
+    except Exception:
+        return False
+
+    return False
+
+
+def detect_architecture_from_elf(path: str) -> tuple[str | None, str | None]:
+    """Detect architecture and endianness from a single ELF file."""
+    try:
+        with open(path, "rb") as f:
+            elf = ELFFile(f)
+            machine = elf.header.e_machine
+            arch = _ELF_ARCH_MAP.get(machine)
+            endian = "little" if elf.little_endian else "big"
+            return arch, endian
+    except Exception:
+        return None, None
+
+
+def classify_firmware(firmware_path: str) -> str:
+    """Classify firmware file type to determine the analysis pipeline.
+
+    Returns one of:
+    - "linux_rootfs_tar": tar archive containing Linux rootfs (bypass binwalk)
+    - "linux_blob": firmware blob likely containing embedded Linux filesystem
+    - "elf_binary": single ELF binary (bare metal or RTOS, skip FS extraction)
+    - "intel_hex": Intel HEX format (microcontroller firmware)
+    - "pe_binary": Windows PE binary
+    - "unknown": unrecognized format (try binwalk)
+    """
+    # Check tar rootfs first (fast path for known archives)
+    if _is_rootfs_tar(firmware_path):
+        return "linux_rootfs_tar"
+
+    magic = _read_magic(firmware_path, 16)
+
+    # ELF binary (bare metal, RTOS, or single-binary firmware)
+    if magic[:4] == b"\x7fELF":
+        return "elf_binary"
+
+    # Intel HEX (starts with ':' record marker)
+    if magic[:1] == b":" and all(c in b"0123456789ABCDEFabcdef:\r\n" for c in magic):
+        return "intel_hex"
+
+    # PE binary (Windows CE/IoT)
+    if magic[:2] == b"MZ":
+        return "pe_binary"
+
+    # Default: assume it's a firmware blob for binwalk
+    return "linux_blob"
+
+
+def _firmware_tar_filter(member, dest_path):
+    """Custom tar extraction filter for firmware rootfs archives.
+
+    Python 3.12's ``filter="data"`` rejects symlinks to absolute paths,
+    but firmware filesystems legitimately use them (e.g. /bin -> /usr/bin,
+    /etc/fonts/conf.d/51-local.conf -> /etc/fonts/local.conf).
+
+    This filter:
+    - Allows regular files, directories, and symlinks (including absolute)
+    - Strips leading slashes from member names (prevent extraction outside dest)
+    - Rejects members that would escape dest_path via ``..``
+    - Rejects special files (device nodes, fifos)
+    """
+    import tarfile as _tarfile
+
+    # Strip leading / from member name
+    name = member.name.lstrip("/")
+    if name != member.name:
+        member = member.replace(name=name, deep=False)
+
+    # Reject path traversal via ..
+    resolved = os.path.realpath(os.path.join(dest_path, name))
+    real_dest = os.path.realpath(dest_path)
+    if not resolved.startswith(real_dest + os.sep) and resolved != real_dest:
+        raise _tarfile.AbsolutePathError(member)
+
+    # Reject special files (device nodes, block devices, fifos)
+    if not (member.isreg() or member.isdir() or member.issym() or member.islnk()):
+        return None  # skip silently
+
+    return member
+
+
+async def unpack_firmware(firmware_path: str, output_base_dir: str) -> UnpackResult:
+    """Orchestrate the full unpacking pipeline.
+
+    Uses classify_firmware() to determine the analysis strategy:
+    - linux_rootfs_tar: extract tar directly (bypass binwalk)
+    - linux_blob: run binwalk -e (default firmware path)
+    - elf_binary: skip extraction, copy binary for direct Ghidra analysis
+    - intel_hex / pe_binary / unknown: try binwalk as best effort
+    """
+    import tarfile as _tarfile
+
+    result = UnpackResult()
+    extraction_dir = os.path.join(output_base_dir, "extracted")
+    os.makedirs(extraction_dir, exist_ok=True)
+
+    fw_type = classify_firmware(firmware_path)
+    result.unpack_log = f"Firmware classified as: {fw_type}\n"
+
+    # ELF binary: no filesystem to extract — set up for direct Ghidra analysis
+    if fw_type == "elf_binary":
+        import shutil
+        dest = os.path.join(extraction_dir, os.path.basename(firmware_path))
+        shutil.copy2(firmware_path, dest)
+        result.extracted_path = extraction_dir
+        result.extraction_dir = extraction_dir
+        result.unpack_log += "Single ELF binary — skipped filesystem extraction. Use Ghidra for analysis."
+        arch, endian = detect_architecture_from_elf(firmware_path)
+        result.architecture = arch
+        result.endianness = endian
+        result.success = True
         return result
-    except Exception as e:
-        result.error = f"Extraction failed: {e}"
-        result.unpack_log = str(e)
-        return result
+
+    # Tar rootfs: extract directly — binwalk treats them as raw
+    # data and carves out embedded compressed fragments instead.
+    if fw_type == "linux_rootfs_tar":
+        try:
+            with _tarfile.open(firmware_path) as tf:
+                tf.extractall(extraction_dir, filter=_firmware_tar_filter)
+            result.unpack_log = f"Extracted tar rootfs archive: {os.path.basename(firmware_path)}"
+        except Exception as e:
+            result.error = f"Tar extraction failed: {e}"
+            result.unpack_log = str(e)
+            return result
+    else:
+        # Step 1: Run binwalk extraction
+        try:
+            result.unpack_log = await run_binwalk_extraction(firmware_path, extraction_dir)
+        except TimeoutError as e:
+            result.error = str(e)
+            result.unpack_log = str(e)
+            return result
+        except Exception as e:
+            result.error = f"Extraction failed: {e}"
+            result.unpack_log = str(e)
+            return result
 
     # Step 2: Find the filesystem root
     fs_root = find_filesystem_root(extraction_dir)

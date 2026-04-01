@@ -24,6 +24,24 @@ from app.models.sbom import SbomComponent, SbomVulnerability
 
 ARCHIVE_VERSION = 1
 
+# Minimum date_time tuple that the ZIP format supports (use Jan 2 to avoid
+# edge-cases around the exact boundary).
+_MIN_ZIP_DATE_TIME = (1980, 1, 2, 0, 0, 0)
+
+
+def _write_file_to_zip(zf: zipfile.ZipFile, file_path: str, arcname: str) -> None:
+    """Add *file_path* to the ZIP, clamping timestamps before 1980.
+
+    Python's ``zipfile`` raises ``ValueError`` for modification times before
+    1980-01-01.  Firmware filesystems frequently contain files stamped at the
+    Unix epoch (1970-01-01), so we clamp to a safe minimum.
+    """
+    info = zipfile.ZipInfo.from_file(file_path, arcname)
+    if info.date_time < _MIN_ZIP_DATE_TIME:
+        info.date_time = _MIN_ZIP_DATE_TIME
+    with open(file_path, "rb") as f:
+        zf.writestr(info, f.read())
+
 
 def _json_serial(obj):
     """JSON serializer for objects not serializable by default."""
@@ -95,7 +113,7 @@ class ExportService:
                 doc_path = doc.get("storage_path")
                 if doc_path and os.path.isfile(doc_path):
                     arcname = f"documents/files/{doc['id']}_{doc['original_filename']}"
-                    zf.write(doc_path, arcname)
+                    _write_file_to_zip(zf, doc_path, arcname)
 
             # Emulation presets
             zf.writestr("emulation_presets.json", _dumps(presets))
@@ -112,7 +130,7 @@ class ExportService:
                 # Original firmware binary
                 if fw.storage_path and os.path.isfile(fw.storage_path):
                     orig_name = os.path.basename(fw.storage_path)
-                    zf.write(fw.storage_path, f"{fw_prefix}/original/{orig_name}")
+                    _write_file_to_zip(zf, fw.storage_path, f"{fw_prefix}/original/{orig_name}")
 
                 # Extracted filesystem — walk and add each file
                 extracted_root = self._get_extracted_root(fw)
@@ -452,7 +470,7 @@ class ExportService:
                         "gid": st.st_gid if st else 0,
                     })
                     try:
-                        zf.write(full, arc)
+                        _write_file_to_zip(zf, full, arc)
                     except (OSError, PermissionError):
                         # Skip unreadable files, note in permissions
                         permissions.append({
