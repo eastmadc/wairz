@@ -29,17 +29,19 @@ Android firmware has a completely different structure from embedded Linux:
 
 ## Phases
 
-| # | Type | Description | Deps | End Conditions |
-|---|------|-------------|------|----------------|
-| 1 | build | Android ZIP detection in firmware classifier | none | `classify_firmware()` returns "android_ota" for Android ZIPs |
-| 2 | build | Install simg2img + erofs-utils in Dockerfile | none | `command_passes: docker compose exec backend simg2img --help` |
-| 3 | build | Android extraction pipeline in unpack.py | 1,2 | Sparse ext4 and EROFS images extracted to rootfs |
-| 4 | build | Install payload-dumper-go + lpunpack | none | Both binaries available in container |
-| 5 | build | A/B OTA extraction (payload.bin → partitions) | 3,4 | payload.bin extracted to individual partition images |
-| 6 | build | super.img extraction (dynamic partitions) | 3,4 | super.img unpacked to system/vendor/product images |
-| 7 | build | boot.img extraction (kernel + ramdisk) | 3 | Kernel and ramdisk extracted from boot.img |
-| 8 | wire | Android metadata parsing (build.prop, etc.) | 3 | Device model, Android version, security patch level shown |
-| 9 | verify | End-to-end test with MediaTek ZIP | all | User's 1.9GB ZIP extracts successfully |
+| # | Type | Description | Deps | End Conditions | Status |
+|---|------|-------------|------|----------------|--------|
+| 1 | build | Android ZIP detection in firmware classifier | none | `classify_firmware()` returns "android_ota" for Android ZIPs | done (commit 2678e49) |
+| 2 | build | Install simg2img + erofs-utils in Dockerfile | none | `command_passes: docker compose exec backend simg2img --help` | done |
+| 3 | build | Android extraction pipeline in unpack.py | 1,2 | Sparse ext4 and EROFS images extracted to rootfs | done (commit 2678e49) |
+| 4 | build | Install payload-dumper-go + lpunpack | none | Both binaries available in container | done |
+| 5 | build | A/B OTA extraction (payload.bin → partitions) | 3,4 | payload.bin extracted to individual partition images | untested |
+| 6 | build | super.img extraction (dynamic partitions) | 3,4 | super.img unpacked to system/vendor/product images | done (commit 6c4946f) |
+| 7 | build | boot.img extraction (kernel + ramdisk) | 3 | Kernel and ramdisk extracted from boot.img | not started |
+| 8 | wire | Android metadata parsing (build.prop, etc.) | 3 | Device model, Android version, security patch level shown | done (os_info field populated) |
+| 9 | verify | End-to-end test with MediaTek ZIP | all | User's 1.9GB ZIP extracts successfully | done (test project b59b8887) |
+| 10 | build | Android ZIP early detection in upload flow | none | Android ZIPs preserved intact during upload | done (this session) |
+| 11 | build | Content-based partition naming | 6 | super.img partitions named system/vendor/product instead of partition_N | done (this session) |
 
 ## Citadel Rollout Strategy
 
@@ -93,11 +95,28 @@ LP_METADATA_MAGIC = b"\x50\x6c\x44\x67"
 ```
 
 ## Decision Log
-(to be filled during execution)
+- Filesystem signature scanning (EROFS/ext4 magic at 1MB boundaries) used instead of LP metadata parsing — found all partitions without lpunpack
+- Chroot-style symlink resolution (`_resolve_within_root`) instead of `os.path.realpath` — foundational fix for all firmware with absolute symlinks
+- Upload flow preserves Android ZIPs intact instead of extracting largest file — simpler, lets existing unpack pipeline handle correctly
+- Content-based partition naming post-extraction rather than pre-extraction — more robust, doesn't depend on LP metadata
 
 ## Feature Ledger
-(to be filled during execution)
+- `classify_firmware()` Android OTA + sparse detection (unpack.py)
+- `_extract_android_ota()` full extraction pipeline (unpack.py)
+- `_scan_super_partitions()` magic-byte based partition scanning (unpack.py)
+- `_identify_partition_by_content()` content-based naming (unpack.py, this session)
+- `_is_android_firmware_zip()` upload-time detection (firmware_service.py, this session)
+- `_resolve_within_root()` chroot symlink resolution (sandbox.py)
+- 12 tests in `tests/test_firmware_classification.py`
 
 ## Continuation State
-Current phase: not started
-Next action: /do continue to begin Phase 1
+Remaining work:
+- Phase 5: A/B OTA testing (needs real Pixel OTA download)
+- Phase 7: boot.img extraction (not started)
+- Campaign mostly complete — remaining phases are incremental
+
+<!-- session-end: 2026-04-01T22:43:48.197Z -->
+
+<!-- session-end: 2026-04-01T22:50:13.822Z -->
+
+<!-- session-end: 2026-04-01T22:55:16.393Z -->
