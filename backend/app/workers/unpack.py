@@ -524,7 +524,7 @@ def classify_firmware(firmware_path: str) -> str:
 
     # Android sparse image (magic 0x3AFF26ED, little-endian)
     sparse_magic = _read_magic(firmware_path, 4)
-    if sparse_magic == b"\xed\x26\xff\x3a":
+    if sparse_magic == b"\x3a\xff\x26\xed":
         return "android_sparse"
 
     # Check tar rootfs first (fast path for known archives)
@@ -660,7 +660,7 @@ async def _extract_android_ota(firmware_path: str, extraction_dir: str) -> str:
             try:
                 with open(img_path, "rb") as f:
                     img_magic = f.read(4)
-                if img_magic == b"\xed\x26\xff\x3a":
+                if img_magic == b"\x3a\xff\x26\xed":
                     raw_path = img_path + ".raw"
                     if shutil.which("simg2img"):
                         proc = await asyncio.create_subprocess_exec(
