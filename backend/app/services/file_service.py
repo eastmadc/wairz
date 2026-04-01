@@ -354,14 +354,17 @@ class FileService:
                         symlink_target = os.readlink(entry_path)
                     except OSError:
                         pass
-                    # Broken symlink: target does not exist
-                    if not os.path.exists(entry_path):
+                    # Resolve the symlink within the firmware root
+                    # (not the host filesystem) to check if it's a dir
+                    try:
+                        child_path = path.rstrip("/") + "/" + name
+                        resolved = self._resolve(child_path)
+                        if os.path.isdir(resolved):
+                            file_type = "directory"
+                        elif not os.path.exists(resolved):
+                            is_broken = True
+                    except Exception:
                         is_broken = True
-                    elif os.path.isdir(entry_path):
-                        # Symlink to a directory — report as directory so the
-                        # file explorer allows traversal (symlink_target still
-                        # set so the UI can show the link arrow)
-                        file_type = "directory"
                 entries.append(
                     FileEntry(
                         name=name,
