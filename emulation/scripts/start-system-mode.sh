@@ -6,6 +6,8 @@
 # This script boots a full system-mode QEMU instance with the firmware
 # filesystem as the root. Serial console is exposed via socat on a Unix socket.
 
+set -euo pipefail
+
 ARCH="$1"
 ROOTFS="$2"
 KERNEL="$3"
@@ -218,6 +220,10 @@ if [ -n "$PORT_FORWARDS" ]; then
         RELAY_PIDS="$RELAY_PIDS $!"
         echo "Port relay: 0.0.0.0:${host_port} → 127.0.0.1:${relay_port} → guest:${guest_port}"
     done
+fi
+# Clean up socat relay processes on exit
+if [ -n "$RELAY_PIDS" ]; then
+    trap 'kill $RELAY_PIDS 2>/dev/null' EXIT
 fi
 NET_ARGS="-device ${NIC_DEVICE},netdev=net0 -netdev ${NETDEV_ARGS}"
 
