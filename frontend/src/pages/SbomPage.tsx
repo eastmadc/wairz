@@ -53,6 +53,8 @@ const SEVERITY_CONFIG: Record<Severity, { icon: React.ElementType; className: st
   info: { icon: Info, className: 'text-gray-500', bg: 'bg-gray-500 text-white' },
 }
 
+const VULN_PAGE_SIZE = 100
+
 const CONFIDENCE_STYLE: Record<string, string> = {
   high: 'border-green-500/50 text-green-600 dark:text-green-400',
   medium: 'border-yellow-500/50 text-yellow-600 dark:text-yellow-400',
@@ -88,6 +90,9 @@ export default function SbomPage() {
   const [generating, setGenerating] = useState(false)
   const [scanning, setScanning] = useState(false)
   const [scanResult, setScanResult] = useState<VulnerabilityScanResult | null>(null)
+  const [hasMoreVulns, setHasMoreVulns] = useState(false)
+  const [loadingMoreVulns, setLoadingMoreVulns] = useState(false)
+  const [vulnOffset, setVulnOffset] = useState(0)
   const [typeFilter, setTypeFilter] = useState<string | null>(null)
   const [nameSearch, setNameSearch] = useState('')
   const [sevFilter, setSevFilter] = useState<string | null>(null)
@@ -113,12 +118,14 @@ export default function SbomPage() {
       setSummary(summary)
 
       if (summary && summary.total_vulnerabilities > 0) {
-        const filters: { resolution_status?: string } = {}
+        const filters: { resolution_status?: string; limit?: number; offset?: number } = { limit: VULN_PAGE_SIZE, offset: 0 }
         if (resolutionFilter !== 'all') {
           filters.resolution_status = resolutionFilter
         }
         const vulns = await getVulnerabilities(projectId, filters).catch(() => [])
         setVulnerabilities(vulns)
+        setVulnOffset(0)
+        setHasMoreVulns(vulns.length === VULN_PAGE_SIZE)
       }
     } finally {
       setLoading(false)
@@ -132,15 +139,35 @@ export default function SbomPage() {
   // Reload vulns when resolution filter changes (without full reload)
   const reloadVulns = useCallback(async () => {
     if (!projectId) return
-    const filters: { resolution_status?: string } = {}
+    const filters: { resolution_status?: string; limit?: number; offset?: number } = { limit: VULN_PAGE_SIZE, offset: 0 }
     if (resolutionFilter !== 'all') {
       filters.resolution_status = resolutionFilter
     }
     const vulns = await getVulnerabilities(projectId, filters).catch(() => [])
     setVulnerabilities(vulns)
+    setVulnOffset(0)
+    setHasMoreVulns(vulns.length === VULN_PAGE_SIZE)
     const s = await getVulnerabilitySummary(projectId).catch(() => null)
     setSummary(s)
   }, [projectId, resolutionFilter])
+
+  const loadMoreVulns = useCallback(async () => {
+    if (!projectId) return
+    setLoadingMoreVulns(true)
+    try {
+      const nextOffset = vulnOffset + VULN_PAGE_SIZE
+      const filters: { resolution_status?: string; limit?: number; offset?: number } = { limit: VULN_PAGE_SIZE, offset: nextOffset }
+      if (resolutionFilter !== 'all') {
+        filters.resolution_status = resolutionFilter
+      }
+      const moreVulns = await getVulnerabilities(projectId, filters).catch(() => [])
+      setVulnerabilities(prev => [...prev, ...moreVulns])
+      setVulnOffset(nextOffset)
+      setHasMoreVulns(moreVulns.length === VULN_PAGE_SIZE)
+    } finally {
+      setLoadingMoreVulns(false)
+    }
+  }, [projectId, resolutionFilter, vulnOffset])
 
   // Handle resolution status update
   const handleResolve = useCallback(async (vulnId: string, status: VulnerabilityResolutionStatus, justification?: string) => {
@@ -395,6 +422,9 @@ export default function SbomPage() {
               onJustificationDialog={setJustificationDialog}
               justificationText={justificationText}
               onJustificationText={setJustificationText}
+              hasMore={hasMoreVulns}
+              loadingMore={loadingMoreVulns}
+              onLoadMore={loadMoreVulns}
             />
           )}
         </>
@@ -600,7 +630,7 @@ function parseCveId(cveId: string): [number, number] {
 
 // ── Vulnerabilities Tab ──
 
-function VulnerabilitiesTab({ vulnerabilities, sevFilter, onSevFilter, resolutionFilter, onResolutionFilter, actionMenuId, onActionMenu, onResolve, justificationDialog, onJustificationDialog, justificationText, onJustificationText }: {
+function VulnerabilitiesTab({ vulnerabilities, sevFilter, onSevFilter, resolutionFilter, onResolutionFilter, actionMenuId, onActionMenu, onResolve, justificationDialog, onJustificationDialog, justificationText, onJustificationText, hasMore, loadingMore, onLoadMore }: {
   vulnerabilities: SbomVulnerability[]
   sevFilter: string | null
   onSevFilter: (s: string | null) => void
@@ -613,6 +643,9 @@ function VulnerabilitiesTab({ vulnerabilities, sevFilter, onSevFilter, resolutio
   onJustificationDialog: (d: { vulnId: string; status: VulnerabilityResolutionStatus } | null) => void
   justificationText: string
   onJustificationText: (t: string) => void
+  hasMore: boolean
+  loadingMore: boolean
+  onLoadMore: () => void
 }) {
   const [selectedVuln, setSelectedVuln] = useState<string | null>(null)
   const [sortColumn, setSortColumn] = useState<SortColumn>('severity')
@@ -770,6 +803,7 @@ function VulnerabilitiesTab({ vulnerabilities, sevFilter, onSevFilter, resolutio
           {sevFilter || resolutionFilter !== 'open' ? 'No vulnerabilities match the current filters.' : 'No vulnerabilities found. Run a scan first.'}
         </div>
       ) : (
+        <>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
@@ -921,6 +955,16 @@ function VulnerabilitiesTab({ vulnerabilities, sevFilter, onSevFilter, resolutio
             </tbody>
           </table>
         </div>
+
+        {hasMore && (
+          <div className="flex justify-center py-4">
+            <Button variant="outline" size="sm" onClick={onLoadMore} disabled={loadingMore}>
+              {loadingMore ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : null}
+              Load More
+            </Button>
+          </div>
+        )}
+        </>
       )}
 
       {/* Detail modal */}

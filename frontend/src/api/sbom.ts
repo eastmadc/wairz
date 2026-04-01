@@ -56,7 +56,7 @@ export async function runVulnerabilityScan(
 
 export async function getVulnerabilities(
   projectId: string,
-  filters?: { severity?: string; component_id?: string; cve_id?: string; resolution_status?: string },
+  filters?: { severity?: string; component_id?: string; cve_id?: string; resolution_status?: string; limit?: number; offset?: number },
 ): Promise<SbomVulnerability[]> {
   const { data } = await apiClient.get<SbomVulnerability[]>(
     `/projects/${projectId}/sbom/vulnerabilities`,

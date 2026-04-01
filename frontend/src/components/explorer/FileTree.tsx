@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { Tree, TreeApi, type NodeRendererProps } from 'react-arborist'
-import { ChevronRight, FileText, Loader2, PlayCircle, Plus, Check, X } from 'lucide-react'
+import { ChevronRight, FileText, Loader2, PlayCircle, Plus, Check, X, Search } from 'lucide-react'
 import { useParams, useNavigate } from 'react-router-dom'
+import { searchFiles } from '@/api/files'
 import {
   useExplorerStore,
   isPlaceholder,
@@ -92,6 +93,10 @@ export default function FileTree() {
   const [showNewNote, setShowNewNote] = useState(false)
   const [newNoteTitle, setNewNoteTitle] = useState('')
   const newNoteInputRef = useRef<HTMLInputElement>(null)
+  const [searchQuery, setSearchQuery] = useState('')
+  const [searchResults, setSearchResults] = useState<string[] | null>(null)
+  const [searchLoading, setSearchLoading] = useState(false)
+  const [searchTruncated, setSearchTruncated] = useState(false)
 
   const containerRef = useRef<HTMLDivElement>(null)
   const treeRef = useRef<TreeApi<TreeNode>>(null)
@@ -261,6 +266,28 @@ export default function FileTree() {
     [projectId, selectDocument],
   )
 
+  const handleSearch = useCallback(async () => {
+    if (!projectId || !searchQuery.trim()) {
+      setSearchResults(null)
+      return
+    }
+    setSearchLoading(true)
+    try {
+      const result = await searchFiles(projectId, searchQuery.includes('*') ? searchQuery : `*${searchQuery}*`)
+      setSearchResults(result.matches)
+      setSearchTruncated(result.truncated)
+    } catch {
+      setSearchResults([])
+    } finally {
+      setSearchLoading(false)
+    }
+  }, [projectId, searchQuery])
+
+  const handleSearchResultClick = useCallback((path: string) => {
+    if (!projectId) return
+    selectFile(projectId, { id: path, name: path.split('/').pop() || path, fileType: 'file', size: 0, permissions: '' })
+  }, [projectId, selectFile])
+
   if (treeError) {
     return (
       <div className="p-4 text-sm text-destructive">
@@ -280,6 +307,55 @@ export default function FileTree() {
 
   return (
     <div ref={containerRef} className="relative flex-1 overflow-hidden" onContextMenu={handleContextMenu}>
+      {/* Search bar */}
+      <div className="flex items-center gap-1 border-b border-border px-2 py-1">
+        <Search className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+        <input
+          type="text"
+          placeholder="Search files…"
+          value={searchQuery}
+          onChange={(e) => {
+            setSearchQuery(e.target.value)
+            if (!e.target.value.trim()) setSearchResults(null)
+          }}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') handleSearch()
+            if (e.key === 'Escape') { setSearchQuery(''); setSearchResults(null) }
+          }}
+          className="min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
+        />
+        {searchLoading && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />}
+        {searchQuery && (
+          <button onClick={() => { setSearchQuery(''); setSearchResults(null) }} className="text-muted-foreground hover:text-foreground">
+            <X className="h-3.5 w-3.5" />
+          </button>
+        )}
+      </div>
+
+      {/* Search results overlay */}
+      {searchResults !== null ? (
+        <div className="overflow-auto" style={{ height: treeHeight }}>
+          {searchResults.length === 0 ? (
+            <div className="px-4 py-8 text-center text-sm text-muted-foreground">No matches found</div>
+          ) : (
+            <>
+              <div className="px-2 py-1 text-xs text-muted-foreground">
+                {searchResults.length} result{searchResults.length !== 1 ? 's' : ''}{searchTruncated ? ' (truncated)' : ''}
+              </div>
+              {searchResults.map((path) => (
+                <div
+                  key={path}
+                  onClick={() => handleSearchResultClick(path)}
+                  className="flex cursor-pointer items-center gap-1.5 rounded-sm px-2 py-1 text-sm hover:bg-accent/50"
+                >
+                  <FileText className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                  <span className="truncate">{path}</span>
+                </div>
+              ))}
+            </>
+          )}
+        </div>
+      ) : (
       <div style={{ height: treeHeight }}>
         <Tree<TreeNode>
           ref={treeRef}
@@ -299,6 +375,7 @@ export default function FileTree() {
           {Node}
         </Tree>
       </div>
+      )}
 
       {/* Project Documents section */}
       <div className="border-t border-border">
