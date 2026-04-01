@@ -39,8 +39,9 @@ export default function FirmwareUpload({ projectId, onComplete, showVersionLabel
           (pct) => setStore({ uploadProgress: pct }),
         )
         setStore({ uploading: false, uploadProgress: 100 })
-        // Fire-and-forget: unpack returns 202 immediately, polling handles the rest
-        apiUnpackFirmware(projectId, fw.id).catch(() => {})
+        // Unpack returns 202 immediately — await it so the server sets status
+        // to "unpacking" before we refresh the project
+        await apiUnpackFirmware(projectId, fw.id).catch(() => {})
         // Refresh project to pick up "unpacking" status
         const project = await getProject(projectId)
         setStore({ currentProject: project })

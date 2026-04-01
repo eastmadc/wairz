@@ -166,9 +166,13 @@ export default function SbomPage() {
     try {
       const result = await generateSbom(projectId, force)
       setComponents(result.components)
-      // Reload summary
-      const s = await getVulnerabilitySummary(projectId).catch(() => null)
+      // Reload summary and clear stale vulnerability list
+      const [s, vulns] = await Promise.all([
+        getVulnerabilitySummary(projectId).catch(() => null),
+        getVulnerabilities(projectId).catch(() => []),
+      ])
       setSummary(s)
+      setVulnerabilities(vulns)
     } catch (err) {
       console.error('SBOM generation failed:', err)
     } finally {
@@ -329,11 +333,11 @@ export default function SbomPage() {
             ) : (
               <ShieldAlert className="mr-1.5 h-3.5 w-3.5" />
             )}
-            {scanning ? 'Scanning NVD...' : hasVulns ? 'Rescan Vulnerabilities' : 'Scan for Vulnerabilities'}
+            {scanning ? 'Scanning...' : hasVulns ? 'Rescan Vulnerabilities' : 'Scan for Vulnerabilities'}
           </Button>
           {scanning && (
             <span className="text-xs text-muted-foreground">
-              Querying NVD for each component — this may take 30-60 seconds...
+              Checking components against vulnerability database...
             </span>
           )}
           {scanResult && !scanning && (
@@ -359,8 +363,8 @@ export default function SbomPage() {
               active={tab === 'vulnerabilities'}
               onClick={() => setTab('vulnerabilities')}
               label="Vulnerabilities"
-              count={vulnerabilities.length}
-              alert={vulnerabilities.length > 0}
+              count={summary?.total_vulnerabilities ?? vulnerabilities.length}
+              alert={(summary?.total_vulnerabilities ?? vulnerabilities.length) > 0}
             />
           </div>
 

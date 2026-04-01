@@ -2,58 +2,40 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useParams, useSearchParams } from 'react-router-dom'
 import {
   Play,
-  Square,
   Loader2,
   RefreshCw,
   TerminalSquare,
   Plus,
   Trash2,
   Cpu,
-  Clock,
   AlertCircle,
-  FileText,
-  ChevronDown,
-  ChevronUp,
   Save,
   BookOpen,
 } from 'lucide-react'
-import { Terminal } from '@xterm/xterm'
-import { FitAddon } from '@xterm/addon-fit'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { formatDate } from '@/utils/format'
 import {
   startEmulation,
   stopEmulation,
   deleteSession,
   listSessions,
   getSessionStatus,
-  getSessionLogs,
-  buildEmulationTerminalURL,
   listPresets,
   createPreset,
   deletePreset,
 } from '@/api/emulation'
 import { listFirmware } from '@/api/firmware'
 import KernelManager from '@/components/emulation/KernelManager'
+import { SessionCard } from '@/components/emulation/SessionCard'
+import { EmulationTerminal } from '@/components/emulation/EmulationTerminal'
+import { extractErrorMessage } from '@/utils/error'
 import type {
   EmulationSession,
   EmulationMode,
-  EmulationStatus,
   PortForward,
   EmulationPreset,
   StubProfile,
 } from '@/types'
-import '@xterm/xterm/css/xterm.css'
-
-const STATUS_CONFIG: Record<EmulationStatus, { label: string; className: string }> = {
-  created: { label: 'Created', className: 'bg-gray-500 text-white' },
-  starting: { label: 'Starting', className: 'bg-yellow-500 text-black' },
-  running: { label: 'Running', className: 'bg-green-500 text-white' },
-  stopping: { label: 'Stopping...', className: 'bg-orange-500 text-white' },
-  stopped: { label: 'Stopped', className: 'bg-zinc-600 text-white' },
-  error: { label: 'Error', className: 'bg-red-500 text-white' },
-}
 
 export default function EmulationPage() {
   const { projectId } = useParams<{ projectId: string }>()
@@ -89,6 +71,9 @@ export default function EmulationPage() {
   const [activeSession, setActiveSession] = useState<EmulationSession | null>(null)
   const [showTerminal, setShowTerminal] = useState(false)
 
+  const activeSessionRef = useRef(activeSession)
+  activeSessionRef.current = activeSession
+
   const loadSessions = useCallback(async () => {
     if (!projectId) return
     try {
@@ -97,7 +82,7 @@ export default function EmulationPage() {
 
       // Auto-select the first running session
       const running = data.find((s) => s.status === 'running')
-      if (running && !activeSession) {
+      if (running && !activeSessionRef.current) {
         setActiveSession(running)
       }
     } catch {
@@ -105,7 +90,7 @@ export default function EmulationPage() {
     } finally {
       setLoading(false)
     }
-  }, [projectId, activeSession])
+  }, [projectId])
 
   const loadPresets = useCallback(async () => {
     if (!projectId) return
@@ -184,18 +169,7 @@ export default function EmulationPage() {
       }
       await loadSessions()
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Failed to start emulation'
-      // Try to extract API error detail
-      if (typeof err === 'object' && err !== null && 'response' in err) {
-        const resp = (err as { response?: { data?: { detail?: string } } }).response
-        if (resp?.data?.detail) {
-          setError(resp.data.detail)
-        } else {
-          setError(msg)
-        }
-      } else {
-        setError(msg)
-      }
+      setError(extractErrorMessage(err, 'Failed to start emulation'))
     } finally {
       setStarting(false)
     }
@@ -671,359 +645,3 @@ export default function EmulationPage() {
   )
 }
 
-// ── Session card with error display and log viewer ──
-
-interface SessionCardProps {
-  session: EmulationSession
-  isActive: boolean
-  projectId: string
-  onConnect: () => void
-  onStop: () => void
-  onDismiss: () => void
-}
-
-function SessionCard({ session, isActive, projectId, onConnect, onStop, onDismiss }: SessionCardProps) {
-  const statusCfg = STATUS_CONFIG[session.status] || STATUS_CONFIG.stopped
-  const [showLogs, setShowLogs] = useState(false)
-  const [logs, setLogs] = useState<string | null>(null)
-  const [logsLoading, setLogsLoading] = useState(false)
-
-  // When the session finishes stopping, refresh logs if the panel is open
-  useEffect(() => {
-    if (session.status !== 'stopped' || !showLogs) return
-    setLogsLoading(true)
-    getSessionLogs(projectId, session.id)
-      .then(setLogs)
-      .catch(() => setLogs('Failed to fetch logs'))
-      .finally(() => setLogsLoading(false))
-  }, [session.status]) // eslint-disable-line react-hooks/exhaustive-deps
-
-  const handleViewLogs = async () => {
-    if (showLogs) {
-      setShowLogs(false)
-      return
-    }
-    setShowLogs(true)
-    setLogsLoading(true)
-    try {
-      const logText = await getSessionLogs(projectId, session.id)
-      setLogs(logText)
-    } catch {
-      setLogs('Failed to fetch logs')
-    } finally {
-      setLogsLoading(false)
-    }
-  }
-
-  return (
-    <div
-      className={`rounded-lg border p-3 transition-colors ${
-        isActive
-          ? 'border-primary/50 bg-primary/5'
-          : 'border-border hover:border-border/80'
-      }`}
-    >
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <Badge className={`text-[10px] ${statusCfg.className}`}>
-            {statusCfg.label}
-          </Badge>
-          <span className="text-xs font-medium">
-            {session.mode === 'user' ? 'User' : 'System'} Mode
-          </span>
-        </div>
-        <div className="flex items-center gap-2">
-          {session.architecture && (
-            <Badge variant="outline" className="text-[10px]">
-              {session.architecture}
-            </Badge>
-          )}
-          {(session.status === 'stopped' || session.status === 'error') && (
-            <button
-              onClick={onDismiss}
-              className="text-muted-foreground hover:text-destructive transition-colors"
-              title="Delete session"
-            >
-              <Trash2 className="h-3.5 w-3.5" />
-            </button>
-          )}
-        </div>
-      </div>
-
-      {session.binary_path && (
-        <p className="mt-1 truncate text-xs text-muted-foreground font-mono">
-          {session.binary_path}
-        </p>
-      )}
-
-      <div className="mt-1 flex items-center gap-2 text-[10px] text-muted-foreground">
-        <Clock className="h-3 w-3" />
-        {formatDate(session.created_at)}
-      </div>
-
-      {/* Error message — only shown for errored sessions, not intentional stops */}
-      {session.status === 'error' && session.error_message && (
-        <div className="mt-2 rounded-md bg-destructive/10 px-3 py-2 text-xs text-destructive">
-          <div className="flex items-start gap-2">
-            <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-            <div className="min-w-0">
-              <p className="font-medium">Emulation failed</p>
-              <pre className="mt-1 max-h-40 overflow-auto whitespace-pre-wrap break-words text-[11px] opacity-90 font-mono">
-                {session.error_message}
-              </pre>
-            </div>
-          </div>
-        </div>
-      )}
-
-      <div className="mt-2 flex flex-wrap gap-2">
-        {session.status === 'running' && (
-          <>
-            <Button
-              variant="outline"
-              size="sm"
-              className="h-7 text-xs"
-              onClick={onConnect}
-            >
-              <TerminalSquare className="mr-1 h-3 w-3" />
-              Connect
-            </Button>
-            <Button
-              variant="destructive"
-              size="sm"
-              className="h-7 text-xs"
-              onClick={onStop}
-            >
-              <Square className="mr-1 h-3 w-3" />
-              Stop
-            </Button>
-          </>
-        )}
-        {session.status === 'stopping' && (
-          <Button variant="outline" size="sm" className="h-7 text-xs" disabled>
-            <Loader2 className="mr-1 h-3 w-3 animate-spin" />
-            Stopping...
-          </Button>
-        )}
-        {/* View Logs button — available for any session with a container */}
-        <Button
-          variant="ghost"
-          size="sm"
-          className="h-7 text-xs"
-          onClick={handleViewLogs}
-        >
-          <FileText className="mr-1 h-3 w-3" />
-          Logs
-          {showLogs ? <ChevronUp className="ml-1 h-3 w-3" /> : <ChevronDown className="ml-1 h-3 w-3" />}
-        </Button>
-      </div>
-
-      {/* Expandable log viewer */}
-      {showLogs && (
-        <div className="mt-2 rounded-md border border-border bg-[#0a0a0b] p-2">
-          {logsLoading ? (
-            <div className="flex items-center gap-2 py-2 text-xs text-muted-foreground">
-              <Loader2 className="h-3 w-3 animate-spin" />
-              Loading logs...
-            </div>
-          ) : (
-            <pre className="max-h-60 overflow-auto whitespace-pre-wrap break-words text-[11px] text-zinc-300 font-mono">
-              {logs || 'No logs available'}
-            </pre>
-          )}
-        </div>
-      )}
-    </div>
-  )
-}
-
-// ── Embedded terminal component ──
-
-interface EmulationTerminalProps {
-  projectId: string
-  session: EmulationSession
-  onClose: () => void
-}
-
-function EmulationTerminal({ projectId, session, onClose }: EmulationTerminalProps) {
-  const containerRef = useRef<HTMLDivElement>(null)
-  const termRef = useRef<Terminal | null>(null)
-  const fitAddonRef = useRef<FitAddon | null>(null)
-  const wsRef = useRef<WebSocket | null>(null)
-  const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const reconnectAttemptRef = useRef(0)
-  const intentionalCloseRef = useRef(false)
-
-  useEffect(() => {
-    if (!containerRef.current || session.status !== 'running') return
-
-    const term = new Terminal({
-      cursorBlink: true,
-      fontSize: 13,
-      fontFamily: 'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace',
-      theme: {
-        background: '#0a0a0b',
-        foreground: '#e4e4e7',
-        cursor: '#e4e4e7',
-        selectionBackground: '#27272a',
-        black: '#09090b',
-        red: '#ef4444',
-        green: '#22c55e',
-        yellow: '#eab308',
-        blue: '#3b82f6',
-        magenta: '#a855f7',
-        cyan: '#06b6d4',
-        white: '#e4e4e7',
-        brightBlack: '#52525b',
-        brightRed: '#f87171',
-        brightGreen: '#4ade80',
-        brightYellow: '#facc15',
-        brightBlue: '#60a5fa',
-        brightMagenta: '#c084fc',
-        brightCyan: '#22d3ee',
-        brightWhite: '#fafafa',
-      },
-      scrollback: 5000,
-      convertEol: true,
-    })
-
-    const fitAddon = new FitAddon()
-    term.loadAddon(fitAddon)
-    fitAddonRef.current = fitAddon
-    termRef.current = term
-
-    term.open(containerRef.current)
-    requestAnimationFrame(() => fitAddon.fit())
-
-    const MAX_RECONNECT_ATTEMPTS = 10
-    const RECONNECT_BASE_DELAY = 1000
-
-    function connectWebSocket() {
-      const url = buildEmulationTerminalURL(projectId, session.id)
-      const ws = new WebSocket(url)
-      wsRef.current = ws
-
-      ws.onopen = () => {
-        reconnectAttemptRef.current = 0
-        ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }))
-      }
-
-      ws.onmessage = (event) => {
-        try {
-          const msg = JSON.parse(event.data)
-          if (msg.type === 'output' && msg.data) {
-            term.write(msg.data)
-          } else if (msg.type === 'error') {
-            term.write(`\r\n\x1b[31mError: ${msg.data}\x1b[0m\r\n`)
-          }
-          // Ignore ping/pong messages (keepalive)
-        } catch {
-          term.write(event.data)
-        }
-      }
-
-      ws.onclose = () => {
-        if (intentionalCloseRef.current) return
-
-        const attempt = reconnectAttemptRef.current
-        if (attempt < MAX_RECONNECT_ATTEMPTS) {
-          const delay = Math.min(RECONNECT_BASE_DELAY * Math.pow(1.5, attempt), 10000)
-          term.write(`\r\n\x1b[90m[Disconnected — reconnecting in ${Math.round(delay / 1000)}s...]\x1b[0m\r\n`)
-          reconnectAttemptRef.current = attempt + 1
-          reconnectTimerRef.current = setTimeout(connectWebSocket, delay)
-        } else {
-          term.write('\r\n\x1b[90m[Session disconnected — max reconnect attempts reached]\x1b[0m\r\n')
-          getSessionLogs(projectId, session.id)
-            .then((logText) => {
-              if (logText && logText !== '(no log available)') {
-                term.write('\r\n\x1b[33m--- QEMU Startup Log ---\x1b[0m\r\n')
-                term.write(logText.replace(/\n/g, '\r\n'))
-                term.write('\r\n\x1b[33m--- End Log ---\x1b[0m\r\n')
-              }
-            })
-            .catch(() => {})
-        }
-      }
-
-      ws.onerror = () => {
-        // onclose will fire after onerror, reconnect handled there
-      }
-    }
-
-    connectWebSocket()
-
-    const onData = term.onData((data: string) => {
-      const ws = wsRef.current
-      if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: 'input', data }))
-      }
-    })
-
-    return () => {
-      intentionalCloseRef.current = true
-      onData.dispose()
-      if (reconnectTimerRef.current) {
-        clearTimeout(reconnectTimerRef.current)
-        reconnectTimerRef.current = null
-      }
-      const ws = wsRef.current
-      if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
-        ws.close()
-      }
-      wsRef.current = null
-      termRef.current = null
-      fitAddonRef.current = null
-      term.dispose()
-    }
-  }, [projectId, session.id, session.status])
-
-  // Resize observer
-  useEffect(() => {
-    if (!containerRef.current) return
-
-    const observer = new ResizeObserver(() => {
-      const fitAddon = fitAddonRef.current
-      const term = termRef.current
-      const ws = wsRef.current
-      if (!fitAddon || !term) return
-      try {
-        fitAddon.fit()
-        if (ws && ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }))
-        }
-      } catch {
-        // ignore
-      }
-    })
-    observer.observe(containerRef.current)
-    return () => observer.disconnect()
-  }, [])
-
-  return (
-    <div className="flex h-full flex-col">
-      {/* Terminal header */}
-      <div className="flex items-center gap-2 border-b border-border bg-[#0a0a0b] px-3 py-1.5">
-        <TerminalSquare className="h-3.5 w-3.5 text-muted-foreground" />
-        <span className="text-xs font-medium text-muted-foreground">
-          Emulation Terminal — {session.mode} mode
-          {session.architecture ? ` (${session.architecture})` : ''}
-        </span>
-        <Badge
-          className={`ml-auto text-[10px] ${STATUS_CONFIG[session.status]?.className || ''}`}
-        >
-          {session.status}
-        </Badge>
-        <button
-          onClick={onClose}
-          className="rounded p-0.5 text-muted-foreground hover:bg-accent hover:text-accent-foreground"
-          title="Close terminal"
-        >
-          <Square className="h-3.5 w-3.5" />
-        </button>
-      </div>
-
-      {/* Terminal container */}
-      <div ref={containerRef} className="flex-1 px-1 py-1" />
-    </div>
-  )
-}

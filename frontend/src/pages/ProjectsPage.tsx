@@ -49,13 +49,13 @@ export default function ProjectsPage() {
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-semibold tracking-tight">Projects</h1>
         <div className="flex gap-2">
-          <Button size="sm" variant="outline" onClick={handleImportClick} disabled={importing}>
+          <Button size="sm" variant="outline" onClick={handleImportClick} disabled={importing} title="Import a previously exported .wairz project archive">
             {importing ? (
               <Loader2 className="mr-2 h-4 w-4 animate-spin" />
             ) : (
               <Upload className="mr-2 h-4 w-4" />
             )}
-            Import
+            Import Project
           </Button>
           <input
             ref={fileInputRef}
