@@ -65,6 +65,53 @@ RUN wget -q "https://github.com/NationalSecurityAgency/ghidra/releases/download/
     && mv /opt/ghidra_${GHIDRA_VERSION}_PUBLIC /opt/ghidra \
     && rm /tmp/ghidra.zip
 
+# On ARM64: build native decompiler from Ghidra source (official release
+# only ships linux_x86_64 natives — no linux_arm_64). The decompiler is a
+# C++ binary invoked by the Java frontend for decompilation.
+# On x86_64: skip (pre-built binaries are included in the release ZIP).
+RUN ARCH=$(uname -m) && \
+    if [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then \
+        echo "ARM64 detected — building Ghidra native decompiler from source..." && \
+        apt-get update && apt-get install -y --no-install-recommends bison flex binutils-dev && \
+        git clone --depth 1 --branch Ghidra_${GHIDRA_VERSION}_build \
+            https://github.com/NationalSecurityAgency/ghidra /tmp/ghidra-src && \
+        cd /tmp/ghidra-src/Ghidra/Features/Decompiler/src/decompile/cpp && \
+        sed -i 's/-m32//g' Makefile && \
+        make decomp_opt -j$(nproc) ARCH_FLAGS= && \
+        mkdir -p /opt/ghidra/Ghidra/Features/Decompiler/os/linux_arm_64 && \
+        cp decomp_opt /opt/ghidra/Ghidra/Features/Decompiler/os/linux_arm_64/decompile && \
+        chmod +x /opt/ghidra/Ghidra/Features/Decompiler/os/linux_arm_64/decompile && \
+        cd /tmp/ghidra-src/Ghidra/Features/Decompiler/src/decompile/cpp && \
+        make sleigh_opt -j$(nproc) ARCH_FLAGS= && \
+        cp sleigh_opt /opt/ghidra/Ghidra/Features/Decompiler/os/linux_arm_64/sleighc && \
+        chmod +x /opt/ghidra/Ghidra/Features/Decompiler/os/linux_arm_64/sleighc && \
+        rm -rf /tmp/ghidra-src && \
+        apt-get purge -y bison flex && apt-get autoremove -y && rm -rf /var/lib/apt/lists/* && \
+        echo "Ghidra ARM64 natives built successfully"; \
+    else \
+        echo "x86_64 detected — using pre-built Ghidra natives"; \
+    fi
+
+# Install Grype for local vulnerability scanning (multi-arch)
+ARG GRYPE_VERSION=0.87.0
+RUN ARCH=$(uname -m) && \
+    if [ "$ARCH" = "x86_64" ]; then GOARCH=amd64; \
+    elif [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then GOARCH=arm64; \
+    else echo "Unsupported arch: $ARCH" && exit 1; fi && \
+    curl -sSfL "https://github.com/anchore/grype/releases/download/v${GRYPE_VERSION}/grype_${GRYPE_VERSION}_linux_${GOARCH}.tar.gz" \
+        | tar xz -C /usr/local/bin grype && \
+    chmod +x /usr/local/bin/grype
+
+# Install Syft for SBOM generation (multi-arch)
+ARG SYFT_VERSION=1.41.2
+RUN ARCH=$(uname -m) && \
+    if [ "$ARCH" = "x86_64" ]; then GOARCH=amd64; \
+    elif [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then GOARCH=arm64; \
+    else echo "Unsupported arch: $ARCH" && exit 1; fi && \
+    curl -sSfL "https://github.com/anchore/syft/releases/download/v${SYFT_VERSION}/syft_${SYFT_VERSION}_linux_${GOARCH}.tar.gz" \
+        | tar xz -C /usr/local/bin syft && \
+    chmod +x /usr/local/bin/syft
+
 # Install uv
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
