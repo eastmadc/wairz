@@ -9,8 +9,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import async_session_factory, get_db
+from app.models.emulation_preset import EmulationPreset
 from app.models.emulation_session import EmulationSession
 from app.models.firmware import Firmware
+from app.routers.deps import resolve_firmware as _resolve_firmware
 from app.schemas.emulation import (
     EmulationExecRequest,
     EmulationExecResponse,
@@ -21,7 +23,6 @@ from app.schemas.emulation import (
     EmulationStartRequest,
 )
 from app.services.emulation_service import EmulationService
-from app.services.firmware_service import FirmwareService
 
 logger = logging.getLogger(__name__)
 
@@ -29,26 +30,6 @@ router = APIRouter(
     prefix="/api/v1/projects/{project_id}/emulation",
     tags=["emulation"],
 )
-
-
-async def _resolve_firmware(
-    project_id: uuid.UUID,
-    firmware_id: uuid.UUID | None = None,
-    db: AsyncSession = Depends(get_db),
-) -> Firmware:
-    """Resolve project -> firmware, return firmware record."""
-    svc = FirmwareService(db)
-    if firmware_id:
-        firmware = await svc.get_by_id(firmware_id)
-        if not firmware or firmware.project_id != project_id:
-            raise HTTPException(404, "Firmware not found")
-    else:
-        firmware = await svc.get_by_project(project_id)
-        if not firmware:
-            raise HTTPException(404, "No firmware uploaded for this project")
-    if not firmware.extracted_path:
-        raise HTTPException(400, "Firmware not yet unpacked")
-    return firmware
 
 
 @router.post("/start", response_model=EmulationSessionResponse, status_code=201)
@@ -86,6 +67,14 @@ async def delete_session(
     db: AsyncSession = Depends(get_db),
 ):
     """Delete a stopped or errored emulation session."""
+    # Verify session belongs to this project
+    result = await db.execute(
+        select(EmulationSession).where(EmulationSession.id == session_id)
+    )
+    session = result.scalar_one_or_none()
+    if not session or session.project_id != project_id:
+        raise HTTPException(404, "Session not found")
+
     svc = EmulationService(db)
     try:
         await svc.delete_session(session_id)
@@ -104,6 +93,14 @@ async def stop_emulation(
     db: AsyncSession = Depends(get_db),
 ):
     """Stop an emulation session."""
+    # Verify session belongs to this project
+    result = await db.execute(
+        select(EmulationSession).where(EmulationSession.id == session_id)
+    )
+    session = result.scalar_one_or_none()
+    if not session or session.project_id != project_id:
+        raise HTTPException(404, "Session not found")
+
     svc = EmulationService(db)
     try:
         session = await svc.stop_session(session_id)
@@ -123,9 +120,17 @@ async def exec_in_emulation(
     db: AsyncSession = Depends(get_db),
 ):
     """Execute a command inside a running emulation session."""
+    # Verify session belongs to this project
+    result = await db.execute(
+        select(EmulationSession).where(EmulationSession.id == session_id)
+    )
+    session = result.scalar_one_or_none()
+    if not session or session.project_id != project_id:
+        raise HTTPException(404, "Session not found")
+
     svc = EmulationService(db)
     try:
-        result = await svc.exec_command(
+        exec_result = await svc.exec_command(
             session_id=session_id,
             command=request.command,
             timeout=request.timeout,
@@ -133,7 +138,7 @@ async def exec_in_emulation(
         )
     except ValueError as exc:
         raise HTTPException(400, str(exc))
-    return result
+    return exec_result
 
 
 @router.get("/sessions", response_model=list[EmulationSessionResponse])
@@ -148,13 +153,15 @@ async def list_sessions(
     """
     svc = EmulationService(db)
     sessions = await svc.list_sessions(project_id)
-    # Update status for running sessions (detect dead QEMU)
-    for session in sessions:
+    # Update status for running sessions sequentially
+    # (AsyncSession is not safe for concurrent coroutine access)
+    for i, session in enumerate(sessions):
         if session.status in ("running", "starting"):
             try:
-                await svc.get_status(session.id)
+                sessions[i] = await svc.get_status(session.id)
             except Exception:
-                pass
+                continue
+
     return sessions
 
 
@@ -165,6 +172,14 @@ async def get_session_status(
     db: AsyncSession = Depends(get_db),
 ):
     """Get the current status of an emulation session."""
+    # Verify session belongs to this project
+    result = await db.execute(
+        select(EmulationSession).where(EmulationSession.id == session_id)
+    )
+    session = result.scalar_one_or_none()
+    if not session or session.project_id != project_id:
+        raise HTTPException(404, "Session not found")
+
     svc = EmulationService(db)
     try:
         session = await svc.get_status(session_id)
@@ -180,6 +195,14 @@ async def get_session_logs(
     db: AsyncSession = Depends(get_db),
 ):
     """Get QEMU startup/error logs for an emulation session."""
+    # Verify session belongs to this project
+    result = await db.execute(
+        select(EmulationSession).where(EmulationSession.id == session_id)
+    )
+    session = result.scalar_one_or_none()
+    if not session or session.project_id != project_id:
+        raise HTTPException(404, "Session not found")
+
     svc = EmulationService(db)
     try:
         logs = await svc.get_session_logs(session_id)
@@ -237,11 +260,15 @@ async def get_preset(
     db: AsyncSession = Depends(get_db),
 ):
     """Get a single emulation preset."""
-    svc = EmulationService(db)
-    try:
-        return await svc.get_preset(preset_id)
-    except ValueError as exc:
-        raise HTTPException(404, str(exc))
+    # Verify preset belongs to this project
+    result = await db.execute(
+        select(EmulationPreset).where(EmulationPreset.id == preset_id)
+    )
+    preset = result.scalar_one_or_none()
+    if not preset or preset.project_id != project_id:
+        raise HTTPException(404, "Preset not found")
+
+    return preset
 
 
 @router.patch("/presets/{preset_id}", response_model=EmulationPresetResponse)
@@ -252,6 +279,14 @@ async def update_preset(
     db: AsyncSession = Depends(get_db),
 ):
     """Update an emulation preset."""
+    # Verify preset belongs to this project
+    result = await db.execute(
+        select(EmulationPreset).where(EmulationPreset.id == preset_id)
+    )
+    preset = result.scalar_one_or_none()
+    if not preset or preset.project_id != project_id:
+        raise HTTPException(404, "Preset not found")
+
     svc = EmulationService(db)
     try:
         updates = request.model_dump(exclude_unset=True)
@@ -269,6 +304,14 @@ async def delete_preset(
     db: AsyncSession = Depends(get_db),
 ):
     """Delete an emulation preset."""
+    # Verify preset belongs to this project
+    result = await db.execute(
+        select(EmulationPreset).where(EmulationPreset.id == preset_id)
+    )
+    preset = result.scalar_one_or_none()
+    if not preset or preset.project_id != project_id:
+        raise HTTPException(404, "Preset not found")
+
     svc = EmulationService(db)
     try:
         await svc.delete_preset(preset_id)
@@ -389,7 +432,7 @@ async def websocket_emulation_terminal(
         "data": f"\r\n  Emulation terminal ({session.mode} mode, {session.architecture})\r\n\r\n",
     })
 
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
 
     async def read_container():
         """Read from container socket and send to WebSocket."""
