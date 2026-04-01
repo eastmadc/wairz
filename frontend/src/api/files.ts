@@ -1,6 +1,24 @@
 import apiClient from './client'
 import type { DirectoryListing, FileContent, FileInfo } from '@/types'
 
+export interface SearchResult {
+  pattern: string
+  matches: string[]
+  truncated: boolean
+}
+
+export async function searchFiles(
+  projectId: string,
+  pattern: string,
+  path: string = '/',
+): Promise<SearchResult> {
+  const { data } = await apiClient.get<SearchResult>(
+    `/projects/${projectId}/files/search`,
+    { params: { pattern, path } },
+  )
+  return data
+}
+
 export async function listDirectory(
   projectId: string,
   path: string = '',
