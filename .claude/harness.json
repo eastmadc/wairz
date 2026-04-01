@@ -1,0 +1,81 @@
+{
+  "language": "python+typescript",
+  "framework": "fastapi+react",
+  "packageManager": "pip+npm",
+  "typecheck": {
+    "command": "npx tsc --noEmit",
+    "perFile": true
+  },
+  "test": {
+    "command": null,
+    "framework": null
+  },
+  "qualityRules": {
+    "builtIn": [
+      "no-confirm-alert",
+      "no-transition-all"
+    ],
+    "custom": []
+  },
+  "protectedFiles": [
+    ".claude/harness.json"
+  ],
+  "features": {
+    "intakeScanner": true,
+    "telemetry": true
+  },
+  "registeredSkills": [
+    "architect",
+    "archon",
+    "ascii-diagram",
+    "autopilot",
+    "cost",
+    "create-app",
+    "create-skill",
+    "daemon",
+    "dashboard",
+    "design",
+    "do",
+    "doc-gen",
+    "experiment",
+    "fleet",
+    "improve",
+    "infra-audit",
+    "learn",
+    "live-preview",
+    "map",
+    "marshal",
+    "merge-review",
+    "organize",
+    "postmortem",
+    "prd",
+    "pr-watch",
+    "qa",
+    "refactor",
+    "research",
+    "research-fleet",
+    "review",
+    "scaffold",
+    "schedule",
+    "session-handoff",
+    "setup",
+    "systematic-debugging",
+    "test-gen",
+    "triage",
+    "verify",
+    "watch",
+    "workspace"
+  ],
+  "registeredSkillCount": 40,
+  "agentTimeouts": {
+    "skill": 600000,
+    "research": 900000,
+    "build": 1800000
+  },
+  "trust": {
+    "sessions": 0,
+    "campaigns": 0,
+    "override": null,
+    "sessions_completed": 4
+  }
+}
