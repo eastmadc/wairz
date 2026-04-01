@@ -43,7 +43,7 @@ const STATUS_OPTIONS: { value: FindingStatus; label: string }[] = [
 const SOURCE_CONFIG: Record<FindingSource, { icon: React.ElementType; label: string; className: string }> = {
   manual: { icon: User, label: 'Manual', className: 'border-gray-500/50 text-gray-500' },
   ai_discovered: { icon: Bot, label: 'AI Discovered', className: 'border-purple-500/50 text-purple-600 dark:text-purple-400' },
-  sbom_scan: { icon: Package, label: 'Inherited Vulnerability', className: 'border-teal-500/50 text-teal-600 dark:text-teal-400' },
+  sbom_scan: { icon: Package, label: 'Vulnerability Scan', className: 'border-teal-500/50 text-teal-600 dark:text-teal-400' },
   fuzzing: { icon: Bug, label: 'Fuzzing', className: 'border-orange-500/50 text-orange-600 dark:text-orange-400' },
   security_review: { icon: Search, label: 'Security Review', className: 'border-blue-500/50 text-blue-600 dark:text-blue-400' },
 }
@@ -100,7 +100,7 @@ export default function FindingDetail({ finding, onUpdate, onDelete }: FindingDe
           <div className="mt-1 flex items-center gap-2 text-sm text-muted-foreground">
             <Badge className={sevConfig.className}>{sevConfig.label}</Badge>
             {finding.source && (() => {
-              const srcConfig = SOURCE_CONFIG[finding.source]
+              const srcConfig = SOURCE_CONFIG[finding.source as FindingSource] ?? SOURCE_CONFIG.manual
               const SrcIcon = srcConfig.icon
               return (
                 <Badge variant="outline" className={`text-xs ${srcConfig.className}`}>

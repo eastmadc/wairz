@@ -71,11 +71,12 @@ export default function ProjectDetailPage() {
   }, [projectId, fetchProject, clearCurrentProject])
 
   // Fetch full firmware list for details (includes unpack_log, extracted_path)
+  // Depend on project.id + status (not full object) to avoid redundant fetches on every poll
   useEffect(() => {
     if (projectId && project) {
       listFirmware(projectId).then(setFirmwareList).catch(() => {})
     }
-  }, [project, projectId])
+  }, [projectId, project?.id, project?.status])
 
   // Poll for status updates while unpacking (matches EmulationPage pattern)
   useEffect(() => {

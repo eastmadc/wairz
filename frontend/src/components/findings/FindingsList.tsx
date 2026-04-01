@@ -222,7 +222,7 @@ export default function FindingsList({
                       {statConfig.label}
                     </Badge>
                     {f.source && f.source !== 'manual' && (() => {
-                      const srcConfig = SOURCE_CONFIG[f.source]
+                      const srcConfig = SOURCE_CONFIG[f.source as FindingSource] ?? SOURCE_CONFIG.manual
                       const SrcIcon = srcConfig.icon
                       return (
                         <Badge variant="outline" className={`shrink-0 text-[10px] ${srcConfig.className}`}>
