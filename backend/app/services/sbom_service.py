@@ -310,7 +310,12 @@ class SbomService:
         Call from a thread executor (sync, CPU-bound).
         Returns list of dicts ready for DB insertion.
         """
+        # Syft first (broad ecosystem coverage, medium confidence).
+        # Custom strategies run after and override Syft for same components.
+        self._run_syft_scan()
+
         self._scan_package_managers()
+        self._scan_python_packages()
         self._scan_kernel_version()
         self._scan_firmware_markers()
         self._scan_busybox()
@@ -337,9 +342,21 @@ class SbomService:
 
         return results
 
+    @staticmethod
+    def _normalize_name(name: str) -> str:
+        """Normalize package name for dedup (underscores → hyphens, lowercase)."""
+        return name.lower().replace("_", "-")
+
+    @staticmethod
+    def _normalize_version(version: str | None) -> str | None:
+        """Treat '0.0.0' and 'UNKNOWN' as None for merge purposes."""
+        if version in (None, "", "0.0.0", "UNKNOWN"):
+            return None
+        return version
+
     def _add_component(self, comp: IdentifiedComponent) -> None:
         """Add or merge a component, preferring higher-confidence detections."""
-        key = (comp.name.lower(), comp.version)
+        key = (self._normalize_name(comp.name), self._normalize_version(comp.version))
         existing = self._components.get(key)
 
         if existing is None:
@@ -379,6 +396,95 @@ class SbomService:
         except Exception:
             # Fallback: construct manually
             return f"pkg:{pkg_type}/{name}@{version}"
+
+    # ------------------------------------------------------------------
+    # Strategy 0: Syft directory scan (broad ecosystem coverage)
+    # ------------------------------------------------------------------
+
+    # Map Syft package types to Wairz component types
+    _SYFT_TYPE_MAP = {
+        "deb": "application",
+        "rpm": "application",
+        "apk": "application",
+        "python": "library",
+        "go-module": "library",
+        "java-archive": "library",
+        "npm": "library",
+        "gem": "library",
+        "rust-crate": "library",
+        "php-composer": "library",
+        "lua-rock": "library",
+        "binary": "application",
+        "linux-kernel": "operating-system",
+    }
+
+    def _run_syft_scan(self) -> None:
+        """Run Syft directory scan and pre-seed components.
+
+        Syft detects packages across 30+ ecosystems (dpkg, Python, Go, Java,
+        Node, Rust, Ruby, etc.). Results are added with medium confidence so
+        that Wairz's custom firmware-specific strategies can override them
+        for components they detect with higher confidence.
+        """
+        import json
+        import subprocess
+        from shutil import which
+
+        from app.config import get_settings
+        settings = get_settings()
+
+        if not settings.syft_enabled or not which("syft"):
+            return
+
+        try:
+            proc = subprocess.run(
+                ["syft", f"dir:{self.extracted_root}", "-o", "cyclonedx-json", "-q"],
+                capture_output=True,
+                timeout=settings.syft_timeout,
+                text=True,
+            )
+            if proc.returncode != 0:
+                return  # Syft failed silently — custom strategies will cover
+
+            cdx = json.loads(proc.stdout)
+        except (subprocess.TimeoutExpired, json.JSONDecodeError, Exception):
+            return  # Graceful fallback to custom-only
+
+        for cdx_comp in cdx.get("components", []):
+            # Skip file-hash entries (not real packages)
+            if cdx_comp.get("type") == "file":
+                continue
+
+            name = cdx_comp.get("name", "").strip()
+            version = cdx_comp.get("version", "").strip() or None
+            if not name:
+                continue
+
+            # Skip noise: Windows installer stubs, unknown entries
+            if name.startswith("wininst-") or name == "unknown":
+                continue
+
+            # Extract Syft metadata from properties array
+            props = {p["name"]: p["value"] for p in cdx_comp.get("properties", []) if "name" in p and "value" in p}
+            syft_type = props.get("syft:package:type", "")
+            cataloger = props.get("syft:package:foundBy", "")
+            file_path = props.get("syft:location:0:path", "")
+
+            comp_type = self._SYFT_TYPE_MAP.get(syft_type, "library")
+
+            comp = IdentifiedComponent(
+                name=name,
+                version=version,
+                type=comp_type,
+                cpe=cdx_comp.get("cpe"),
+                purl=cdx_comp.get("purl"),
+                supplier=None,
+                detection_source="syft",
+                detection_confidence="medium",
+                file_paths=[file_path] if file_path else [],
+                metadata={"syft_cataloger": cataloger, "syft_type": syft_type},
+            )
+            self._add_component(comp)
 
     # ------------------------------------------------------------------
     # Strategy 1: Package manager databases
@@ -506,6 +612,104 @@ class SbomService:
         if current_key:
             fields[current_key.lower()] = current_val
         return fields
+
+    # ------------------------------------------------------------------
+    # Strategy 1b: Python packages (.dist-info / .egg-info)
+    # ------------------------------------------------------------------
+
+    def _scan_python_packages(self) -> None:
+        """Detect Python packages from .dist-info and .egg-info directories."""
+        # Common Python site-packages locations in firmware
+        site_paths = [
+            "usr/lib/python*/site-packages",
+            "usr/lib/python*/dist-packages",
+            "usr/local/lib/python*/site-packages",
+        ]
+        import glob as _glob
+
+        for pattern in site_paths:
+            full_pattern = os.path.join(self.extracted_root, pattern)
+            for site_dir in _glob.glob(full_pattern):
+                if not os.path.isdir(site_dir):
+                    continue
+                try:
+                    entries = os.listdir(site_dir)
+                except OSError:
+                    continue
+                for entry in entries:
+                    name = None
+                    version = None
+                    rel_path = os.path.relpath(
+                        os.path.join(site_dir, entry), self.extracted_root
+                    )
+
+                    if entry.endswith(".dist-info"):
+                        # PEP 376: name-version.dist-info
+                        meta_file = os.path.join(site_dir, entry, "METADATA")
+                        if not os.path.isfile(meta_file):
+                            meta_file = os.path.join(site_dir, entry, "PKG-INFO")
+                        name, version = self._parse_python_metadata(meta_file)
+                        if not name:
+                            # Fallback: parse directory name
+                            parts = entry[:-len(".dist-info")].rsplit("-", 1)
+                            name = parts[0].lower().replace("_", "-")
+                            version = parts[1] if len(parts) > 1 else None
+
+                    elif entry.endswith(".egg-info"):
+                        # setuptools: name-version.egg-info
+                        meta_path = os.path.join(site_dir, entry)
+                        if os.path.isdir(meta_path):
+                            meta_file = os.path.join(meta_path, "PKG-INFO")
+                        else:
+                            meta_file = meta_path  # single-file .egg-info
+                        name, version = self._parse_python_metadata(meta_file)
+                        if not name:
+                            parts = entry[:-len(".egg-info")].rsplit("-", 1)
+                            name = parts[0].lower().replace("_", "-")
+                            version = parts[1] if len(parts) > 1 else None
+
+                    if not name or name == "unknown":
+                        continue
+
+                    # Skip placeholder entries
+                    if version == "0.0.0":
+                        version = None
+
+                    comp = IdentifiedComponent(
+                        name=name,
+                        version=version,
+                        type="library",
+                        cpe=None,  # Python packages rarely have CPEs
+                        purl=self._build_purl(name, version, "pypi"),
+                        supplier=None,
+                        detection_source="python_package",
+                        detection_confidence="high",
+                        file_paths=[f"/{rel_path}"],
+                        metadata={"source": "python", "ecosystem": "pypi"},
+                    )
+                    self._add_component(comp)
+
+    @staticmethod
+    def _parse_python_metadata(meta_file: str) -> tuple[str | None, str | None]:
+        """Parse Name and Version from a Python METADATA or PKG-INFO file."""
+        if not os.path.isfile(meta_file):
+            return None, None
+        name = None
+        version = None
+        try:
+            with open(meta_file, "r", errors="replace") as f:
+                for line in f:
+                    if line.startswith("Name:"):
+                        name = line[5:].strip().lower()
+                    elif line.startswith("Version:"):
+                        version = line[8:].strip()
+                    elif line.startswith(" ") or line.startswith("\t"):
+                        continue
+                    elif name and version:
+                        break  # Got both, stop reading
+        except OSError:
+            pass
+        return name, version
 
     # ------------------------------------------------------------------
     # Strategy 2: Kernel version
