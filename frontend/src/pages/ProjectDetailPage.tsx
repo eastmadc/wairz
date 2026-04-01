@@ -416,7 +416,7 @@ export default function ProjectDetailPage() {
       )}
 
       {/* Upload section */}
-      {(showUpload || (status === 'created' && firmware.length === 0)) && (
+      {(showUpload || firmware.length === 0) && (
         <Card>
           <CardHeader className="pb-3">
             <CardTitle className="text-base">Upload Firmware</CardTitle>
