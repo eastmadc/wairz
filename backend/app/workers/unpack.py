@@ -610,6 +610,48 @@ def _firmware_tar_filter(member, dest_path):
     return member
 
 
+def _identify_partition_by_content(partition_dir: str) -> str | None:
+    """Identify an Android partition by its directory contents.
+
+    Returns a human-readable name like 'system', 'vendor', 'product',
+    or None if the partition cannot be identified.
+    """
+    if not os.path.isdir(partition_dir):
+        return None
+    try:
+        entries = set(os.listdir(partition_dir))
+    except OSError:
+        return None
+
+    # system: has init binary, or bin/app/framework dirs
+    if ("init" in entries and ("bin" in entries or "system" in entries)) or \
+       ("app" in entries and "framework" in entries and "priv-app" in entries):
+        return "system"
+
+    # vendor: has build.prop + (firmware/ or lib/)
+    if "build.prop" in entries and ("firmware" in entries or "lib" in entries or "etc" in entries):
+        # Distinguish from system which also has build.prop
+        if "app" not in entries or "framework" not in entries:
+            return "vendor"
+
+    # product: has app/ or priv-app/ but no framework/
+    if ("app" in entries or "priv-app" in entries) and "framework" not in entries:
+        if "overlay" in entries or "media" in entries:
+            return "product"
+
+    # system_ext: has app/ + priv-app/ but distinct from system
+    if "priv-app" in entries and "apex" in entries and "framework" not in entries:
+        return "system_ext"
+
+    # odm: has etc/ + lib/ but not build.prop typically
+    if "etc" in entries and "lib" in entries and "build.prop" not in entries and \
+       "app" not in entries and "framework" not in entries:
+        if "firmware" in entries or "overlay" in entries:
+            return "odm"
+
+    return None
+
+
 async def _try_extract_partition(
     raw_path: str, rootfs_dir: str, partition_name: str, log_lines: list[str]
 ) -> bool:
@@ -734,6 +776,17 @@ async def _scan_super_partitions(
                         remaining -= len(chunk)
 
             if await _try_extract_partition(tmp_path, rootfs_dir, partition_name, log_lines):
+                # Identify partition by content and rename from generic name
+                identified = _identify_partition_by_content(
+                    os.path.join(rootfs_dir, partition_name)
+                )
+                if identified and identified != partition_name:
+                    old_path = os.path.join(rootfs_dir, partition_name)
+                    new_path = os.path.join(rootfs_dir, identified)
+                    if not os.path.exists(new_path):
+                        os.rename(old_path, new_path)
+                        log_lines.append(f"Identified {partition_name} as '{identified}'")
+                        partition_name = identified
                 extracted_count += 1
         except Exception as e:
             log_lines.append(f"Error extracting partition at offset 0x{start_offset:x}: {e}")
