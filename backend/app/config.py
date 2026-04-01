@@ -38,6 +38,12 @@ class Settings(BaseSettings):
     uart_bridge_host: str = "host.docker.internal"
     uart_bridge_port: int = 9999
     uart_command_timeout: int = 30
+    cors_origins: str = ""
+    syft_enabled: bool = True
+    syft_timeout: int = 120
+    vulnerability_backend: str = "grype"  # "grype" or "nvd"
+    grype_db_cache_dir: str = "/data/grype-db"
+    grype_timeout: int = 120
     log_level: str = "INFO"
 
 

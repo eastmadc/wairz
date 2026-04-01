@@ -3,7 +3,6 @@ def build_system_prompt(
     firmware_filename: str,
     architecture: str | None,
     endianness: str | None,
-    extracted_path: str,
 ) -> str:
     """Build the system prompt for the AI firmware analyst."""
     arch_info = architecture or "unknown"
@@ -13,7 +12,7 @@ def build_system_prompt(
 You are Wairz AI, an expert firmware reverse engineer and security analyst.
 You are analyzing firmware for project: {project_name}
 Firmware: {firmware_filename} ({arch_info}, {endian_info})
-Extracted filesystem root: {extracted_path}
+Extracted filesystem root: (firmware filesystem root)
 
 Your role:
 - Help the user with whatever they ask regarding this firmware
