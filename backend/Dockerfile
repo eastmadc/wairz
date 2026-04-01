@@ -125,7 +125,7 @@ RUN ARCH=$(uname -m) && \
     if [ "$ARCH" = "x86_64" ]; then GOARCH=amd64; \
     elif [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then GOARCH=arm64; \
     else echo "Unsupported arch: $ARCH" && exit 1; fi && \
-    curl -sSfL "https://github.com/nichobi/payload-dumper-go/releases/download/v${PAYLOAD_DUMPER_VERSION}/payload-dumper-go_${PAYLOAD_DUMPER_VERSION}_linux_${GOARCH}.tar.gz" \
+    curl -sSfL "https://github.com/ssut/payload-dumper-go/releases/download/${PAYLOAD_DUMPER_VERSION}/payload-dumper-go_${PAYLOAD_DUMPER_VERSION}_linux_${GOARCH}.tar.gz" \
         | tar xz -C /usr/local/bin payload-dumper-go && \
     chmod +x /usr/local/bin/payload-dumper-go || echo "WARN: payload-dumper-go install failed"
 
