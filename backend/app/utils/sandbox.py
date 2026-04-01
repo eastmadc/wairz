@@ -48,6 +48,8 @@ def _resolve_within_root(root: str, path: str, max_depth: int = 40) -> str:
             parent = os.path.dirname(resolved)
             if parent.startswith(root):
                 resolved = parent
+            else:
+                raise PathTraversalError("Path traversal detected")
             continue
 
         candidate = os.path.join(resolved, part)
