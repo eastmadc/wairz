@@ -51,14 +51,29 @@ async def run_binwalk_extraction(firmware_path: str, output_dir: str, timeout: i
 
 
 def _has_linux_markers(path: str) -> bool:
-    """Check if a directory has the standard Linux filesystem markers."""
+    """Check if a directory has the standard Linux or Android filesystem markers."""
     try:
         all_entries = set(os.listdir(path))
     except OSError:
         return False
     has_etc = "etc" in all_entries or "etc_ro" in all_entries
     has_usr_or_bin = "usr" in all_entries or "bin" in all_entries
-    return has_etc and has_usr_or_bin
+    # Standard Linux rootfs
+    if has_etc and has_usr_or_bin:
+        return True
+    # Android rootfs: has system/build.prop or system/ + vendor/
+    if "system" in all_entries:
+        system_path = os.path.join(path, "system")
+        if os.path.isdir(system_path):
+            try:
+                system_entries = set(os.listdir(system_path))
+            except OSError:
+                system_entries = set()
+            if "build.prop" in system_entries:
+                return True
+        if "vendor" in all_entries or "product" in all_entries:
+            return True
+    return False
 
 
 def _etc_entry_count(path: str) -> int:
@@ -178,6 +193,9 @@ def detect_os_info(fs_root: str) -> str | None:
         "etc/lsb-release",
         "etc/version",
         "etc/issue",
+        # Android release files
+        "system/build.prop",
+        "build.prop",
     ]
     for rel_file in release_files:
         full_path = os.path.join(fs_root, rel_file)
@@ -474,6 +492,8 @@ def classify_firmware(firmware_path: str) -> str:
     """Classify firmware file type to determine the analysis pipeline.
 
     Returns one of:
+    - "android_ota": Android OTA update ZIP (payload.bin or partition images)
+    - "android_sparse": Android sparse image (magic 0x3AFF26ED)
     - "linux_rootfs_tar": tar archive containing Linux rootfs (bypass binwalk)
     - "linux_blob": firmware blob likely containing embedded Linux filesystem
     - "elf_binary": single ELF binary (bare metal or RTOS, skip FS extraction)
@@ -481,6 +501,32 @@ def classify_firmware(firmware_path: str) -> str:
     - "pe_binary": Windows PE binary
     - "unknown": unrecognized format (try binwalk)
     """
+    import zipfile as _zipfile
+
+    # Android OTA detection — check before tar since OTA ZIPs are not tars
+    if _zipfile.is_zipfile(firmware_path):
+        try:
+            with _zipfile.ZipFile(firmware_path, "r") as zf:
+                names = set(zf.namelist())
+                android_markers = {
+                    "META-INF/com/google/android/updater-script",
+                    "META-INF/com/google/android/update-binary",
+                    "META-INF/com/android/metadata",
+                    "payload.bin", "system.img", "boot.img", "vendor.img",
+                }
+                if len(names & android_markers) >= 2:
+                    return "android_ota"
+                # Single system.img or payload.bin also counts
+                if "payload.bin" in names or "system.img" in names:
+                    return "android_ota"
+        except Exception:
+            pass
+
+    # Android sparse image (magic 0x3AFF26ED, little-endian)
+    sparse_magic = _read_magic(firmware_path, 4)
+    if sparse_magic == b"\xed\x26\xff\x3a":
+        return "android_sparse"
+
     # Check tar rootfs first (fast path for known archives)
     if _is_rootfs_tar(firmware_path):
         return "linux_rootfs_tar"
@@ -536,10 +582,160 @@ def _firmware_tar_filter(member, dest_path):
     return member
 
 
+async def _extract_android_ota(firmware_path: str, extraction_dir: str) -> str:
+    """Extract Android OTA ZIP — handles sparse images, ext4, EROFS."""
+    import zipfile as _zipfile
+    import shutil
+
+    log_lines: list[str] = []
+
+    # Step 1: Extract the ZIP (or handle raw sparse image)
+    if _zipfile.is_zipfile(firmware_path):
+        with _zipfile.ZipFile(firmware_path, "r") as zf:
+            names = zf.namelist()
+
+            # Check for payload.bin (A/B OTA)
+            if "payload.bin" in names:
+                payload_path = os.path.join(extraction_dir, "payload.bin")
+                zf.extract("payload.bin", extraction_dir)
+                log_lines.append("Found payload.bin (A/B OTA)")
+                # Try payload-dumper-go
+                if shutil.which("payload-dumper-go"):
+                    partitions_dir = os.path.join(extraction_dir, "partitions")
+                    os.makedirs(partitions_dir, exist_ok=True)
+                    proc = await asyncio.create_subprocess_exec(
+                        "payload-dumper-go", "-o", partitions_dir, payload_path,
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.STDOUT,
+                    )
+                    try:
+                        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=600)
+                        log_lines.append(stdout.decode(errors="replace")[:2000])
+                    except asyncio.TimeoutError:
+                        proc.kill()
+                        log_lines.append("payload-dumper-go timed out")
+                    os.remove(payload_path)
+                else:
+                    log_lines.append("payload-dumper-go not installed, skipping payload.bin")
+            else:
+                # Extract partition images from ZIP
+                for name in names:
+                    if name.endswith(".img") or name.endswith(".bin"):
+                        zf.extract(name, extraction_dir)
+                        log_lines.append(f"Extracted {name}")
+    else:
+        # Raw sparse image — copy it for processing
+        import shutil
+        dest = os.path.join(extraction_dir, os.path.basename(firmware_path))
+        if not dest.endswith(".img"):
+            dest += ".img"
+        shutil.copy2(firmware_path, dest)
+        log_lines.append(f"Copied raw sparse image: {os.path.basename(firmware_path)}")
+
+    # Step 2: Process each .img file
+    rootfs_dir = os.path.join(extraction_dir, "rootfs")
+    os.makedirs(rootfs_dir, exist_ok=True)
+
+    # Look in extraction_dir and extraction_dir/partitions
+    search_dirs = [extraction_dir, os.path.join(extraction_dir, "partitions")]
+
+    for search_dir in search_dirs:
+        if not os.path.isdir(search_dir):
+            continue
+        for img_name in sorted(os.listdir(search_dir)):
+            if not img_name.endswith(".img"):
+                continue
+            img_path = os.path.join(search_dir, img_name)
+            partition_name = img_name.replace(".img", "")
+
+            # Skip small images (vbmeta, dtbo, etc.)
+            try:
+                if os.path.getsize(img_path) < 1024 * 1024:  # < 1MB
+                    continue
+            except OSError:
+                continue
+
+            # Check if sparse -> convert to raw
+            raw_path = img_path
+            try:
+                with open(img_path, "rb") as f:
+                    img_magic = f.read(4)
+                if img_magic == b"\xed\x26\xff\x3a":
+                    raw_path = img_path + ".raw"
+                    if shutil.which("simg2img"):
+                        proc = await asyncio.create_subprocess_exec(
+                            "simg2img", img_path, raw_path,
+                            stdout=asyncio.subprocess.PIPE,
+                            stderr=asyncio.subprocess.STDOUT,
+                        )
+                        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=300)
+                        log_lines.append(f"Converted {img_name} from sparse to raw")
+                        os.remove(img_path)
+                    else:
+                        log_lines.append(f"simg2img not installed, cannot convert {img_name}")
+                        continue
+            except Exception as e:
+                log_lines.append(f"Error processing {img_name}: {e}")
+                continue
+
+            # Try to extract the filesystem
+            dest_dir = os.path.join(rootfs_dir, partition_name)
+            os.makedirs(dest_dir, exist_ok=True)
+
+            extracted = False
+
+            # Try ext4 extraction via debugfs
+            if not extracted and shutil.which("debugfs"):
+                proc = await asyncio.create_subprocess_exec(
+                    "debugfs", "-R", f"rdump / {dest_dir}", raw_path,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+                try:
+                    stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=300)
+                    # Check if extraction produced files
+                    if os.listdir(dest_dir):
+                        log_lines.append(f"Extracted {img_name} as ext4 → {partition_name}/")
+                        extracted = True
+                except asyncio.TimeoutError:
+                    proc.kill()
+                    log_lines.append(f"debugfs timed out on {img_name}")
+
+            # Try EROFS extraction
+            if not extracted and shutil.which("fsck.erofs"):
+                proc = await asyncio.create_subprocess_exec(
+                    "fsck.erofs", f"--extract={dest_dir}", raw_path,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+                try:
+                    stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=300)
+                    if os.listdir(dest_dir):
+                        log_lines.append(f"Extracted {img_name} as EROFS → {partition_name}/")
+                        extracted = True
+                except asyncio.TimeoutError:
+                    proc.kill()
+                    log_lines.append(f"fsck.erofs timed out on {img_name}")
+
+            if not extracted:
+                # Clean up empty dir
+                try:
+                    os.rmdir(dest_dir)
+                except OSError:
+                    pass
+
+            # Clean up raw image to save space
+            if raw_path != img_path and os.path.exists(raw_path):
+                os.remove(raw_path)
+
+    return "\n".join(log_lines)
+
+
 async def unpack_firmware(firmware_path: str, output_base_dir: str) -> UnpackResult:
     """Orchestrate the full unpacking pipeline.
 
     Uses classify_firmware() to determine the analysis strategy:
+    - android_ota / android_sparse: Android OTA or sparse image extraction
     - linux_rootfs_tar: extract tar directly (bypass binwalk)
     - linux_blob: run binwalk -e (default firmware path)
     - elf_binary: skip extraction, copy binary for direct Ghidra analysis
@@ -568,9 +764,21 @@ async def unpack_firmware(firmware_path: str, output_base_dir: str) -> UnpackRes
         result.success = True
         return result
 
+    # Android OTA / sparse image: custom extraction pipeline
+    if fw_type in ("android_ota", "android_sparse"):
+        try:
+            result.unpack_log += await _extract_android_ota(firmware_path, extraction_dir)
+        except Exception as e:
+            result.error = f"Android extraction failed: {e}"
+            result.unpack_log += str(e)
+            return result
+        # Find rootfs in extracted partitions — Android system partition is the main rootfs
+        rootfs_dir = os.path.join(extraction_dir, "rootfs")
+        # Fall through to find_filesystem_root below
+
     # Tar rootfs: extract directly — binwalk treats them as raw
     # data and carves out embedded compressed fragments instead.
-    if fw_type == "linux_rootfs_tar":
+    elif fw_type == "linux_rootfs_tar":
         try:
             with _tarfile.open(firmware_path) as tf:
                 tf.extractall(extraction_dir, filter=_firmware_tar_filter)

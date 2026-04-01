@@ -112,6 +112,23 @@ RUN ARCH=$(uname -m) && \
         | tar xz -C /usr/local/bin syft && \
     chmod +x /usr/local/bin/syft
 
+# Install Android firmware extraction tools (multi-arch)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    android-sdk-libsparse-utils \
+    erofs-utils \
+    python3-protobuf \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install payload-dumper-go for A/B OTA extraction (multi-arch)
+ARG PAYLOAD_DUMPER_VERSION=1.3.0
+RUN ARCH=$(uname -m) && \
+    if [ "$ARCH" = "x86_64" ]; then GOARCH=amd64; \
+    elif [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then GOARCH=arm64; \
+    else echo "Unsupported arch: $ARCH" && exit 1; fi && \
+    curl -sSfL "https://github.com/nichobi/payload-dumper-go/releases/download/v${PAYLOAD_DUMPER_VERSION}/payload-dumper-go_${PAYLOAD_DUMPER_VERSION}_linux_${GOARCH}.tar.gz" \
+        | tar xz -C /usr/local/bin payload-dumper-go && \
+    chmod +x /usr/local/bin/payload-dumper-go || echo "WARN: payload-dumper-go install failed"
+
 # Install uv
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
