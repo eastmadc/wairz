@@ -26,6 +26,33 @@ from app.models.sbom import SbomComponent, SbomVulnerability
 logger = logging.getLogger(__name__)
 
 
+def _extract_cpe_vendor(cpe: str | None) -> str | None:
+    """Extract vendor from a CPE 2.3 string (e.g. cpe:2.3:a:VENDOR:PRODUCT:...)."""
+    if not cpe:
+        return None
+    parts = cpe.split(":")
+    if len(parts) > 3 and parts[3] not in ("*", ""):
+        return parts[3].lower()
+    return None
+
+
+def _extract_grype_vendor(match: dict) -> str | None:
+    """Extract vendor from Grype match details — walks CPEs in matchDetails."""
+    for detail in match.get("matchDetails", []):
+        for key in ("found", "searchedBy"):
+            obj = detail.get(key, {})
+            for cpe_str in obj.get("cpes", []):
+                vendor = _extract_cpe_vendor(cpe_str)
+                if vendor:
+                    return vendor
+    for rv in match.get("relatedVulnerabilities", []):
+        for cpe_str in rv.get("cpes", []):
+            vendor = _extract_cpe_vendor(cpe_str)
+            if vendor:
+                return vendor
+    return None
+
+
 def grype_available() -> bool:
     """Check if grype binary is installed."""
     return which("grype") is not None
@@ -170,6 +197,15 @@ async def scan_with_grype(
                 break
 
         if not matching_comp:
+            continue
+
+        grype_vendor = _extract_grype_vendor(match)
+        comp_vendor = _extract_cpe_vendor(matching_comp.cpe)
+        if grype_vendor and comp_vendor and grype_vendor != comp_vendor:
+            logger.debug(
+                "Skipping %s for %s: vendor mismatch (grype=%s, component=%s)",
+                cve_id, matching_comp.name, grype_vendor, comp_vendor,
+            )
             continue
 
         vuln_record = SbomVulnerability(
