@@ -291,7 +291,7 @@ class FirmwareMetadataService:
         """
         try:
             with open(path, "rb") as f:
-                data = f.read()
+                data = f.read(16 * 1024 * 1024)  # Read first 16MB only
         except OSError:
             return {}
 
@@ -367,7 +367,7 @@ class FirmwareMetadataService:
         """
         try:
             with open(path, "rb") as f:
-                data = f.read()
+                data = f.read(16 * 1024 * 1024)  # Read first 16MB only
         except OSError:
             return []
 

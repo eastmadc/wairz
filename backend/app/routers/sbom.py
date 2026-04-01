@@ -7,11 +7,12 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.models.sbom import SbomComponent, SbomVulnerability
+from app.routers.deps import resolve_firmware as _resolve_firmware
 from app.schemas.sbom import (
     SbomComponentResponse,
     SbomGenerateResponse,
@@ -21,7 +22,6 @@ from app.schemas.sbom import (
     VulnerabilityScanResponse,
     VulnerabilityUpdateRequest,
 )
-from app.services.firmware_service import FirmwareService
 from app.services.sbom_service import SbomService
 from app.services.vulnerability_service import VulnerabilityService
 
@@ -29,26 +29,6 @@ router = APIRouter(
     prefix="/api/v1/projects/{project_id}/sbom",
     tags=["sbom"],
 )
-
-
-async def _resolve_firmware(
-    project_id: uuid.UUID,
-    firmware_id: uuid.UUID | None = Query(None, description="Specific firmware ID (defaults to first)"),
-    db: AsyncSession = Depends(get_db),
-):
-    """Resolve project -> firmware, return firmware record."""
-    svc = FirmwareService(db)
-    if firmware_id:
-        firmware = await svc.get_by_id(firmware_id)
-        if not firmware or firmware.project_id != project_id:
-            raise HTTPException(404, "Firmware not found")
-    else:
-        firmware = await svc.get_by_project(project_id)
-        if not firmware:
-            raise HTTPException(404, "No firmware uploaded for this project")
-    if not firmware.extracted_path:
-        raise HTTPException(400, "Firmware not yet unpacked")
-    return firmware
 
 
 async def _get_components_with_vuln_counts(
@@ -120,16 +100,14 @@ async def generate_sbom(
 
     # Clear existing components if force_rescan
     if force_rescan:
-        stmt = select(SbomComponent).where(SbomComponent.firmware_id == firmware.id)
-        result = await db.execute(stmt)
-        existing = result.scalars().all()
-        for comp in existing:
-            await db.delete(comp)
+        await db.execute(
+            delete(SbomComponent).where(SbomComponent.firmware_id == firmware.id)
+        )
         await db.flush()
 
     # Run SBOM generation (CPU-bound, run in thread)
     service = SbomService(firmware.extracted_path)
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     try:
         component_dicts = await loop.run_in_executor(None, service.generate_sbom)
     except Exception as e:
@@ -251,13 +229,14 @@ async def scan_vulnerabilities(
     firmware=Depends(_resolve_firmware),
     db: AsyncSession = Depends(get_db),
 ):
-    """Trigger a vulnerability scan against NVD for all SBOM components.
+    """Trigger a vulnerability scan for all SBOM components.
 
-    Queries the NVD API for each component with a CPE identifier.
-    Auto-creates findings with source='sbom_scan' for components with
-    critical/high CVEs. Can take 30-60+ seconds for large SBOMs due to
-    NVD rate limits.
+    Uses Grype (local, fast) by default. Falls back to NVD API if Grype
+    is unavailable. Configure via VULNERABILITY_BACKEND=grype|nvd.
     """
+    from app.config import get_settings
+    from app.services.grype_service import grype_available, scan_with_grype
+
     # Ensure SBOM exists
     comp_count = await db.scalar(
         select(func.count(SbomComponent.id)).where(
@@ -269,13 +248,23 @@ async def scan_vulnerabilities(
             400, "No SBOM generated yet. Run POST /generate first."
         )
 
-    vuln_svc = VulnerabilityService(db)
+    settings = get_settings()
+    use_grype = settings.vulnerability_backend == "grype" and grype_available()
+
     try:
-        summary = await vuln_svc.scan_components(
-            firmware_id=firmware.id,
-            project_id=project_id,
-            force_rescan=force_rescan,
-        )
+        if use_grype:
+            summary = await scan_with_grype(
+                firmware_id=firmware.id,
+                project_id=project_id,
+                db=db,
+            )
+        else:
+            vuln_svc = VulnerabilityService(db)
+            summary = await vuln_svc.scan_components(
+                firmware_id=firmware.id,
+                project_id=project_id,
+                force_rescan=force_rescan,
+            )
     except Exception as e:
         raise HTTPException(500, f"Vulnerability scan failed: {e}")
 
@@ -294,6 +283,8 @@ async def list_vulnerabilities(
     resolution_status: str | None = Query(
         None, description="Filter by resolution status (open, resolved, ignored, false_positive)"
     ),
+    limit: int = Query(100, ge=1, le=1000, description="Maximum results to return"),
+    offset: int = Query(0, ge=0, description="Number of results to skip"),
     firmware=Depends(_resolve_firmware),
     db: AsyncSession = Depends(get_db),
 ):
@@ -318,6 +309,8 @@ async def list_vulnerabilities(
         stmt = stmt.where(
             SbomVulnerability.resolution_status == resolution_status
         )
+
+    stmt = stmt.limit(limit).offset(offset)
 
     result = await db.execute(stmt)
     rows = result.all()
@@ -358,7 +351,7 @@ async def update_vulnerability(
 
         if new_status in ("resolved", "ignored", "false_positive"):
             vuln.resolved_by = "user"
-            vuln.resolved_at = datetime.utcnow()
+            vuln.resolved_at = datetime.now(timezone.utc)
         elif new_status == "open":
             # Reopening — clear resolution metadata
             vuln.resolved_by = None

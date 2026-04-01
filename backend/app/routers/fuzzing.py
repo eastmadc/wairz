@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.models.firmware import Firmware
+from app.routers.deps import resolve_firmware as _resolve_firmware
 from app.schemas.fuzzing import (
     FuzzingCampaignCreateRequest,
     FuzzingCampaignResponse,
@@ -15,7 +16,6 @@ from app.schemas.fuzzing import (
     FuzzingCrashResponse,
     FuzzingTargetAnalysis,
 )
-from app.services.firmware_service import FirmwareService
 from app.services.fuzzing_service import FuzzingService
 
 logger = logging.getLogger(__name__)
@@ -24,26 +24,6 @@ router = APIRouter(
     prefix="/api/v1/projects/{project_id}/fuzzing",
     tags=["fuzzing"],
 )
-
-
-async def _resolve_firmware(
-    project_id: uuid.UUID,
-    firmware_id: uuid.UUID | None = None,
-    db: AsyncSession = Depends(get_db),
-) -> Firmware:
-    """Resolve project -> firmware, return firmware record."""
-    svc = FirmwareService(db)
-    if firmware_id:
-        firmware = await svc.get_by_id(firmware_id)
-        if not firmware or firmware.project_id != project_id:
-            raise HTTPException(404, "Firmware not found")
-    else:
-        firmware = await svc.get_by_project(project_id)
-        if not firmware:
-            raise HTTPException(404, "No firmware uploaded for this project")
-    if not firmware.extracted_path:
-        raise HTTPException(400, "Firmware not yet unpacked")
-    return firmware
 
 
 @router.get("/analyze", response_model=FuzzingTargetAnalysis)
@@ -125,13 +105,15 @@ async def list_campaigns(
     """List all fuzzing campaigns for this project."""
     svc = FuzzingService(db)
     campaigns = await svc.list_campaigns(project_id)
-    # Update status for running campaigns
-    for campaign in campaigns:
+    # Update status for running campaigns sequentially
+    # (AsyncSession is not safe for concurrent coroutine access)
+    for i, campaign in enumerate(campaigns):
         if campaign.status == "running":
             try:
-                await svc.get_campaign_status(campaign.id)
+                campaigns[i] = await svc.get_campaign_status(campaign.id)
             except Exception:
-                pass
+                continue
+
     return campaigns
 
 
