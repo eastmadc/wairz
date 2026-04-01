@@ -323,6 +323,7 @@ class SbomService:
         self._scan_gcc_version()
         self._scan_library_sonames()
         self._scan_binary_version_strings()
+        self._scan_android_components()
         self._annotate_service_risks()
 
         results = []
@@ -436,21 +437,35 @@ class SbomService:
         if not settings.syft_enabled or not which("syft"):
             return
 
-        try:
-            proc = subprocess.run(
-                ["syft", f"dir:{self.extracted_root}", "-o", "cyclonedx-json", "-q"],
-                capture_output=True,
-                timeout=settings.syft_timeout,
-                text=True,
-            )
-            if proc.returncode != 0:
-                return  # Syft failed silently — custom strategies will cover
+        # Scan the primary extracted root
+        scan_dirs = [self.extracted_root]
 
-            cdx = json.loads(proc.stdout)
-        except (subprocess.TimeoutExpired, json.JSONDecodeError, Exception):
-            return  # Graceful fallback to custom-only
+        # For Android multi-partition extractions, also scan sibling partitions
+        # (vendor, product, etc.) that aren't under the system root
+        parent = os.path.dirname(self.extracted_root)
+        if os.path.basename(parent) == "rootfs":
+            for sibling in os.listdir(parent):
+                sibling_path = os.path.join(parent, sibling)
+                if sibling_path != self.extracted_root and os.path.isdir(sibling_path):
+                    scan_dirs.append(sibling_path)
 
-        for cdx_comp in cdx.get("components", []):
+        cdx_components: list[dict] = []
+        for scan_dir in scan_dirs:
+            try:
+                proc = subprocess.run(
+                    ["syft", f"dir:{scan_dir}", "-o", "cyclonedx-json", "-q"],
+                    capture_output=True,
+                    timeout=settings.syft_timeout,
+                    text=True,
+                )
+                if proc.returncode != 0:
+                    continue
+                cdx = json.loads(proc.stdout)
+                cdx_components.extend(cdx.get("components", []))
+            except (subprocess.TimeoutExpired, json.JSONDecodeError, Exception):
+                continue
+
+        for cdx_comp in cdx_components:
             # Skip file-hash entries (not real packages)
             if cdx_comp.get("type") == "file":
                 continue
@@ -710,6 +725,189 @@ class SbomService:
         except OSError:
             pass
         return name, version
+
+    # ------------------------------------------------------------------
+    # Strategy 1c: Android components (APKs, build.prop, init services)
+    # ------------------------------------------------------------------
+
+    def _scan_android_components(self) -> None:
+        """Detect Android-specific components: APKs, system properties, init services."""
+        # Check if this is an Android filesystem
+        build_prop = None
+        for bp_path in ("system/build.prop", "build.prop", "vendor/build.prop"):
+            abs_bp = os.path.join(self.extracted_root, bp_path)
+            if os.path.isfile(abs_bp):
+                build_prop = abs_bp
+                break
+
+        if build_prop is None:
+            return  # Not Android
+
+        # 1. Parse build.prop for system metadata
+        self._parse_build_prop(build_prop)
+
+        # 2. Scan APKs in standard Android app directories
+        for app_dir in ("system/app", "system/priv-app", "product/app",
+                        "product/priv-app", "vendor/app"):
+            abs_dir = os.path.join(self.extracted_root, app_dir)
+            if not os.path.isdir(abs_dir):
+                continue
+            try:
+                for app_name in os.listdir(abs_dir):
+                    app_path = os.path.join(abs_dir, app_name)
+                    if not os.path.isdir(app_path):
+                        continue
+                    # Each app is a directory containing the APK
+                    priv = "priv-app" in app_dir
+                    comp = IdentifiedComponent(
+                        name=app_name,
+                        version=None,
+                        type="application",
+                        cpe=None,
+                        purl=None,
+                        supplier=None,
+                        detection_source="android_apk",
+                        detection_confidence="high",
+                        file_paths=[f"/{app_dir}/{app_name}"],
+                        metadata={
+                            "android_app_type": "privileged" if priv else "system",
+                            "source": "android",
+                        },
+                    )
+                    self._add_component(comp)
+            except OSError:
+                continue
+
+        # 3. Parse init services from .rc files
+        for init_dir in ("system/etc/init", "vendor/etc/init", "product/etc/init"):
+            abs_dir = os.path.join(self.extracted_root, init_dir)
+            if not os.path.isdir(abs_dir):
+                continue
+            try:
+                for rc_name in os.listdir(abs_dir):
+                    if not rc_name.endswith(".rc"):
+                        continue
+                    rc_path = os.path.join(abs_dir, rc_name)
+                    self._parse_android_init_rc(rc_path, init_dir)
+            except OSError:
+                continue
+
+        # 4. Scan kernel modules in vendor
+        for mod_dir in ("vendor/lib/modules", "vendor/lib64/modules",
+                        "system/lib/modules"):
+            abs_dir = os.path.join(self.extracted_root, mod_dir)
+            if not os.path.isdir(abs_dir):
+                continue
+            try:
+                for mod_name in os.listdir(abs_dir):
+                    if not mod_name.endswith(".ko"):
+                        continue
+                    comp = IdentifiedComponent(
+                        name=mod_name.replace(".ko", ""),
+                        version=None,
+                        type="library",
+                        cpe=None,
+                        purl=None,
+                        supplier=None,
+                        detection_source="android_kernel_module",
+                        detection_confidence="medium",
+                        file_paths=[f"/{mod_dir}/{mod_name}"],
+                        metadata={"source": "android", "type": "kernel_module"},
+                    )
+                    self._add_component(comp)
+            except OSError:
+                continue
+
+    def _parse_build_prop(self, abs_path: str) -> None:
+        """Parse Android build.prop for version info and platform details."""
+        props: dict[str, str] = {}
+        try:
+            with open(abs_path, "r", errors="replace") as f:
+                for line in f:
+                    line = line.strip()
+                    if line.startswith("#") or "=" not in line:
+                        continue
+                    key, _, value = line.partition("=")
+                    props[key.strip()] = value.strip()
+        except OSError:
+            return
+
+        # Android OS version
+        android_version = props.get("ro.build.version.release") or props.get("ro.system.build.version.release")
+        security_patch = props.get("ro.build.version.security_patch")
+        build_id = props.get("ro.build.display.id") or props.get("ro.system.build.id")
+        platform = props.get("ro.board.platform", "")
+        model = props.get("ro.product.model") or props.get("ro.product.system.model", "")
+
+        if android_version:
+            comp = IdentifiedComponent(
+                name="android",
+                version=android_version,
+                type="operating-system",
+                cpe=f"cpe:2.3:o:google:android:{android_version}:*:*:*:*:*:*:*",
+                purl=None,
+                supplier="google",
+                detection_source="android_build_prop",
+                detection_confidence="high",
+                file_paths=[abs_path.replace(self.extracted_root, "")],
+                metadata={
+                    "security_patch": security_patch,
+                    "build_id": build_id,
+                    "platform": platform,
+                    "model": model,
+                    "source": "android",
+                },
+            )
+            self._add_component(comp)
+
+        # SELinux status
+        selinux_dir = os.path.join(self.extracted_root, "system", "etc", "selinux")
+        if os.path.isdir(selinux_dir):
+            comp = IdentifiedComponent(
+                name="android-selinux-policy",
+                version=None,
+                type="library",
+                cpe=None,
+                purl=None,
+                supplier="google",
+                detection_source="android_selinux",
+                detection_confidence="high",
+                file_paths=["/system/etc/selinux"],
+                metadata={"source": "android", "type": "security_policy"},
+            )
+            self._add_component(comp)
+
+    def _parse_android_init_rc(self, abs_path: str, rel_dir: str) -> None:
+        """Parse an Android .rc init file for service declarations."""
+        try:
+            with open(abs_path, "r", errors="replace") as f:
+                for line in f:
+                    line = line.strip()
+                    if line.startswith("service "):
+                        parts = line.split()
+                        if len(parts) >= 3:
+                            service_name = parts[1]
+                            binary_path = parts[2]
+                            rc_name = os.path.basename(abs_path)
+                            comp = IdentifiedComponent(
+                                name=f"init-{service_name}",
+                                version=None,
+                                type="application",
+                                cpe=None,
+                                purl=None,
+                                supplier=None,
+                                detection_source="android_init_service",
+                                detection_confidence="medium",
+                                file_paths=[f"/{rel_dir}/{rc_name}"],
+                                metadata={
+                                    "binary": binary_path,
+                                    "source": "android",
+                                    "type": "init_service",
+                                },
+                            )
+                            self._add_component(comp)
+        except OSError:
+            pass
 
     # ------------------------------------------------------------------
     # Strategy 2: Kernel version
