@@ -232,7 +232,8 @@ FIRMWARE_MARKERS: dict[str, list[str]] = {
     "dd-wrt": ["/etc/dd-wrt_version"],
     "buildroot": ["/etc/buildroot_version", "/etc/br-version"],
     "yocto": ["/etc/version", "/etc/build"],
-    "android": ["/system/build.prop"],
+    # Android build.prop is handled by _scan_android_components() which
+    # correctly extracts ro.build.version.release (not a raw version regex)
 }
 
 # Known services/daemons with risk classification for firmware security
