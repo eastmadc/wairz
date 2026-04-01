@@ -36,19 +36,26 @@ class TestValidatePath:
         with pytest.raises(PathTraversalError, match="Path traversal detected"):
             validate_path(str(firmware_root), "etc/../../../tmp/evil")
 
-    def test_symlink_outside_root_raises(self, firmware_root: Path):
-        """A symlink pointing outside the root must raise PathTraversalError."""
+    def test_symlink_outside_root_rewritten(self, firmware_root: Path):
+        """Absolute symlinks are rewritten relative to root (chroot model).
+
+        In firmware analysis, absolute symlinks like /etc/passwd are normal
+        (they reference paths within the firmware's own root). The resolver
+        rewrites them to root/etc/passwd rather than following them to the host.
+        """
         evil_link = firmware_root / "var" / "escape"
         evil_link.symlink_to("/etc/passwd")
-        with pytest.raises(PathTraversalError, match="Path traversal detected"):
-            validate_path(str(firmware_root), "var/escape")
+        result = validate_path(str(firmware_root), "var/escape")
+        assert result == str(firmware_root / "etc" / "passwd")
+        assert result.startswith(str(firmware_root))
 
     def test_symlink_inside_root_is_valid(self, firmware_root: Path):
-        """A symlink pointing to another location within the root is fine."""
-        # bin/sh -> usr/bin/httpd (both inside firmware_root)
-        result = validate_path(str(firmware_root), "bin/sh")
-        expected = os.path.realpath(str(firmware_root / "bin" / "sh"))
-        assert result == expected
+        """A relative symlink pointing within the root resolves correctly."""
+        # Create a relative symlink instead of absolute
+        link = firmware_root / "lib" / "link"
+        link.symlink_to("../etc/config.conf")
+        result = validate_path(str(firmware_root), "lib/link")
+        assert result == str(firmware_root / "etc" / "config.conf")
         assert result.startswith(str(firmware_root))
 
     def test_nonexistent_but_valid_path(self, firmware_root: Path):
