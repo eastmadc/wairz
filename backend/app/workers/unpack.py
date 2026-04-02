@@ -78,6 +78,20 @@ async def unpack_firmware(firmware_path: str, output_base_dir: str) -> UnpackRes
         shutil.rmtree(extraction_dir, ignore_errors=True)
     os.makedirs(extraction_dir, exist_ok=True)
 
+    # Check disk space: need at least 2x firmware size for extraction headroom
+    try:
+        fw_size = os.path.getsize(firmware_path)
+        free_space = shutil.disk_usage(extraction_dir).free
+        if free_space < fw_size * 2:
+            result.error = (
+                f"Insufficient disk space: {free_space // (1024*1024)}MB free, "
+                f"need ~{fw_size * 2 // (1024*1024)}MB for extraction"
+            )
+            result.unpack_log = result.error
+            return result
+    except OSError:
+        pass  # Can't check — proceed anyway
+
     fw_type = classify_firmware(firmware_path)
     result.unpack_log = f"Firmware classified as: {fw_type}\n"
 

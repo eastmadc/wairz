@@ -97,8 +97,10 @@ async def unpack(
     db: AsyncSession = Depends(get_db),
     service: FirmwareService = Depends(get_firmware_service),
 ):
-    # Get project and firmware
-    proj_result = await db.execute(select(Project).where(Project.id == project_id))
+    # Lock the project row to prevent concurrent unpack requests (TOCTOU race)
+    proj_result = await db.execute(
+        select(Project).where(Project.id == project_id).with_for_update()
+    )
     project = proj_result.scalar_one_or_none()
     if not project:
         raise HTTPException(404, "Project not found")
@@ -116,7 +118,7 @@ async def unpack(
     if not os.path.exists(firmware.storage_path):
         raise HTTPException(410, "Firmware file not found on disk — please re-upload")
 
-    # Update status to unpacking
+    # Update status to unpacking (row is locked, so no race)
     project.status = "unpacking"
     await db.flush()
 
