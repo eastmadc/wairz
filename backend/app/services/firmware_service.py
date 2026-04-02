@@ -218,6 +218,79 @@ class FirmwareService:
                 await out_file.write(chunk)
                 file_size += len(chunk)
 
+        # Tarball detection: .tar.gz, .tar, .tgz files containing a rootfs
+        # are extracted directly (same path as rootfs ZIPs). This supports
+        # ADB device dumps (e.g., `adb pull /system` → system.tar.gz).
+        is_tar = raw_filename.lower().endswith((".tar.gz", ".tar", ".tgz", ".tar.bz2", ".tar.xz"))
+        if is_tar:
+            import tarfile
+            try:
+                if tarfile.is_tarfile(storage_path):
+                    from app.workers.unpack import (
+                        detect_architecture,
+                        detect_kernel,
+                        detect_os_info,
+                        find_filesystem_root,
+                    )
+
+                    extraction_dir = os.path.join(firmware_dir, "extracted")
+                    os.makedirs(extraction_dir, exist_ok=True)
+
+                    def _extract_tar():
+                        with tarfile.open(storage_path) as tf:
+                            from app.workers.unpack_linux import _firmware_tar_filter
+                            tf.extractall(extraction_dir, filter=_firmware_tar_filter)
+
+                    loop = asyncio.get_running_loop()
+                    await loop.run_in_executor(None, _extract_tar)
+
+                    fs_root = await loop.run_in_executor(
+                        None, find_filesystem_root, extraction_dir
+                    )
+                    if fs_root:
+                        firmware = Firmware(
+                            id=firmware_id,
+                            project_id=project_id,
+                            original_filename=raw_filename,
+                            sha256=sha256_hash.hexdigest(),
+                            file_size=file_size,
+                            storage_path=storage_path,
+                            extracted_path=fs_root,
+                            version_label=version_label,
+                            unpack_log="Tarball detected; extracted directly as rootfs.",
+                        )
+                        arch, endian = await loop.run_in_executor(
+                            None, detect_architecture, fs_root
+                        )
+                        firmware.architecture = arch
+                        firmware.endianness = endian
+                        firmware.os_info = await loop.run_in_executor(
+                            None, detect_os_info, fs_root
+                        )
+                        firmware.kernel_path = await loop.run_in_executor(
+                            None, detect_kernel, extraction_dir, fs_root
+                        )
+                        # Check for getprop.txt (ADB device dump metadata)
+                        for getprop_name in ("getprop.txt", "device_properties.txt"):
+                            getprop_path = os.path.join(extraction_dir, getprop_name)
+                            if not os.path.isfile(getprop_path):
+                                getprop_path = os.path.join(fs_root, getprop_name)
+                            if os.path.isfile(getprop_path):
+                                try:
+                                    with open(getprop_path) as gf:
+                                        getprop = gf.read(8192)
+                                    if not firmware.os_info:
+                                        firmware.os_info = getprop
+                                    firmware.unpack_log += f"\nParsed {getprop_name} for device metadata."
+                                except Exception:
+                                    pass
+                                break
+                        self.db.add(firmware)
+                        await self.db.flush()
+                        return firmware
+            except Exception:
+                pass  # Fall through to normal firmware upload flow
+
         # If the uploaded file is a ZIP (by extension), extract the firmware from inside it.
         # We check the extension rather than zipfile.is_zipfile() alone because firmware
         # binaries can contain embedded zip data that triggers false positives.
