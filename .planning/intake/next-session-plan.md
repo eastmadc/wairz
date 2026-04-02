@@ -1,8 +1,35 @@
 # Next Session Plan
 
 > Created: 2026-04-01
-> Updated: 2026-04-01 (session 2 completed P1-P5)
+> Updated: 2026-04-02 (session 2 completed P1-P5, test fixes, unpack split, GH issues)
 > Resume with: /do continue
+
+## Session 3 Priorities
+
+### P1: Docker rebuild + clean slate test
+- `docker compose down -v && docker compose up --build`
+- Upload embedded Linux firmware → verify everything still works
+- Upload Android firmware → verify full pipeline with new ZIP detection
+- Run SBOM + vuln scan on both
+
+### P2: A/B OTA testing
+- Download a Pixel OTA (A/B format) from developers.google.com/android/ota
+- Upload → verify payload-dumper-go extraction
+- Verify partition naming works on A/B extracted images
+
+### P3: Vuln false positive improvement
+- CPE vendor filter works for genuine mismatches but not NVD cross-references
+- Options: version-range filter, description heuristic, or accept and use "Mark as False Positive" UI
+- Research what Grype's --only-fixed and --exclude flags can do
+
+### P4: Frontend polish
+- VulnerabilitiesTab receives 15+ props (code smell) → extract to Zustand store
+- Test file search UI in browser (search bar, results, click-to-navigate)
+- Test Load More button on vuln page
+
+### P5: emulation_service.py quality loop
+- 115-line embedded shell scripts should be external files
+- /improve backend/app/services/emulation_service.py
 
 ## Priority 1: Vuln UI + Data Quality — DONE (session 2)
 
