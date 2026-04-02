@@ -67,10 +67,15 @@ async def unpack_firmware(firmware_path: str, output_base_dir: str) -> UnpackRes
        binwalk (600s) → unblob (1200s)
     4. Post-extraction: find filesystem root, detect architecture/OS/kernel
     """
+    import shutil
     import tarfile as _tarfile
 
     result = UnpackResult()
     extraction_dir = os.path.join(output_base_dir, "extracted")
+
+    # Clean leftover data from previous failed attempts so retries work cleanly
+    if os.path.exists(extraction_dir):
+        shutil.rmtree(extraction_dir, ignore_errors=True)
     os.makedirs(extraction_dir, exist_ok=True)
 
     fw_type = classify_firmware(firmware_path)
