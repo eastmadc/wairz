@@ -777,6 +777,168 @@ async def _handle_analyze_certificate(input: dict, context: ToolContext) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Kernel sysctl hardening
+# ---------------------------------------------------------------------------
+
+# (parameter, secure_value, default_value, severity, description)
+_SYSCTL_CHECKS: list[tuple[str, str, str, str, str]] = [
+    # Kernel security
+    ("kernel.randomize_va_space", "2", "2", "critical", "ASLR — 0=off, 1=partial, 2=full"),
+    ("kernel.kptr_restrict", "1", "0", "high", "Hide kernel pointers from /proc/kallsyms"),
+    ("kernel.dmesg_restrict", "1", "0", "medium", "Restrict dmesg to root only"),
+    ("kernel.unprivileged_bpf_disabled", "1", "0", "high", "Block unprivileged BPF programs"),
+    ("kernel.perf_event_paranoid", "3", "2", "medium", "Restrict perf to root only"),
+    ("kernel.yama.ptrace_scope", "1", "0", "medium", "Restrict ptrace to parent process"),
+    ("kernel.modules_disabled", "1", "0", "high", "Prevent runtime kernel module loading"),
+    ("kernel.core_pattern", "|/bin/false", "core", "medium", "Disable core dumps to writable paths"),
+    # Network hardening
+    ("net.ipv4.tcp_syncookies", "1", "0", "high", "SYN flood protection"),
+    ("net.ipv4.conf.all.accept_redirects", "0", "1", "medium", "Reject ICMP redirects (MITM)"),
+    ("net.ipv6.conf.all.accept_redirects", "0", "1", "medium", "Reject IPv6 ICMP redirects"),
+    ("net.ipv4.conf.all.accept_source_route", "0", "0", "high", "Reject source-routed packets"),
+    ("net.ipv6.conf.all.accept_source_route", "0", "0", "high", "Reject IPv6 source-routed packets"),
+    ("net.ipv4.conf.all.rp_filter", "1", "0", "medium", "Reverse path filtering (anti-spoof)"),
+    ("net.ipv4.conf.default.rp_filter", "1", "0", "medium", "Default reverse path filtering"),
+    ("net.ipv4.conf.all.send_redirects", "0", "1", "low", "Don't send ICMP redirects"),
+    ("net.ipv4.conf.all.log_martians", "1", "0", "low", "Log packets with impossible addresses"),
+    ("net.ipv4.icmp_echo_ignore_broadcasts", "1", "0", "medium", "Ignore broadcast pings (Smurf)"),
+]
+
+
+def _parse_sysctl_files(real_root: str) -> dict[str, str]:
+    """Parse sysctl.conf and sysctl.d/*.conf to extract effective parameters."""
+    params: dict[str, str] = {}
+
+    # Check main sysctl.conf and common variants
+    for conf_path in [
+        os.path.join(real_root, "etc", "sysctl.conf"),
+        os.path.join(real_root, "etc_ro", "sysctl.conf"),
+    ]:
+        if os.path.isfile(conf_path):
+            _parse_single_sysctl(conf_path, params)
+
+    # Check sysctl.d drop-ins (alphabetical order, later overrides earlier)
+    sysctl_d = os.path.join(real_root, "etc", "sysctl.d")
+    if os.path.isdir(sysctl_d):
+        for name in sorted(os.listdir(sysctl_d)):
+            if name.endswith(".conf"):
+                _parse_single_sysctl(os.path.join(sysctl_d, name), params)
+
+    # Also check init scripts for runtime sysctl -w calls
+    for init_dir in ["etc/init.d", "etc/rc.d"]:
+        init_path = os.path.join(real_root, init_dir)
+        if os.path.isdir(init_path):
+            for name in os.listdir(init_path):
+                script_path = os.path.join(init_path, name)
+                if os.path.isfile(script_path):
+                    try:
+                        with open(script_path, "r", errors="replace") as f:
+                            for line in f:
+                                m = re.match(
+                                    r'\s*sysctl\s+-w\s+([^=]+)=(\S+)', line
+                                )
+                                if m:
+                                    params[m.group(1).strip()] = m.group(2).strip()
+                    except (OSError, PermissionError):
+                        continue
+
+    return params
+
+
+def _parse_single_sysctl(path: str, params: dict[str, str]) -> None:
+    """Parse a single sysctl.conf file."""
+    try:
+        with open(path, "r", errors="replace") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#") or line.startswith(";"):
+                    continue
+                if "=" in line:
+                    key, _, val = line.partition("=")
+                    params[key.strip()] = val.strip()
+    except (OSError, PermissionError):
+        pass
+
+
+async def _handle_check_kernel_hardening(
+    input: dict, context: ToolContext
+) -> str:
+    """Check kernel sysctl hardening parameters in the firmware."""
+    real_root = context.real_root_for(input.get("path", "/"))
+
+    params = _parse_sysctl_files(real_root)
+
+    # Check if firmware is a router (ip_forward=1 is expected)
+    is_router = False
+    for daemon in ["zebra", "quagga", "bird", "dnsmasq", "hostapd"]:
+        for check_dir in ["usr/sbin", "usr/bin", "sbin"]:
+            if os.path.exists(os.path.join(real_root, check_dir, daemon)):
+                is_router = True
+                break
+
+    findings: list[dict] = []
+    secure_count = 0
+    total = len(_SYSCTL_CHECKS)
+
+    for param, secure_val, default_val, severity, desc in _SYSCTL_CHECKS:
+        actual = params.get(param)
+
+        # Skip ip_forward check on routers
+        if param == "net.ipv4.ip_forward" and is_router:
+            continue
+
+        if actual is None:
+            # Parameter not explicitly set — using kernel default
+            if default_val != secure_val:
+                findings.append({
+                    "param": param,
+                    "value": f"(default: {default_val})",
+                    "expected": secure_val,
+                    "severity": severity,
+                    "desc": desc,
+                    "status": "default_insecure",
+                })
+            else:
+                secure_count += 1
+        elif actual == secure_val:
+            secure_count += 1
+        else:
+            findings.append({
+                "param": param,
+                "value": actual,
+                "expected": secure_val,
+                "severity": severity,
+                "desc": desc,
+                "status": "misconfigured",
+            })
+
+    if not findings:
+        return f"All {total} kernel hardening parameters are secure."
+
+    # Sort by severity
+    sev_order = {"critical": 0, "high": 1, "medium": 2, "low": 3}
+    findings.sort(key=lambda f: sev_order.get(f["severity"], 9))
+
+    lines = [
+        f"Kernel hardening: {secure_count}/{total} parameters secure, "
+        f"{len(findings)} issue(s) found",
+    ]
+    if is_router:
+        lines.append("(Router firmware detected — ip_forward check skipped)")
+    lines.append("")
+
+    for f in findings:
+        status = "NOT SET" if f["status"] == "default_insecure" else f"= {f['value']}"
+        lines.append(f"[{f['severity'].upper()}] {f['param']} {status}")
+        lines.append(f"  Expected: {f['expected']} — {f['desc']}")
+
+    lines.append("")
+    lines.append(f"Checked files: /etc/sysctl.conf, /etc/sysctl.d/*.conf, init scripts")
+
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
 # Registration
 # ---------------------------------------------------------------------------
 
@@ -921,4 +1083,26 @@ def register_security_tools(registry: ToolRegistry) -> None:
             "required": [],
         },
         handler=_handle_analyze_certificate,
+    )
+
+    registry.register(
+        name="check_kernel_hardening",
+        description=(
+            "Check kernel sysctl security parameters in the firmware. "
+            "Analyzes /etc/sysctl.conf and init scripts for 18 hardening "
+            "parameters: ASLR, kptr_restrict, SYN cookies, reverse path "
+            "filtering, ICMP redirects, BPF restrictions, ptrace scope, etc. "
+            "Router-aware: adjusts severity for ip_forward on routing firmware."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "Root path to scan (default: '/')",
+                },
+            },
+            "required": [],
+        },
+        handler=_handle_check_kernel_hardening,
     )

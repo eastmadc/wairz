@@ -69,6 +69,37 @@ _CREDENTIAL_PATTERNS = [
     re.compile(r"credential\s*[=:]\s*(\S+)", re.IGNORECASE),
 ]
 
+# Cloud/service API key patterns — high-confidence, low false-positive
+_API_KEY_PATTERNS: list[tuple[re.Pattern, str, str]] = [
+    # (regex, category, severity)
+    # AWS
+    (re.compile(r"(?<![A-Z0-9])(AKIA[0-9A-Z]{16})(?![A-Z0-9])"), "aws_access_key", "critical"),
+    (re.compile(r"(?:aws_secret_access_key|secret_access_key)\s*[=:]\s*([A-Za-z0-9/+=]{40})"), "aws_secret_key", "critical"),
+    # Azure
+    (re.compile(r"DefaultEndpointsProtocol=https?;AccountName=[^;]+;AccountKey=[A-Za-z0-9+/=]+"), "azure_connection_string", "critical"),
+    (re.compile(r"sv=\d{4}-\d{2}-\d{2}.*sig=[A-Za-z0-9%+/=]{43,}"), "azure_sas_token", "high"),
+    # GCP
+    (re.compile(r"AIza[0-9A-Za-z_-]{35}"), "gcp_api_key", "high"),
+    (re.compile(r'"type"\s*:\s*"service_account"'), "gcp_service_account", "critical"),
+    # GitHub
+    (re.compile(r"ghp_[A-Za-z0-9]{36}"), "github_pat", "critical"),
+    (re.compile(r"gho_[A-Za-z0-9]{36}"), "github_oauth", "critical"),
+    (re.compile(r"ghs_[A-Za-z0-9]{36}"), "github_app_token", "high"),
+    (re.compile(r"github_pat_[A-Za-z0-9]{22}_[A-Za-z0-9]{59}"), "github_fine_grained_pat", "critical"),
+    # Stripe
+    (re.compile(r"sk_live_[A-Za-z0-9]{24,}"), "stripe_secret_key", "critical"),
+    (re.compile(r"pk_live_[A-Za-z0-9]{24,}"), "stripe_publishable_key", "medium"),
+    (re.compile(r"[sp]k_test_[A-Za-z0-9]{24,}"), "stripe_test_key", "low"),
+    # JWT
+    (re.compile(r"eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]+"), "jwt_token", "high"),
+    # Slack
+    (re.compile(r"xoxb-[0-9]{10,}-[0-9]{10,}-[A-Za-z0-9]{24}"), "slack_bot_token", "critical"),
+    (re.compile(r"xoxp-[0-9]{10,}-[0-9]{10,}-[0-9]{10,}-[a-f0-9]{32}"), "slack_user_token", "critical"),
+    (re.compile(r"hooks\.slack\.com/services/T[A-Z0-9]{8,}/B[A-Z0-9]{8,}/[A-Za-z0-9]{24}"), "slack_webhook", "high"),
+    # Twilio
+    (re.compile(r"AC[a-f0-9]{32}"), "twilio_account_sid", "medium"),
+]
+
 
 # ---------------------------------------------------------------------------
 # Helper functions
@@ -521,6 +552,25 @@ async def _handle_find_hardcoded_credentials(
                     for line_num, line in enumerate(f, 1):
                         if len(results) >= MAX_CRED_RESULTS:
                             break
+                        matched = False
+                        # Check cloud/service API key patterns first (higher value)
+                        for pat, category, severity in _API_KEY_PATTERNS:
+                            m = pat.search(line)
+                            if m:
+                                value = m.group(0)
+                                results.append({
+                                    "file": rel_path,
+                                    "line": str(line_num),
+                                    "match": line.strip()[:200],
+                                    "entropy": f"{_shannon_entropy(value):.2f}",
+                                    "category": category,
+                                    "severity": severity,
+                                })
+                                matched = True
+                                break
+                        if matched:
+                            continue
+                        # Fallback to generic credential patterns
                         for pat in _CREDENTIAL_PATTERNS:
                             m = pat.search(line)
                             if m:
@@ -547,6 +597,16 @@ async def _handle_find_hardcoded_credentials(
     if auth_issues:
         parts.append(f"## Authentication Issues ({len(auth_issues)})")
         parts.extend(auth_issues)
+        parts.append("")
+
+    # API key findings (cloud/service tokens) — show first, highest priority
+    api_key_results = [r for r in results if r.get("severity")]
+    if api_key_results:
+        parts.append(f"## API Keys & Service Tokens ({len(api_key_results)})")
+        for r in api_key_results:
+            parts.append(f"  [{r['severity'].upper()}] {r['category']}")
+            parts.append(f"    {r['file']}:{r['line']}")
+            parts.append(f"    {r['match']}")
         parts.append("")
 
     # Separate remaining results by entropy
