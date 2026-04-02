@@ -45,9 +45,15 @@ def _analyze_filesystem(result: UnpackResult, extraction_dir: str) -> None:
     fs_root_real = os.path.realpath(fs_root)
     extraction_dir_real = os.path.realpath(extraction_dir)
     if fs_root_real != extraction_dir_real:
-        result.extraction_dir = _find_binwalk_output_dir(
+        binwalk_dir = _find_binwalk_output_dir(
             fs_root_real, extraction_dir_real
         )
+        # Only set extraction_dir if the binwalk output dir contains
+        # meaningful sibling content (other roots, large files).
+        # For deep unblob extractions where the rootfs is nested many
+        # levels down, showing raw intermediary files is confusing.
+        if binwalk_dir:
+            result.extraction_dir = binwalk_dir
 
     arch, endian = detect_architecture(fs_root)
     result.architecture = arch
