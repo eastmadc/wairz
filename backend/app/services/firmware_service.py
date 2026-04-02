@@ -221,10 +221,25 @@ class FirmwareService:
         # If the uploaded file is a ZIP (by extension), extract the firmware from inside it.
         # We check the extension rather than zipfile.is_zipfile() alone because firmware
         # binaries can contain embedded zip data that triggers false positives.
-        if raw_filename.lower().endswith(".zip") and zipfile.is_zipfile(storage_path):
-            if _is_android_firmware_zip(storage_path):
+        is_zip = False
+        try:
+            is_zip = raw_filename.lower().endswith(".zip") and zipfile.is_zipfile(storage_path)
+        except (zipfile.BadZipFile, OSError):
+            pass  # Corrupted or unreadable — treat as non-ZIP firmware
+
+        if is_zip:
+            try:
+                is_android = _is_android_firmware_zip(storage_path)
+            except (zipfile.BadZipFile, OSError):
+                is_android = False
+            try:
+                is_rootfs = not is_android and _zip_contains_rootfs(storage_path)
+            except (zipfile.BadZipFile, OSError):
+                is_rootfs = False
+
+            if is_android:
                 pass  # Keep ZIP intact for the unpack pipeline's _extract_android_ota()
-            elif _zip_contains_rootfs(storage_path):
+            elif is_rootfs:
                 # The ZIP contains a Linux root filesystem — extract the entire
                 # archive directly instead of pulling a single file for binwalk.
                 # This mirrors the "Upload Rootfs" path so the user doesn't need

@@ -113,6 +113,9 @@ async def unpack(
     if project.status == "unpacking":
         raise HTTPException(409, "Firmware is already being unpacked")
 
+    if not os.path.exists(firmware.storage_path):
+        raise HTTPException(410, "Firmware file not found on disk — please re-upload")
+
     # Update status to unpacking
     project.status = "unpacking"
     await db.flush()
@@ -169,21 +172,19 @@ async def _run_unpack_background(
                 raise
     except Exception:
         logger.exception("Background firmware unpack failed for firmware %s", firmware_id)
-        # Try to set error status
+    finally:
+        # Guarantee project status is never stuck at "unpacking"
         try:
             async with async_session_factory() as db:
-                try:
-                    proj_result = await db.execute(
-                        select(Project).where(Project.id == project_id)
-                    )
-                    project = proj_result.scalar_one_or_none()
-                    if project:
-                        project.status = "error"
+                proj_result = await db.execute(
+                    select(Project).where(Project.id == project_id)
+                )
+                project = proj_result.scalar_one_or_none()
+                if project and project.status == "unpacking":
+                    project.status = "error"
                     await db.commit()
-                except Exception:
-                    await db.rollback()
         except Exception:
-            logger.exception("Failed to set error status for project %s", project_id)
+            logger.exception("Failed to reset status for project %s", project_id)
 
 
 @router.post("/{firmware_id}/upload-rootfs", response_model=FirmwareDetailResponse)
