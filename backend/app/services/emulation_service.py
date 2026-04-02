@@ -435,7 +435,7 @@ class EmulationService:
         except Exception:
             logger.warning(
                 "Could not inspect own container for path translation: %s",
-                real_path,
+                real_path, exc_info=True,
             )
 
         # Path is not on any Docker mount — baked into the container image
@@ -1233,7 +1233,7 @@ echo "[wairz] Starting firmware init..."
             return log.strip() if log.strip() else "(log file is empty)"
         except Exception:
             if not quiet:
-                logger.debug("Could not read QEMU log from container")
+                logger.debug("Could not read QEMU log from container", exc_info=True)
             # Fall back to container logs
             try:
                 log = container.logs(tail=50).decode("utf-8", errors="replace")
