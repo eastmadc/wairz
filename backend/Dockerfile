@@ -40,6 +40,12 @@ RUN pip3 install --no-cache-dir --break-system-packages \
        git+https://github.com/devttys0/yaffshiv.git 2>/dev/null \
     || echo "WARN: yaffshiv install failed — YAFFS extraction won't work"
 
+# Install unblob — universal firmware extractor (78+ formats including Rockchip,
+# MediaTek, Qualcomm, and many proprietary container formats). Used as fallback
+# when binwalk times out or can't handle the container format.
+RUN pip3 install --no-cache-dir --break-system-packages unblob \
+    || echo "WARN: unblob install failed — fallback extraction won't work"
+
 # Install sasquatch for non-standard SquashFS (vendor-modified)
 # Try the devttys0 fork first; patch out -Werror to handle newer compiler warnings
 RUN git clone https://github.com/devttys0/sasquatch.git /tmp/sasquatch \

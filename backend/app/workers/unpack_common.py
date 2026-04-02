@@ -75,6 +75,33 @@ async def run_binwalk_extraction(firmware_path: str, output_dir: str, timeout: i
     return stdout.decode(errors="replace").replace("\x00", "")
 
 
+async def run_unblob_extraction(firmware_path: str, output_dir: str, timeout: int = 1200) -> str:
+    """Run unblob to extract firmware — handles 78+ formats.
+
+    Unblob handles Rockchip RKFW, MediaTek, Qualcomm, and many proprietary
+    container formats that binwalk cannot. Used as fallback when binwalk
+    fails or times out.
+    """
+    from shutil import which
+
+    if not which("unblob"):
+        raise RuntimeError("unblob is not installed")
+
+    proc = await asyncio.create_subprocess_exec(
+        "unblob", "--extract-dir", output_dir, firmware_path,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.STDOUT,
+    )
+    try:
+        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+    except asyncio.TimeoutError:
+        proc.kill()
+        await proc.wait()
+        raise TimeoutError(f"unblob extraction timed out after {timeout}s")
+
+    return stdout.decode(errors="replace").replace("\x00", "")
+
+
 def _read_magic(path: str, num_bytes: int = 4) -> bytes:
     """Read the first N bytes of a file for magic number detection."""
     try:
