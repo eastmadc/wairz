@@ -1,0 +1,124 @@
+goal: Build a device acquisition feature for Wairz that enables browser-controlled
+  firmware dumping from live Android devices via a host-side ADB bridge script, with
+  a frontend wizard, getprop.txt parsing, dump classification, and structured device
+  metadata storage in PostgreSQL JSONB
+
+task_type: code
+seed_id: seed_2f611b7524f8
+interview_id: interview_20260402_175857
+ambiguity_score: 0.147
+created_at: '2026-04-02T18:13:36Z'
+
+brownfield_context:
+  project_type: brownfield
+  context_references:
+  - path: scripts/wairz-uart-bridge.py
+    role: primary
+    summary: Host-side TCP bridge script — architectural template for device acquisition bridge
+  - path: backend/app/services/uart_service.py
+    role: primary
+    summary: Backend TCP client for UART bridge — pattern for device bridge service
+  - path: backend/app/models/
+    role: reference
+    summary: Existing SQLAlchemy models — Firmware table gets device_metadata JSONB column
+  - path: backend/app/routers/
+    role: reference
+    summary: Existing FastAPI routers — pattern for new device acquisition endpoints
+  - path: frontend/src/pages/
+    role: reference
+    summary: Existing page components — pattern for wizard page (see EmulationPage for polling)
+  - path: backend/app/workers/
+    role: reference
+    summary: Firmware unpacking background tasks — dump import triggers this pipeline
+  existing_patterns:
+  - UART bridge TCP protocol (newline-delimited JSON, request/response matched by id field)
+  - Host-side standalone script with minimal dependencies
+  - Docker backend connects to host bridge via host.docker.internal
+  - Frontend polling with useEffect + setInterval for long-running operations
+  - AsyncIO background tasks for firmware processing
+  - SQLAlchemy Mapped/mapped_column style with UUID primary keys
+
+constraints:
+- v1 scope: ADB root only — MTKClient, EDL, non-root deferred to v2
+- Bridge: 127.0.0.1, no auth, single connection, multi-device aware (device_id param)
+- Streaming to STORAGE_ROOT, no buffering. MAX_DUMP_SIZE_MB=16384
+- Timeouts: 30min/partition, 120min total, 60s stall detection
+- Disk space check: expected size + 2GB headroom, re-check every 500MB
+- Completed partitions preserved on failure, no auto-retry
+- device_metadata JSONB column on Firmware (nullable, no breaking migration)
+- Parse all getprop fields, surface 3 tiers (14 must-have, 8 should-have, 3 nice-to-have)
+- Log every bridge connection and transfer for audit trail
+
+acceptance_criteria:
+- Bridge script starts and listens on configured TCP port
+- Backend connects to bridge, wizard shows connected status
+- list_devices returns detected devices with serial and model
+- Wizard shows device cards, user selects device + partitions
+- Single partition dump streams to STORAGE_ROOT
+- getprop.txt parsed — 14 must-have fields visible in wizard summary
+- Import to Project triggers existing unpack pipeline
+- device_metadata JSONB persists all structured fields
+- Stall timeout detects USB disconnect, reports to wizard
+- resume_dump skips completed partitions
+- Mock bridge enables CI testing without hardware
+
+bridge_protocol:
+  commands:
+  - list_devices: Enumerate connected ADB devices (serial, model, root status)
+  - get_device_info: Device properties, partition list, getprop output
+  - dump_partition: Dump single partition by name, stream progress
+  - dump_all: Dump set of partitions sequentially
+  - get_dump_status: Progress for in-flight dump
+  - cancel_dump: Abort current dump
+  - resume_dump: Restart dump, skip completed partitions
+
+getprop_tiers:
+  must_have:
+  - ro.secure
+  - ro.debuggable
+  - ro.adb.secure
+  - ro.crypto.state
+  - ro.boot.verifiedbootstate
+  - ro.boot.flash.locked
+  - ro.boot.selinux
+  - ro.build.version.sdk
+  - ro.build.version.security_patch
+  - ro.build.fingerprint
+  - ro.product.model
+  - ro.product.brand
+  - ro.product.device
+  - ro.build.display.id
+  should_have:
+  - sys.oem_unlock_allowed
+  - ro.board.platform
+  - ro.hardware.chipname
+  - ro.mediatek.platform
+  - gsm.version.baseband
+  - ro.build.expect.baseband
+  - persist.sys.usb.config
+  - ro.hardware.egl
+  nice_to_have:
+  - ro.kernel.qemu
+  - ro.build.selinux
+  - ro.build.type
+
+wizard_steps:
+  1_connect: Detect bridge, show status, setup instructions if unreachable
+  2_select: Device cards with model/serial, method picker, partition checkboxes
+  3_dump: Per-partition progress table, collapsible log stream, per-partition retry
+  4_summary: Metadata preview, Import to Project (primary CTA), Download Archive
+
+metadata_schema:
+  column: device_metadata JSONB (nullable)
+  fields:
+    device_model: ro.product.model
+    manufacturer: ro.product.brand
+    android_version: ro.build.version.release
+    api_level: ro.build.version.sdk
+    security_patch: ro.build.version.security_patch
+    build_fingerprint: ro.build.fingerprint
+    chipset: ro.board.platform
+    bootloader_state: ro.boot.flash.locked
+    acquisition_method: adb_root | adb_nonroot | mtkclient | manual_upload | ota_package
+    partition_list: ["boot", "super", ...]
+    source_partitions: {"boot": "boot.img", ...}

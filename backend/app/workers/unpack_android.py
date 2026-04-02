@@ -1,7 +1,9 @@
-"""Android-specific firmware extraction — OTA, sparse images, super.img."""
+"""Android-specific firmware extraction — OTA, sparse images, super.img, boot.img."""
 
 import asyncio
+import gzip
 import os
+import struct
 
 
 def _identify_partition_by_content(partition_dir: str) -> str | None:
@@ -84,6 +86,182 @@ async def _try_extract_partition(
     except OSError:
         pass
     return False
+
+
+BOOT_IMG_MAGIC = b"ANDROID!"
+
+
+async def _extract_boot_img(
+    boot_path: str, output_dir: str, log_lines: list[str]
+) -> bool:
+    """Extract kernel, ramdisk, and DTB from an Android boot.img.
+
+    Supports boot image header v0-v4 (covers all mainstream Android devices).
+    The format is page-aligned: header at page 0, then kernel, ramdisk,
+    second-stage, and optionally recovery DTBO and DTB.
+    """
+    try:
+        with open(boot_path, "rb") as f:
+            header = f.read(1648)
+    except OSError as e:
+        log_lines.append(f"Cannot read boot.img: {e}")
+        return False
+
+    if len(header) < 1648 or header[:8] != BOOT_IMG_MAGIC:
+        log_lines.append("Not a valid Android boot image (bad magic)")
+        return False
+
+    # Parse v0/v1/v2 header (all share the same base layout)
+    (
+        kernel_size, _kernel_addr,
+        ramdisk_size, _ramdisk_addr,
+        second_size, _second_addr,
+        _tags_addr, page_size,
+        header_version, _os_version,
+    ) = struct.unpack_from("<10I", header, 8)
+
+    if page_size == 0 or (page_size & (page_size - 1)) != 0:
+        # page_size must be a power of 2
+        page_size = 2048  # fallback default
+
+    log_lines.append(
+        f"boot.img header v{header_version}: "
+        f"kernel={kernel_size}, ramdisk={ramdisk_size}, "
+        f"second={second_size}, page_size={page_size}"
+    )
+
+    # v3/v4 use a different page size and layout but same magic
+    if header_version >= 3:
+        page_size = 4096
+
+    os.makedirs(output_dir, exist_ok=True)
+
+    def _page_align(offset: int) -> int:
+        return ((offset + page_size - 1) // page_size) * page_size
+
+    # Components are laid out sequentially, page-aligned
+    kernel_offset = page_size  # first page after header
+    ramdisk_offset = kernel_offset + _page_align(kernel_size)
+    second_offset = ramdisk_offset + _page_align(ramdisk_size)
+
+    extracted = []
+
+    with open(boot_path, "rb") as f:
+        # Extract kernel
+        if kernel_size > 0:
+            f.seek(kernel_offset)
+            kernel_data = f.read(kernel_size)
+            kernel_path = os.path.join(output_dir, "kernel")
+            with open(kernel_path, "wb") as out:
+                out.write(kernel_data)
+            extracted.append(f"kernel ({kernel_size} bytes)")
+
+        # Extract ramdisk
+        if ramdisk_size > 0:
+            f.seek(ramdisk_offset)
+            ramdisk_data = f.read(ramdisk_size)
+            ramdisk_path = os.path.join(output_dir, "ramdisk.img")
+            with open(ramdisk_path, "wb") as out:
+                out.write(ramdisk_data)
+            extracted.append(f"ramdisk ({ramdisk_size} bytes)")
+
+            # Try to decompress and extract ramdisk (usually gzip'd cpio)
+            ramdisk_dir = os.path.join(output_dir, "ramdisk")
+            os.makedirs(ramdisk_dir, exist_ok=True)
+            try:
+                await _extract_ramdisk(ramdisk_data, ramdisk_dir)
+                extracted.append("ramdisk contents extracted")
+            except Exception as e:
+                log_lines.append(f"Ramdisk extraction failed: {e}")
+
+        # Extract second-stage bootloader
+        if second_size > 0:
+            f.seek(second_offset)
+            second_data = f.read(second_size)
+            second_path = os.path.join(output_dir, "second")
+            with open(second_path, "wb") as out:
+                out.write(second_data)
+            extracted.append(f"second-stage ({second_size} bytes)")
+
+        # v1+ has recovery DTBO, v2+ has DTB
+        if header_version >= 1:
+            recovery_dtbo_size = struct.unpack_from("<I", header, 1632)[0]
+            dtbo_offset = second_offset + _page_align(second_size)
+            if recovery_dtbo_size > 0:
+                f.seek(dtbo_offset)
+                dtbo_data = f.read(recovery_dtbo_size)
+                with open(os.path.join(output_dir, "recovery_dtbo"), "wb") as out:
+                    out.write(dtbo_data)
+                extracted.append(f"recovery_dtbo ({recovery_dtbo_size} bytes)")
+
+        if header_version >= 2:
+            dtb_size = struct.unpack_from("<I", header, 1636)[0]
+            if dtb_size > 0:
+                # DTB follows recovery_dtbo (or second if no dtbo)
+                if header_version >= 1:
+                    recovery_dtbo_size = struct.unpack_from("<I", header, 1632)[0]
+                else:
+                    recovery_dtbo_size = 0
+                dtb_start = (
+                    second_offset
+                    + _page_align(second_size)
+                    + _page_align(recovery_dtbo_size)
+                )
+                f.seek(dtb_start)
+                dtb_data = f.read(dtb_size)
+                with open(os.path.join(output_dir, "dtb"), "wb") as out:
+                    out.write(dtb_data)
+                extracted.append(f"dtb ({dtb_size} bytes)")
+
+    if extracted:
+        log_lines.append(f"boot.img extracted: {', '.join(extracted)}")
+        return True
+
+    log_lines.append("boot.img: no components found to extract")
+    return False
+
+
+async def _extract_ramdisk(data: bytes, output_dir: str) -> None:
+    """Decompress and extract a ramdisk (gzip/lz4 compressed cpio archive)."""
+    import tempfile
+
+    # Try gzip decompression
+    decompressed = None
+    if data[:2] == b"\x1f\x8b":
+        decompressed = gzip.decompress(data)
+    elif data[:4] == b"\x02\x21\x4c\x18" or data[:4] == b"\x04\x22\x4d\x18":
+        # LZ4 legacy or LZ4 frame — try lz4 if available
+        try:
+            import lz4.frame
+            decompressed = lz4.frame.decompress(data)
+        except (ImportError, Exception):
+            pass
+
+    if decompressed is None:
+        # Maybe it's uncompressed cpio
+        if data[:6] in (b"070701", b"070702", b"070707"):
+            decompressed = data
+        else:
+            raise RuntimeError("Unknown ramdisk compression format")
+
+    # Write decompressed cpio and extract with cpio command
+    with tempfile.NamedTemporaryFile(suffix=".cpio", delete=False) as tmp:
+        tmp.write(decompressed)
+        tmp_path = tmp.name
+
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "cpio", "-idm", "--no-absolute-filenames",
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            cwd=output_dir,
+        )
+        with open(tmp_path, "rb") as f:
+            cpio_data = f.read()
+        await asyncio.wait_for(proc.communicate(input=cpio_data), timeout=60)
+    finally:
+        os.unlink(tmp_path)
 
 
 async def _scan_super_partitions(
@@ -236,11 +414,21 @@ async def _extract_android_ota(firmware_path: str, extraction_dir: str) -> str:
             except OSError:
                 continue
 
-            raw_path = img_path
+            # Check for boot.img (ANDROID! magic)
             try:
                 with open(img_path, "rb") as f:
-                    img_magic = f.read(4)
-                if img_magic == b"\x3a\xff\x26\xed" and shutil.which("simg2img"):
+                    img_magic = f.read(8)
+            except OSError:
+                continue
+
+            if img_magic[:8] == BOOT_IMG_MAGIC:
+                boot_dir = os.path.join(rootfs_dir, "boot")
+                await _extract_boot_img(img_path, boot_dir, log_lines)
+                continue
+
+            raw_path = img_path
+            try:
+                if img_magic[:4] == b"\x3a\xff\x26\xed" and shutil.which("simg2img"):
                     raw_path = img_path + ".raw"
                     proc = await asyncio.create_subprocess_exec(
                         "simg2img", img_path, raw_path,
