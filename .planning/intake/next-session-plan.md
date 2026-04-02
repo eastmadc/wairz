@@ -6,30 +6,33 @@
 
 ## Session 3 Priorities
 
-### P1: Docker rebuild + clean slate test
-- `docker compose down -v && docker compose up --build`
-- Upload embedded Linux firmware → verify everything still works
-- Upload Android firmware → verify full pipeline with new ZIP detection
-- Run SBOM + vuln scan on both
+### P1: Device Acquisition Feature — Phase 1 (NEW CAMPAIGN)
+Smart ingestion + guided workflow for live device dumps:
+- New "device dump" classification in unpack_common.py (tarballs with build.prop/getprop)
+- Extend tarball rootfs detection in firmware_service.py
+- getprop.txt metadata parser (OS version, patch level, model)
+- Frontend DeviceAcquisitionPage with guided wizard (Android ADB/MTKClient/non-root)
+- Upload dropzone that accepts super.img, system tarballs, APK ZIPs
+- See `.planning/knowledge/` for full architecture design (5 approaches evaluated, hybrid selected)
 
-### P2: A/B OTA testing
-- Download a Pixel OTA (A/B format) from developers.google.com/android/ota
-- Upload → verify payload-dumper-go extraction
-- Verify partition naming works on A/B extracted images
+### P2: Flow Robustness — Remaining HIGH fixes
+- Concurrent unpack race condition (SELECT FOR UPDATE locking)
+- Disk space check before extraction (shutil.disk_usage)
+- Zip bomb prevention (file count + compression ratio limits)
+- Progress reporting for long extractions (30+ min fallback chain)
 
-### P3: Vuln false positive improvement
-- CPE vendor filter works for genuine mismatches but not NVD cross-references
-- Options: version-range filter, description heuristic, or accept and use "Mark as False Positive" UI
-- Research what Grype's --only-fixed and --exclude flags can do
-
-### P4: Frontend polish
-- VulnerabilitiesTab receives 15+ props (code smell) → extract to Zustand store
-- Test file search UI in browser (search bar, results, click-to-navigate)
+### P3: Frontend Polish
+- VulnerabilitiesTab 15+ props → extract to Zustand store
+- Test file search UI in browser
 - Test Load More button on vuln page
 
-### P5: emulation_service.py quality loop
-- 115-line embedded shell scripts should be external files
-- /improve backend/app/services/emulation_service.py
+### P4: Quality Loops
+- emulation_service.py: extract 115-line embedded shell script
+- emulation_service.py: add exc_info to 8 bare exception handlers
+
+### P5: Remaining Android Campaign
+- A/B OTA testing (needs Pixel firmware download)
+- boot.img extraction (not started)
 
 ## Priority 1: Vuln UI + Data Quality — DONE (session 2)
 
