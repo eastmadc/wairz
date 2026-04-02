@@ -285,7 +285,7 @@ export default function FileTree() {
 
   const handleSearchResultClick = useCallback((path: string) => {
     if (!projectId) return
-    selectFile(projectId, { id: path, name: path.split('/').pop() || path, fileType: 'file', size: 0, permissions: '' })
+    selectFile(projectId, { id: path, name: path.split('/').pop() || path, fileType: 'file', size: 0, permissions: '', symlinkTarget: null })
   }, [projectId, selectFile])
 
   if (treeError) {
