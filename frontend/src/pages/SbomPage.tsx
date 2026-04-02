@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import {
   Package,
@@ -99,35 +99,37 @@ export default function SbomPage() {
     if (!projectId) return
     setLoading(true)
     try {
-      const [comps, summary] = await Promise.all([
+      const [comps, s] = await Promise.all([
         getSbomComponents(projectId).catch(() => []),
         getVulnerabilitySummary(projectId).catch(() => null),
       ])
       setComponents(comps)
-      setSummary(summary)
+      setSummary(s)
 
-      if (summary && summary.total_vulnerabilities > 0) {
-        await vulnStore.loadVulnerabilities(projectId)
+      if (s && s.total_vulnerabilities > 0) {
+        await useVulnerabilityStore.getState().loadVulnerabilities(projectId)
       }
     } finally {
       setLoading(false)
     }
-  }, [projectId, vulnStore])
+  }, [projectId])
 
   useEffect(() => {
     loadData()
-    return () => vulnStore.reset()
-  }, [loadData, vulnStore])
+    return () => useVulnerabilityStore.getState().reset()
+  }, [loadData])
 
   // Reload vulns when resolution filter changes
+  const prevFilter = React.useRef(resolutionFilter)
   useEffect(() => {
+    if (prevFilter.current === resolutionFilter) return
+    prevFilter.current = resolutionFilter
     if (!projectId || loading) return
-    vulnStore.loadVulnerabilities(projectId).then(async () => {
+    useVulnerabilityStore.getState().loadVulnerabilities(projectId).then(async () => {
       const s = await getVulnerabilitySummary(projectId).catch(() => null)
       setSummary(s)
     })
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [resolutionFilter])
+  }, [resolutionFilter, projectId, loading])
 
   // Generate SBOM
   const handleGenerate = useCallback(async (force = false) => {
@@ -138,13 +140,13 @@ export default function SbomPage() {
       setComponents(result.components)
       const s = await getVulnerabilitySummary(projectId).catch(() => null)
       setSummary(s)
-      await vulnStore.loadVulnerabilities(projectId)
+      await useVulnerabilityStore.getState().loadVulnerabilities(projectId)
     } catch (err) {
       console.error('SBOM generation failed:', err)
     } finally {
       setGenerating(false)
     }
-  }, [projectId, vulnStore])
+  }, [projectId])
 
   // Run vulnerability scan
   const handleScan = useCallback(async (force = false) => {
@@ -161,13 +163,13 @@ export default function SbomPage() {
       ])
       setComponents(comps)
       setSummary(s)
-      await vulnStore.loadVulnerabilities(projectId)
+      await useVulnerabilityStore.getState().loadVulnerabilities(projectId)
     } catch (err) {
       console.error('Vulnerability scan failed:', err)
     } finally {
       setScanning(false)
     }
-  }, [projectId, vulnStore])
+  }, [projectId])
 
   // Export SBOM
   const handleExport = useCallback(async () => {
