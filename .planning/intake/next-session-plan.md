@@ -1,19 +1,37 @@
 # Next Session Plan
 
 > Created: 2026-04-01
-> Updated: 2026-04-02 (session 2 completed P1-P5, test fixes, unpack split, GH issues)
+> Updated: 2026-04-02 (session 3 — quality sprint + research fleet + v2 campaign planning)
 > Resume with: /do continue
 
-## Session 3 Priorities
+## Session 3 Completed
 
-### P1: Device Acquisition Feature — Phase 1 (NEW CAMPAIGN)
-Smart ingestion + guided workflow for live device dumps:
-- New "device dump" classification in unpack_common.py (tarballs with build.prop/getprop)
-- Extend tarball rootfs detection in firmware_service.py
-- getprop.txt metadata parser (OS version, patch level, model)
-- Frontend DeviceAcquisitionPage with guided wizard (Android ADB/MTKClient/non-root)
-- Upload dropzone that accepts super.img, system tarballs, APK ZIPs
-- See `.planning/knowledge/` for full architecture design (5 approaches evaluated, hybrid selected)
+### Quality Sprint (this session)
+- Fixed 6 bare exception handlers (fuzzing_service, firmware_service, emulation_service) — added exc_info=True and diagnostic logging
+- Extracted 95-line embedded shell script from emulation_service.py to `backend/app/templates/wairz_init_wrapper.sh`
+- Refactored VulnerabilitiesTab: extracted 15 props to Zustand store (`stores/vulnerabilityStore.ts`), reduced to 2 props
+- Investigated N+1 queries — already safe (explicit JOINs in place)
+
+### Research Fleet (this session)
+- 3 parallel agents investigated: tool ecosystem gaps, security assessment gaps, architecture quality
+- Top findings: YARA integration (CRITICAL), Unblob validation (HIGH), Androguard (HIGH)
+- Competitive gap vs EMBA: missing malware detection, SELinux/AppArmor, firewall analysis
+- 36 exception handlers audited, 11 services identified with zero test coverage
+
+### Device Acquisition v2 Campaign (this session)
+- Deep research on MTKClient (bkerler/mtkclient): 100+ chipsets, subprocess wrapping, USB VID:PID detection
+- Qualcomm EDL: recommend import-only (75-85% of devices block unsigned firehose)
+- Full campaign plan written: `.planning/campaigns/device-acquisition-v2.md` (10 phases, 4-6 sessions)
+
+## Session 4 Priorities
+
+### P1: Device Acquisition v2 — Phases 1-2
+Progress percentages (bridge + frontend) and MTKClient device detection:
+- Pre-dump partition size query via blockdev
+- Progress events with total_bytes, progress_percent, throughput_mbps
+- Frontend progress bars replacing bytes-only display
+- BROM device detection via lsusb (VID 0E8D)
+- See `.planning/campaigns/device-acquisition-v2.md` for full plan
 
 ### P2: Flow Robustness — Remaining HIGH fixes
 - Concurrent unpack race condition (SELECT FOR UPDATE locking)

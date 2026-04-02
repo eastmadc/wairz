@@ -37,7 +37,7 @@ Android firmware has a completely different structure from embedded Linux:
 | 4 | build | Install payload-dumper-go + lpunpack | none | Both binaries available in container | done |
 | 5 | build | A/B OTA extraction (payload.bin → partitions) | 3,4 | payload.bin extracted to individual partition images | untested |
 | 6 | build | super.img extraction (dynamic partitions) | 3,4 | super.img unpacked to system/vendor/product images | done (commit 6c4946f) |
-| 7 | build | boot.img extraction (kernel + ramdisk) | 3 | Kernel and ramdisk extracted from boot.img | not started |
+| 7 | build | boot.img extraction (kernel + ramdisk) | 3 | Kernel and ramdisk extracted from boot.img | done (this session) |
 | 8 | wire | Android metadata parsing (build.prop, etc.) | 3 | Device model, Android version, security patch level shown | done (os_info field populated) |
 | 9 | verify | End-to-end test with MediaTek ZIP | all | User's 1.9GB ZIP extracts successfully | done (test project b59b8887) |
 | 10 | build | Android ZIP early detection in upload flow | none | Android ZIPs preserved intact during upload | done (this session) |
@@ -99,6 +99,7 @@ LP_METADATA_MAGIC = b"\x50\x6c\x44\x67"
 - Chroot-style symlink resolution (`_resolve_within_root`) instead of `os.path.realpath` — foundational fix for all firmware with absolute symlinks
 - Upload flow preserves Android ZIPs intact instead of extracting largest file — simpler, lets existing unpack pipeline handle correctly
 - Content-based partition naming post-extraction rather than pre-extraction — more robust, doesn't depend on LP metadata
+- Native Python boot.img parser instead of mkbootimg/unpack_bootimg dependency — simpler, no extra Docker tool needed, covers v0-v4 headers
 
 ## Feature Ledger
 - `classify_firmware()` Android OTA + sparse detection (unpack.py)
@@ -107,16 +108,42 @@ LP_METADATA_MAGIC = b"\x50\x6c\x44\x67"
 - `_identify_partition_by_content()` content-based naming (unpack.py, this session)
 - `_is_android_firmware_zip()` upload-time detection (firmware_service.py, this session)
 - `_resolve_within_root()` chroot symlink resolution (sandbox.py)
-- 12 tests in `tests/test_firmware_classification.py`
+- `_extract_boot_img()` native Python boot.img parser v0-v4 (unpack_android.py, this session)
+- `_extract_ramdisk()` gzip/lz4/cpio ramdisk decompression (unpack_android.py, this session)
+- `android_boot` classification type (unpack_common.py, this session)
+- 18 tests in `tests/test_firmware_classification.py` (14 existing + 4 new boot.img)
 
 ## Continuation State
 Remaining work:
 - Phase 5: A/B OTA testing (needs real Pixel OTA download)
-- Phase 7: boot.img extraction (not started)
-- Campaign mostly complete — remaining phases are incremental
+- Campaign nearly complete — only A/B OTA validation remains (code written, untested)
 
 <!-- session-end: 2026-04-01T22:43:48.197Z -->
 
 <!-- session-end: 2026-04-01T22:50:13.822Z -->
 
 <!-- session-end: 2026-04-01T22:55:16.393Z -->
+
+<!-- session-end: 2026-04-02T17:44:26.466Z -->
+
+<!-- session-end: 2026-04-02T17:59:17.165Z -->
+
+<!-- session-end: 2026-04-02T17:59:29.048Z -->
+
+<!-- session-end: 2026-04-02T18:00:59.908Z -->
+
+<!-- session-end: 2026-04-02T18:01:14.066Z -->
+
+<!-- session-end: 2026-04-02T18:01:36.765Z -->
+
+<!-- session-end: 2026-04-02T18:01:58.891Z -->
+
+<!-- session-end: 2026-04-02T18:07:24.815Z -->
+
+<!-- session-end: 2026-04-02T18:07:49.313Z -->
+
+<!-- session-end: 2026-04-02T18:11:43.400Z -->
+
+<!-- session-end: 2026-04-02T18:13:35.921Z -->
+
+<!-- session-end: 2026-04-02T18:55:09.816Z -->

@@ -28,7 +28,7 @@ from app.workers.unpack_linux import (  # noqa: F401
     detect_os_info,
     _firmware_tar_filter,
 )
-from app.workers.unpack_android import _extract_android_ota  # noqa: F401
+from app.workers.unpack_android import _extract_android_ota, _extract_boot_img  # noqa: F401
 
 logger = logging.getLogger(__name__)
 
@@ -110,8 +110,22 @@ async def unpack_firmware(firmware_path: str, output_base_dir: str) -> UnpackRes
         result.success = True
         return result
 
-    if fw_type in ("android_ota", "android_sparse"):
+    if fw_type in ("android_ota", "android_sparse", "android_boot"):
         try:
+            if fw_type == "android_boot":
+                boot_dir = os.path.join(extraction_dir, "boot")
+                boot_log: list[str] = []
+                await _extract_boot_img(firmware_path, boot_dir, boot_log)
+                result.unpack_log += "\n".join(boot_log)
+                # Use ramdisk as rootfs if it was extracted
+                ramdisk_dir = os.path.join(boot_dir, "ramdisk")
+                if os.path.isdir(ramdisk_dir) and os.listdir(ramdisk_dir):
+                    result.extracted_path = ramdisk_dir
+                else:
+                    result.extracted_path = boot_dir
+                result.extraction_dir = extraction_dir
+                result.success = True
+                return result
             result.unpack_log += await _extract_android_ota(firmware_path, extraction_dir)
             _analyze_filesystem(result, extraction_dir)
             if result.success:
@@ -120,6 +134,22 @@ async def unpack_firmware(firmware_path: str, output_base_dir: str) -> UnpackRes
         except Exception as e:
             result.unpack_log += f"\nAndroid extraction failed: {e}\n"
             logger.warning("Android fast path failed, falling through to generic extractors", exc_info=True)
+
+    elif fw_type == "partition_dump_tar":
+        # Raw partition image dump (EDL, MTKClient, or device bridge)
+        try:
+            with _tarfile.open(firmware_path) as tf:
+                tf.extractall(extraction_dir, filter=_firmware_tar_filter)
+            result.unpack_log += f"Extracted partition dump tar: {os.path.basename(firmware_path)}\n"
+            # Process extracted .img files through Android pipeline
+            result.unpack_log += await _extract_android_ota(extraction_dir, extraction_dir)
+            _analyze_filesystem(result, extraction_dir)
+            if result.success:
+                return result
+            result.unpack_log += "\nPartition dump extraction produced no filesystem root.\n"
+        except Exception as e:
+            result.unpack_log += f"\nPartition dump extraction failed: {e}\n"
+            logger.warning("Partition dump fast path failed, falling through", exc_info=True)
 
     elif fw_type == "linux_rootfs_tar":
         try:

@@ -271,14 +271,21 @@ def classify_firmware(firmware_path: str) -> str:
         except Exception:
             pass
 
-    sparse_magic = _read_magic(firmware_path, 4)
-    if sparse_magic == b"\x3a\xff\x26\xed":
+    magic = _read_magic(firmware_path, 16)
+
+    # Android sparse image
+    if magic[:4] == b"\x3a\xff\x26\xed":
         return "android_sparse"
+
+    # Android boot image
+    if magic[:8] == b"ANDROID!":
+        return "android_boot"
+
+    if _is_partition_dump_tar(firmware_path):
+        return "partition_dump_tar"
 
     if _is_rootfs_tar(firmware_path):
         return "linux_rootfs_tar"
-
-    magic = _read_magic(firmware_path, 16)
 
     if magic[:4] == b"\x7fELF":
         return "elf_binary"
@@ -290,6 +297,46 @@ def classify_firmware(firmware_path: str) -> str:
         return "pe_binary"
 
     return "linux_blob"
+
+
+def _is_partition_dump_tar(firmware_path: str) -> bool:
+    """Check if the file is a tar of raw partition images (EDL/MTKClient dump).
+
+    Qualcomm EDL dumps contain partitions like aboot.img, rpm.img, tz.img.
+    MTKClient dumps contain partitions like boot.img, recovery.img, super.img, lk.img.
+    Device bridge dumps also match this pattern.
+    """
+    import tarfile as _tarfile
+
+    try:
+        if not _tarfile.is_tarfile(firmware_path):
+            return False
+    except Exception:
+        return False
+
+    # Partition names that indicate a raw dump (not a rootfs)
+    qualcomm_markers = {"aboot", "rpm", "tz", "hyp", "modem", "sbl1", "tz"}
+    mtk_markers = {"lk", "tee", "preloader", "md1img", "spmfw", "sspm"}
+    generic_markers = {"boot", "recovery", "system", "vendor", "super", "vbmeta", "dtbo"}
+    all_markers = qualcomm_markers | mtk_markers | generic_markers
+
+    try:
+        with _tarfile.open(firmware_path) as tf:
+            img_count = 0
+            matched = 0
+            for member in tf:
+                name = os.path.basename(member.name)
+                stem, ext = os.path.splitext(name)
+                if ext.lower() == ".img":
+                    img_count += 1
+                    if stem.lower() in all_markers:
+                        matched += 1
+                if img_count >= 20:
+                    break
+            # At least 3 .img files with 2+ matching known partition names
+            return img_count >= 3 and matched >= 2
+    except Exception:
+        return False
 
 
 def _is_rootfs_tar(firmware_path: str) -> bool:
