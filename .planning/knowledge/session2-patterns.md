@@ -36,6 +36,16 @@
 - **Evidence:** Simpler than extracting all .img files at upload time. One `pass` statement + `else` indentation vs. new extraction function.
 - **Applies when:** Adding early detection for a format that the downstream pipeline already processes. Don't duplicate work.
 
+### 7. Tarball upload support was nearly free
+- **Description:** Supporting ADB device dump tarballs required only adding tarball detection before the existing ZIP handling in firmware_service.py. The rootfs extraction logic, architecture detection, and OS info parsing all worked unchanged.
+- **Evidence:** 73 lines added to firmware_service.py. No changes to unpack pipeline, SBOM service, or frontend. The existing `_is_rootfs_tar()` and `_firmware_tar_filter()` handled everything.
+- **Applies when:** Adding new upload formats. Check if the existing extraction pipeline already handles the inner format before building new extraction code.
+
+### 8. SELECT FOR UPDATE prevents background task race conditions
+- **Description:** The unpack endpoint had a TOCTOU race — two concurrent requests could both pass the "not unpacking" check before either set status to "unpacking". Fixed with `select(...).with_for_update()`.
+- **Evidence:** Single line change to add `.with_for_update()` to the project SELECT. PostgreSQL row-level locking prevents the race.
+- **Applies when:** Any endpoint that reads a status, checks it, then updates it before launching a background task.
+
 ## Anti-patterns
 
 ### 1. CPE vendor mismatch filtering doesn't catch NVD cross-references
