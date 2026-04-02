@@ -1,5 +1,6 @@
 import asyncio
 import hashlib
+import logging
 import os
 import re
 import shutil
@@ -14,6 +15,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.models.firmware import Firmware
+
+logger = logging.getLogger(__name__)
 
 
 def _sanitize_filename(name: str) -> str:
@@ -283,13 +286,13 @@ class FirmwareService:
                                         firmware.os_info = getprop
                                     firmware.unpack_log += f"\nParsed {getprop_name} for device metadata."
                                 except Exception:
-                                    pass
+                                    logger.debug("Failed to parse %s", getprop_name, exc_info=True)
                                 break
                         self.db.add(firmware)
                         await self.db.flush()
                         return firmware
             except Exception:
-                pass  # Fall through to normal firmware upload flow
+                logger.debug("Tarball device-dump detection failed", exc_info=True)
 
         # If the uploaded file is a ZIP (by extension), extract the firmware from inside it.
         # We check the extension rather than zipfile.is_zipfile() alone because firmware
