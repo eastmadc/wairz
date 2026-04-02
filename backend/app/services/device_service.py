@@ -78,6 +78,11 @@ class DeviceService:
             "device_metadata": metadata,
         }
 
+    # Shared dump directory — bind-mounted between host and container so the
+    # bridge (host-side) can write partition images and the backend (container)
+    # can read them for import.
+    DUMP_SHARED_DIR = "/tmp/wairz-dumps"
+
     async def start_dump(
         self,
         project_id: uuid.UUID,
@@ -85,19 +90,14 @@ class DeviceService:
         partitions: list[str],
     ) -> dict:
         """Start dumping partitions from a device."""
-        settings = get_settings()
-        storage_root = settings.storage_root
-
-        # Create dump output directory
+        # Use shared directory (bind-mounted from host) so the bridge can write
+        # to it on the host side and the backend can read it inside the container
         dump_id = str(uuid.uuid4())
-        dump_dir = os.path.join(
-            storage_root, "projects", str(project_id), "dumps", dump_id,
-        )
+        dump_dir = os.path.join(self.DUMP_SHARED_DIR, dump_id)
         os.makedirs(dump_dir, exist_ok=True)
 
-        # Check disk space
-        expected_size = 0  # We don't know partition sizes yet
-        disk_usage = shutil.disk_usage(storage_root)
+        # Check disk space on the shared mount
+        disk_usage = shutil.disk_usage(self.DUMP_SHARED_DIR)
         free_gb = disk_usage.free / (1024**3)
         if free_gb < 5:
             raise ValueError(
