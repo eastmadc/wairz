@@ -38,6 +38,8 @@ class Settings(BaseSettings):
     uart_bridge_host: str = "host.docker.internal"
     uart_bridge_port: int = 9999
     uart_command_timeout: int = 30
+    device_bridge_host: str = "host.docker.internal"
+    device_bridge_port: int = 9998
     cors_origins: str = ""
     syft_enabled: bool = True
     syft_timeout: int = 120
