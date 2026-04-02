@@ -57,6 +57,7 @@ services:
       - ./ghidra/scripts:/opt/ghidra_scripts:ro
       - ./emulation/kernels:/opt/kernels:rw
       - /var/run/docker.sock:/var/run/docker.sock
+      - /tmp/wairz-dumps:/tmp/wairz-dumps
     depends_on:
       postgres:
         condition: service_healthy
