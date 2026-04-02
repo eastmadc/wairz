@@ -211,6 +211,34 @@ The bridge will print "UART bridge listening on ..." when ready. It waits for co
 
 ---
 
+## Device Acquisition Bridge
+
+Similar to the UART bridge, the device bridge runs on the host to access ADB-connected Android devices.
+
+**How it works:**
+- **Host:** `scripts/wairz-device-bridge.py` is a standalone TCP server (only requires `adb` on PATH). Listens on TCP 9998.
+- **Docker:** `device_service.py` connects to the bridge via `host.docker.internal:9998`
+- **Protocol:** Same as UART bridge — newline-delimited JSON, request/response matched by `id` field
+- **Commands:** `list_devices`, `get_device_info`, `dump_partition`, `dump_all`, `get_dump_status`, `cancel_dump`, `resume_dump`
+- **Frontend:** 4-step wizard at `/projects/{id}/device` — Connect → Select Device → Dump Progress → Summary/Import
+
+**Starting the bridge:**
+```bash
+python3 scripts/wairz-device-bridge.py --bind 0.0.0.0 --port 9998
+```
+
+**Mock mode (for development without a real device):**
+```bash
+python3 scripts/wairz-device-bridge.py --mock --port 9998
+```
+
+**Setup (same pattern as UART bridge):**
+1. `DEVICE_BRIDGE_HOST` in `.env` must be `host.docker.internal`
+2. iptables rule: `sudo iptables -I INPUT -i docker0 -p tcp --dport 9998 -j ACCEPT`
+3. Restart backend after `.env` changes
+
+---
+
 ## Environment Variables
 
 See `.env.example` for defaults. Key variables:
@@ -227,6 +255,7 @@ See `.env.example` for defaults. Key variables:
 | `EMULATION_IMAGE` / `EMULATION_NETWORK` | Docker image and network for QEMU containers |
 | `FUZZING_IMAGE` / `FUZZING_TIMEOUT_MINUTES` | Docker image and timeout for AFL++ containers |
 | `UART_BRIDGE_HOST` / `UART_BRIDGE_PORT` | Host-side UART bridge connection |
+| `DEVICE_BRIDGE_HOST` / `DEVICE_BRIDGE_PORT` | Host-side device acquisition bridge (default: host.docker.internal:9998) |
 | `NVD_API_KEY` | Optional, for higher NVD rate limits during CVE scanning |
 
 ---

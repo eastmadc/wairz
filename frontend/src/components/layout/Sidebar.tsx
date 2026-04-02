@@ -13,6 +13,7 @@ import {
   Bug,
   GitCompareArrows,
   HelpCircle,
+  Smartphone,
 } from 'lucide-react'
 import { Separator } from '@/components/ui/separator'
 import wairzLogo from '@/assets/wairz_full_logo.png'
@@ -33,6 +34,7 @@ const projectSubPages = [
   { suffix: '/emulation', label: 'Emulation (experimental)', icon: PlayCircle },
   { suffix: '/fuzzing', label: 'Fuzzing (experimental)', icon: Bug },
   { suffix: '/compare', label: 'Compare', icon: GitCompareArrows },
+  { suffix: '/device', label: 'Device Acquisition', icon: Smartphone },
 ]
 
 export default function Sidebar({ collapsed, onToggle }: SidebarProps) {
