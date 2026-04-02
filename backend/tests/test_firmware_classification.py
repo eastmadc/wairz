@@ -137,6 +137,47 @@ class TestUnknownAndEdgeCases:
         assert classify_firmware(str(pe_path)) == "pe_binary"
 
 
+class TestPartitionDumpTarDetection:
+    """Test classify_firmware() recognises partition dump tarballs."""
+
+    def test_tar_with_qualcomm_partitions(self, tmp_path: Path):
+        """A tarball with Qualcomm partition images is partition_dump_tar."""
+        tar_path = tmp_path / "edl_dump.tar"
+        with tarfile.open(tar_path, "w") as tf:
+            for name in ["boot.img", "system.img", "vendor.img", "modem.img", "tz.img"]:
+                data = b"\x00" * 64
+                import io
+                info = tarfile.TarInfo(name=name)
+                info.size = len(data)
+                tf.addfile(info, io.BytesIO(data))
+        assert classify_firmware(str(tar_path)) == "partition_dump_tar"
+
+    def test_tar_with_mtk_partitions(self, tmp_path: Path):
+        """A tarball with MTK partition images is partition_dump_tar."""
+        tar_path = tmp_path / "mtk_dump.tar"
+        with tarfile.open(tar_path, "w") as tf:
+            for name in ["boot.img", "recovery.img", "super.img", "lk.img"]:
+                data = b"\x00" * 64
+                import io
+                info = tarfile.TarInfo(name=name)
+                info.size = len(data)
+                tf.addfile(info, io.BytesIO(data))
+        assert classify_firmware(str(tar_path)) == "partition_dump_tar"
+
+    def test_tar_with_random_imgs_not_partition_dump(self, tmp_path: Path):
+        """A tarball with non-partition .img files is NOT partition_dump_tar."""
+        tar_path = tmp_path / "random.tar"
+        with tarfile.open(tar_path, "w") as tf:
+            for name in ["photo1.img", "photo2.img", "photo3.img"]:
+                data = b"\x00" * 64
+                import io
+                info = tarfile.TarInfo(name=name)
+                info.size = len(data)
+                tf.addfile(info, io.BytesIO(data))
+        # 3 .img files but 0 match known partition names
+        assert classify_firmware(str(tar_path)) != "partition_dump_tar"
+
+
 def _make_boot_img(
     tmp_path: Path,
     kernel_data: bytes = b"\x00" * 4096,
