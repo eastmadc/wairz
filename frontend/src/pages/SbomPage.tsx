@@ -30,10 +30,9 @@ import {
   getSbomComponents,
   exportSbom,
   runVulnerabilityScan,
-  getVulnerabilities,
   getVulnerabilitySummary,
-  updateVulnerability,
 } from '@/api/sbom'
+import { useVulnerabilityStore } from '@/stores/vulnerabilityStore'
 import type {
   SbomComponent,
   SbomVulnerability,
@@ -53,7 +52,6 @@ const SEVERITY_CONFIG: Record<Severity, { icon: React.ElementType; className: st
   info: { icon: Info, className: 'text-gray-500', bg: 'bg-gray-500 text-white' },
 }
 
-const VULN_PAGE_SIZE = 100
 
 const CONFIDENCE_STYLE: Record<string, string> = {
   high: 'border-green-500/50 text-green-600 dark:text-green-400',
@@ -84,26 +82,17 @@ export default function SbomPage() {
 
   const [tab, setTab] = useState<Tab>('components')
   const [components, setComponents] = useState<SbomComponent[]>([])
-  const [vulnerabilities, setVulnerabilities] = useState<SbomVulnerability[]>([])
   const [summary, setSummary] = useState<SbomSummary | null>(null)
   const [loading, setLoading] = useState(true)
   const [generating, setGenerating] = useState(false)
   const [scanning, setScanning] = useState(false)
   const [scanResult, setScanResult] = useState<VulnerabilityScanResult | null>(null)
-  const [hasMoreVulns, setHasMoreVulns] = useState(false)
-  const [loadingMoreVulns, setLoadingMoreVulns] = useState(false)
-  const [vulnOffset, setVulnOffset] = useState(0)
   const [typeFilter, setTypeFilter] = useState<string | null>(null)
   const [nameSearch, setNameSearch] = useState('')
-  const [sevFilter, setSevFilter] = useState<string | null>(null)
-  const [resolutionFilter, setResolutionFilter] = useState<ResolutionFilter>('open')
   const [expandedComp, setExpandedComp] = useState<string | null>(null)
-  const [actionMenuId, setActionMenuId] = useState<string | null>(null)
-  const [justificationDialog, setJustificationDialog] = useState<{
-    vulnId: string
-    status: VulnerabilityResolutionStatus
-  } | null>(null)
-  const [justificationText, setJustificationText] = useState('')
+
+  const vulnStore = useVulnerabilityStore()
+  const { vulnerabilities, resolutionFilter } = vulnStore
 
   // Load data on mount
   const loadData = useCallback(async () => {
@@ -118,73 +107,27 @@ export default function SbomPage() {
       setSummary(summary)
 
       if (summary && summary.total_vulnerabilities > 0) {
-        const filters: { resolution_status?: string; limit?: number; offset?: number } = { limit: VULN_PAGE_SIZE, offset: 0 }
-        if (resolutionFilter !== 'all') {
-          filters.resolution_status = resolutionFilter
-        }
-        const vulns = await getVulnerabilities(projectId, filters).catch(() => [])
-        setVulnerabilities(vulns)
-        setVulnOffset(0)
-        setHasMoreVulns(vulns.length === VULN_PAGE_SIZE)
+        await vulnStore.loadVulnerabilities(projectId)
       }
     } finally {
       setLoading(false)
     }
-  }, [projectId, resolutionFilter])
+  }, [projectId, vulnStore])
 
   useEffect(() => {
     loadData()
-  }, [loadData])
+    return () => vulnStore.reset()
+  }, [loadData, vulnStore])
 
-  // Reload vulns when resolution filter changes (without full reload)
-  const reloadVulns = useCallback(async () => {
-    if (!projectId) return
-    const filters: { resolution_status?: string; limit?: number; offset?: number } = { limit: VULN_PAGE_SIZE, offset: 0 }
-    if (resolutionFilter !== 'all') {
-      filters.resolution_status = resolutionFilter
-    }
-    const vulns = await getVulnerabilities(projectId, filters).catch(() => [])
-    setVulnerabilities(vulns)
-    setVulnOffset(0)
-    setHasMoreVulns(vulns.length === VULN_PAGE_SIZE)
-    const s = await getVulnerabilitySummary(projectId).catch(() => null)
-    setSummary(s)
-  }, [projectId, resolutionFilter])
-
-  const loadMoreVulns = useCallback(async () => {
-    if (!projectId) return
-    setLoadingMoreVulns(true)
-    try {
-      const nextOffset = vulnOffset + VULN_PAGE_SIZE
-      const filters: { resolution_status?: string; limit?: number; offset?: number } = { limit: VULN_PAGE_SIZE, offset: nextOffset }
-      if (resolutionFilter !== 'all') {
-        filters.resolution_status = resolutionFilter
-      }
-      const moreVulns = await getVulnerabilities(projectId, filters).catch(() => [])
-      setVulnerabilities(prev => [...prev, ...moreVulns])
-      setVulnOffset(nextOffset)
-      setHasMoreVulns(moreVulns.length === VULN_PAGE_SIZE)
-    } finally {
-      setLoadingMoreVulns(false)
-    }
-  }, [projectId, resolutionFilter, vulnOffset])
-
-  // Handle resolution status update
-  const handleResolve = useCallback(async (vulnId: string, status: VulnerabilityResolutionStatus, justification?: string) => {
-    if (!projectId) return
-    try {
-      await updateVulnerability(projectId, vulnId, {
-        resolution_status: status,
-        resolution_justification: justification,
-      })
-      await reloadVulns()
-    } catch (err) {
-      console.error('Failed to update vulnerability:', err)
-    }
-    setActionMenuId(null)
-    setJustificationDialog(null)
-    setJustificationText('')
-  }, [projectId, reloadVulns])
+  // Reload vulns when resolution filter changes
+  useEffect(() => {
+    if (!projectId || loading) return
+    vulnStore.loadVulnerabilities(projectId).then(async () => {
+      const s = await getVulnerabilitySummary(projectId).catch(() => null)
+      setSummary(s)
+    })
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [resolutionFilter])
 
   // Generate SBOM
   const handleGenerate = useCallback(async (force = false) => {
@@ -193,19 +136,15 @@ export default function SbomPage() {
     try {
       const result = await generateSbom(projectId, force)
       setComponents(result.components)
-      // Reload summary and clear stale vulnerability list
-      const [s, vulns] = await Promise.all([
-        getVulnerabilitySummary(projectId).catch(() => null),
-        getVulnerabilities(projectId).catch(() => []),
-      ])
+      const s = await getVulnerabilitySummary(projectId).catch(() => null)
       setSummary(s)
-      setVulnerabilities(vulns)
+      await vulnStore.loadVulnerabilities(projectId)
     } catch (err) {
       console.error('SBOM generation failed:', err)
     } finally {
       setGenerating(false)
     }
-  }, [projectId])
+  }, [projectId, vulnStore])
 
   // Run vulnerability scan
   const handleScan = useCallback(async (force = false) => {
@@ -216,20 +155,19 @@ export default function SbomPage() {
       const result = await runVulnerabilityScan(projectId, force)
       setScanResult(result)
       // Reload data
-      const [vulns, comps, s] = await Promise.all([
-        getVulnerabilities(projectId),
+      const [comps, s] = await Promise.all([
         getSbomComponents(projectId),
         getVulnerabilitySummary(projectId),
       ])
-      setVulnerabilities(vulns)
       setComponents(comps)
       setSummary(s)
+      await vulnStore.loadVulnerabilities(projectId)
     } catch (err) {
       console.error('Vulnerability scan failed:', err)
     } finally {
       setScanning(false)
     }
-  }, [projectId])
+  }, [projectId, vulnStore])
 
   // Export SBOM
   const handleExport = useCallback(async () => {
@@ -254,9 +192,9 @@ export default function SbomPage() {
     return true
   })
 
-  // Filter vulnerabilities
+  // Filter vulnerabilities by severity (resolution filter handled by store/API)
   const filteredVulns = vulnerabilities.filter((v) => {
-    if (sevFilter && v.severity !== sevFilter) return false
+    if (vulnStore.sevFilter && v.severity !== vulnStore.sevFilter) return false
     return true
   })
 
@@ -408,23 +346,10 @@ export default function SbomPage() {
             />
           )}
 
-          {tab === 'vulnerabilities' && (
+          {tab === 'vulnerabilities' && projectId && (
             <VulnerabilitiesTab
+              projectId={projectId}
               vulnerabilities={filteredVulns}
-              sevFilter={sevFilter}
-              onSevFilter={setSevFilter}
-              resolutionFilter={resolutionFilter}
-              onResolutionFilter={setResolutionFilter}
-              actionMenuId={actionMenuId}
-              onActionMenu={setActionMenuId}
-              onResolve={handleResolve}
-              justificationDialog={justificationDialog}
-              onJustificationDialog={setJustificationDialog}
-              justificationText={justificationText}
-              onJustificationText={setJustificationText}
-              hasMore={hasMoreVulns}
-              loadingMore={loadingMoreVulns}
-              onLoadMore={loadMoreVulns}
             />
           )}
         </>
@@ -630,23 +555,27 @@ function parseCveId(cveId: string): [number, number] {
 
 // ── Vulnerabilities Tab ──
 
-function VulnerabilitiesTab({ vulnerabilities, sevFilter, onSevFilter, resolutionFilter, onResolutionFilter, actionMenuId, onActionMenu, onResolve, justificationDialog, onJustificationDialog, justificationText, onJustificationText, hasMore, loadingMore, onLoadMore }: {
+function VulnerabilitiesTab({ projectId, vulnerabilities }: {
+  projectId: string
   vulnerabilities: SbomVulnerability[]
-  sevFilter: string | null
-  onSevFilter: (s: string | null) => void
-  resolutionFilter: ResolutionFilter
-  onResolutionFilter: (f: ResolutionFilter) => void
-  actionMenuId: string | null
-  onActionMenu: (id: string | null) => void
-  onResolve: (vulnId: string, status: VulnerabilityResolutionStatus, justification?: string) => void
-  justificationDialog: { vulnId: string; status: VulnerabilityResolutionStatus } | null
-  onJustificationDialog: (d: { vulnId: string; status: VulnerabilityResolutionStatus } | null) => void
-  justificationText: string
-  onJustificationText: (t: string) => void
-  hasMore: boolean
-  loadingMore: boolean
-  onLoadMore: () => void
 }) {
+  const {
+    sevFilter, setSevFilter: onSevFilter,
+    resolutionFilter, setResolutionFilter: onResolutionFilter,
+    actionMenuId, setActionMenuId: onActionMenu,
+    justificationDialog, setJustificationDialog: onJustificationDialog,
+    justificationText, setJustificationText: onJustificationText,
+    hasMore, loadingMore,
+    resolve, loadMore,
+  } = useVulnerabilityStore()
+
+  const onResolve = useCallback((vulnId: string, status: VulnerabilityResolutionStatus, justification?: string) => {
+    resolve(projectId, vulnId, status, justification)
+  }, [projectId, resolve])
+
+  const onLoadMore = useCallback(() => {
+    loadMore(projectId)
+  }, [projectId, loadMore])
   const [selectedVuln, setSelectedVuln] = useState<string | null>(null)
   const [sortColumn, setSortColumn] = useState<SortColumn>('severity')
   const [sortDirection, setSortDirection] = useState<SortDirection>('asc')

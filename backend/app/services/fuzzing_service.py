@@ -154,7 +154,7 @@ class FuzzingService:
                     relative = os.path.relpath(real_path, dest)
                     return os.path.join(source, relative)
         except Exception:
-            logger.warning("Could not inspect own container for path translation")
+            logger.warning("Could not inspect own container for path translation", exc_info=True)
 
         return None
 
@@ -636,7 +636,7 @@ class FuzzingService:
         except docker.errors.NotFound:
             pass
         except Exception:
-            logger.debug("Failed to sync stats for campaign %s", campaign.id)
+            logger.debug("Failed to sync stats for campaign %s", campaign.id, exc_info=True)
 
     async def _sync_crashes(self, campaign: FuzzingCampaign) -> list[FuzzingCrash]:
         """Discover new crash files in the container and create DB records."""
@@ -695,7 +695,7 @@ class FuzzingService:
         except docker.errors.NotFound:
             pass
         except Exception:
-            logger.debug("Failed to sync crashes for campaign %s", campaign.id)
+            logger.debug("Failed to sync crashes for campaign %s", campaign.id, exc_info=True)
 
         return new_crashes
 

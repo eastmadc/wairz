@@ -777,127 +777,65 @@ echo "Symlink repair: pass1=$PASS1 pass2=$PASS2 pass3=$PASS3"
         - Sourcing an optional pre-init script for firmware-specific setup
         - Executing the firmware's original init or an interactive shell
         """
-        # Determine what to exec after setup
         if original_init:
             exec_line = f'exec {original_init}'
         else:
-            # Auto-detect init: try common paths in order
-            exec_line = """# Auto-detect init
-for candidate in /sbin/init /etc/preinit /sbin/procd /init /linuxrc; do
-    if [ -x "$candidate" ] || [ -L "$candidate" ]; then
-        exec "$candidate"
-    fi
-done
-# Fallback to shell
-echo "[wairz] No init found, dropping to shell"
-exec /bin/sh"""
+            exec_line = (
+                '# Auto-detect init\n'
+                'for candidate in /sbin/init /etc/preinit /sbin/procd /init /linuxrc; do\n'
+                '    if [ -x "$candidate" ] || [ -L "$candidate" ]; then\n'
+                '        exec "$candidate"\n'
+                '    fi\n'
+                'done\n'
+                '# Fallback to shell\n'
+                'echo "[wairz] No init found, dropping to shell"\n'
+                'exec /bin/sh'
+            )
 
         pre_init_block = ""
         if pre_init_script:
-            pre_init_block = """
-# --- User pre-init script ---
-if [ -f /wairz_pre_init.sh ]; then
-    echo "[wairz] Running pre-init script..."
-    chmod +x /wairz_pre_init.sh
-    . /wairz_pre_init.sh
-    echo "[wairz] Pre-init script finished (exit=$?)"
-fi"""
+            pre_init_block = (
+                '\n# --- User pre-init script ---\n'
+                'if [ -f /wairz_pre_init.sh ]; then\n'
+                '    echo "[wairz] Running pre-init script..."\n'
+                '    chmod +x /wairz_pre_init.sh\n'
+                '    . /wairz_pre_init.sh\n'
+                '    echo "[wairz] Pre-init script finished (exit=$?)"\n'
+                'fi'
+            )
 
-        return f"""#!/bin/sh
-# Wairz emulation init wrapper
-# Auto-configures the emulated environment before starting firmware init
+        stub_block = ""
+        if stub_profile != "none":
+            stub_block = (
+                '# Export LD_PRELOAD for stub libraries based on stub_profile setting.\n'
+                '# This ensures ALL processes started by the firmware\'s init inherit the stubs.\n'
+                '# /etc/ld.so.preload is NOT supported by musl libc -- only the env var works.\n'
+                'STUBS=""\n'
+                'for f in /opt/stubs/stubs_*.so; do\n'
+                '    [ -f "$f" ] && STUBS="$STUBS $f"\n'
+                'done\n'
+                'STUBS=$(echo "$STUBS" | sed \'s/^ //\')\n'
+                'if [ -n "$STUBS" ]; then\n'
+                '    export LD_PRELOAD="$STUBS"\n'
+                '    echo "[wairz] LD_PRELOAD set: $LD_PRELOAD"\n'
+                'else\n'
+                '    echo "[wairz] No stub libraries found in /opt/stubs/"\n'
+                'fi'
+            )
 
-echo "[wairz] Init wrapper starting..."
+        template_path = os.path.join(
+            os.path.dirname(os.path.dirname(__file__)),
+            "templates", "wairz_init_wrapper.sh",
+        )
+        with open(template_path) as f:
+            template = f.read()
 
-# Fix broken symlinks: binwalk converts out-of-tree symlinks to /dev/null.
-# Many embedded firmware images have /etc, /home, /webroot etc. pointing to
-# tmpfs paths (/var/etc, /var/home, /var/webroot) that binwalk can't resolve.
-# Fix them here so the firmware boots properly.
-for lnk in /etc /home /root /webroot /debug; do
-    if [ -L "$lnk" ] && [ "$(readlink "$lnk")" = "/dev/null" ]; then
-        rm -f "$lnk"
-        mkdir -p "$lnk"
-        echo "[wairz] Fixed broken symlink: $lnk"
-    fi
-done
-# Populate directories from their read-only counterparts (e.g. /etc_ro -> /etc)
-for rodir in /etc_ro /webroot_ro; do
-    target="${{rodir%_ro}}"
-    if [ -d "$rodir" ] && [ -d "$target" ]; then
-        cp -a "$rodir"/* "$target"/ 2>/dev/null || true
-        echo "[wairz] Populated $target from $rodir"
-    fi
-done
-# Also fix broken /dev/null symlinks inside key directories
-for dir in /etc /webroot /webroot_ro /home /root; do
-    [ -d "$dir" ] || continue
-    for f in "$dir"/*; do
-        [ -L "$f" ] && [ "$(readlink "$f")" = "/dev/null" ] && rm -f "$f" && \
-            echo "[wairz] Removed broken symlink: $f"
-    done
-done
-
-# Enable passwordless root login for serial console access.
-# Fix both /etc/ and /etc_ro/ since firmware rcS typically copies /etc_ro/* → /etc/.
-for d in /etc /etc_ro; do
-    [ -f "$d/passwd" ] && sed -i 's|^root:[^:]*:|root::|' "$d/passwd" 2>/dev/null
-    [ -f "$d/shadow" ] && sed -i 's|^root:[^:]*:|root::|' "$d/shadow" 2>/dev/null
-    [ -f "$d/inittab" ] && sed -i 's|/sbin/sulogin|/bin/sh -l|g' "$d/inittab" 2>/dev/null
-done
-echo "[wairz] Fixed root password and inittab (sulogin -> sh)"
-
-# Mount essential filesystems
-mount -t proc proc /proc 2>/dev/null
-mount -t sysfs sysfs /sys 2>/dev/null
-[ -c /dev/null ] || mount -t devtmpfs devtmpfs /dev 2>/dev/null
-mkdir -p /tmp /var/run 2>/dev/null
-mount -t tmpfs tmpfs /tmp 2>/dev/null
-mount -t tmpfs tmpfs /var/run 2>/dev/null
-
-# Configure networking (QEMU user-mode networking uses 10.0.2.0/24)
-# Wait briefly for NIC driver to initialize
-sleep 1
-if command -v ifconfig >/dev/null 2>&1; then
-    ifconfig eth0 10.0.2.15 netmask 255.255.255.0 up 2>/dev/null
-    route add default gw 10.0.2.2 2>/dev/null
-elif command -v ip >/dev/null 2>&1; then
-    ip addr add 10.0.2.15/24 dev eth0 2>/dev/null
-    ip link set eth0 up 2>/dev/null
-    ip route add default via 10.0.2.2 2>/dev/null
-fi
-
-# Verify networking
-if command -v ifconfig >/dev/null 2>&1; then
-    echo "[wairz] Network: $(ifconfig eth0 2>/dev/null | grep 'inet ' || echo 'not configured')"
-fi
-{pre_init_block}
-
-# Enable core dumps for crash analysis
-ulimit -c unlimited 2>/dev/null || true
-mkdir -p /tmp/cores 2>/dev/null
-if [ -d /proc/sys/kernel ]; then
-    echo "/tmp/cores/core.%e.%p" > /proc/sys/kernel/core_pattern 2>/dev/null || true
-fi
-echo "[wairz] Core dumps enabled: /tmp/cores/core.<binary>.<pid>"
-
-# Export LD_PRELOAD for stub libraries based on stub_profile setting.
-# This ensures ALL processes started by the firmware's init inherit the stubs.
-# /etc/ld.so.preload is NOT supported by musl libc — only the env var works.
-{"" if stub_profile == "none" else '''STUBS=""
-for f in /opt/stubs/stubs_*.so; do
-    [ -f "$f" ] && STUBS="$STUBS $f"
-done
-STUBS=$(echo "$STUBS" | sed 's/^ //')
-if [ -n "$STUBS" ]; then
-    export LD_PRELOAD="$STUBS"
-    echo "[wairz] LD_PRELOAD set: $LD_PRELOAD"
-else
-    echo "[wairz] No stub libraries found in /opt/stubs/"
-fi'''}
-
-echo "[wairz] Starting firmware init..."
-{exec_line}
-"""
+        return (
+            template
+            .replace("@@PRE_INIT_BLOCK@@", pre_init_block)
+            .replace("@@STUB_BLOCK@@", stub_block)
+            .replace("@@EXEC_LINE@@", exec_line)
+        )
 
     @staticmethod
     def _inject_init_wrapper(
@@ -1239,6 +1177,7 @@ echo "[wairz] Starting firmware init..."
                 log = container.logs(tail=50).decode("utf-8", errors="replace")
                 return log.strip() if log.strip() else "(no log available)"
             except Exception:
+                logger.debug("Failed to read container logs", exc_info=True)
                 return "(no log available)"
 
     def _find_kernel(
