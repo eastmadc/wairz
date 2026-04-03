@@ -10,6 +10,7 @@ import SbomPage from '@/pages/SbomPage'
 import EmulationPage from '@/pages/EmulationPage'
 import FuzzingPage from '@/pages/FuzzingPage'
 import ComparisonPage from '@/pages/ComparisonPage'
+import SecurityScanPage from '@/pages/SecurityScanPage'
 import DeviceAcquisitionPage from '@/pages/DeviceAcquisitionPage'
 import HelpPage from '@/pages/HelpPage'
 import NotFoundPage from '@/pages/NotFoundPage'
@@ -24,6 +25,7 @@ export default function App() {
           <Route path="/projects" element={<ProjectsPage />} />
           <Route path="/projects/:projectId" element={<ProjectDetailPage />} />
           <Route path="/projects/:projectId/explore" element={<ExplorePage />} />
+          <Route path="/projects/:projectId/security" element={<SecurityScanPage />} />
           <Route path="/projects/:projectId/findings" element={<FindingsPage />} />
           <Route path="/projects/:projectId/map" element={<ComponentMapPage />} />
           <Route path="/projects/:projectId/sbom" element={<SbomPage />} />

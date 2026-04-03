@@ -7,7 +7,7 @@ from app.utils.hashing import compute_file_sha256
 from app.utils.sandbox import safe_walk
 
 
-MAX_DIFF_ENTRIES = 500
+MAX_DIFF_ENTRIES = 2000
 
 
 @dataclass

@@ -7,6 +7,7 @@ import {
   LayoutDashboard,
   FolderSearch,
   ShieldAlert,
+  Shield,
   Network,
   Package,
   PlayCircle,
@@ -28,6 +29,7 @@ interface SidebarProps {
 const projectSubPages = [
   { suffix: '', label: 'Overview', icon: LayoutDashboard },
   { suffix: '/explore', label: 'File Explorer', icon: FolderSearch },
+  { suffix: '/security', label: 'Security Scan', icon: Shield },
   { suffix: '/findings', label: 'Findings', icon: ShieldAlert },
   { suffix: '/map', label: 'Component Map', icon: Network },
   { suffix: '/sbom', label: 'SBOM', icon: Package },
