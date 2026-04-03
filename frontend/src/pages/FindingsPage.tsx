@@ -1,21 +1,33 @@
 import { useEffect, useState, useCallback } from 'react'
-import { useParams } from 'react-router-dom'
+import { useParams, useLocation } from 'react-router-dom'
 import { ShieldAlert, Loader2 } from 'lucide-react'
 import { listFindings, updateFinding, deleteFinding } from '@/api/findings'
-import type { Finding, FindingUpdate, Severity, FindingStatus, FindingSource } from '@/types'
+import { listFirmware } from '@/api/firmware'
+import { useProjectStore } from '@/stores/projectStore'
+import type { Finding, FindingUpdate, FirmwareDetail, Severity, FindingStatus, FindingSource } from '@/types'
+import FirmwareSelector from '@/components/projects/FirmwareSelector'
 import FindingsList from '@/components/findings/FindingsList'
 import FindingDetail from '@/components/findings/FindingDetail'
 import ReportExport from '@/components/findings/ReportExport'
 
 export default function FindingsPage() {
   const { projectId } = useParams<{ projectId: string }>()
+  const location = useLocation()
+  const selectedFirmwareId = useProjectStore((s) => s.selectedFirmwareId)
+  const [firmwareList, setFirmwareList] = useState<FirmwareDetail[]>([])
 
   const [findings, setFindings] = useState<Finding[]>([])
   const [loading, setLoading] = useState(true)
-  const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [selectedId, setSelectedId] = useState<string | null>(
+    (location.state as { findingId?: string } | null)?.findingId ?? null,
+  )
   const [severityFilter, setSeverityFilter] = useState<Severity | null>(null)
   const [statusFilter, setStatusFilter] = useState<FindingStatus | null>(null)
   const [sourceFilter, setSourceFilter] = useState<FindingSource | null>(null)
+
+  useEffect(() => {
+    if (projectId) listFirmware(projectId).then(setFirmwareList).catch(() => {})
+  }, [projectId])
 
   const fetchFindings = useCallback(async () => {
     if (!projectId) return
@@ -24,6 +36,7 @@ export default function FindingsPage() {
       if (severityFilter) params.severity = severityFilter
       if (statusFilter) params.status = statusFilter
       if (sourceFilter) params.source = sourceFilter
+      if (selectedFirmwareId) params.firmware_id = selectedFirmwareId
       const data = await listFindings(projectId, params)
       setFindings(data)
     } catch (err) {
@@ -31,7 +44,7 @@ export default function FindingsPage() {
     } finally {
       setLoading(false)
     }
-  }, [projectId, severityFilter, statusFilter, sourceFilter])
+  }, [projectId, severityFilter, statusFilter, sourceFilter, selectedFirmwareId])
 
   useEffect(() => {
     fetchFindings()
@@ -80,6 +93,7 @@ export default function FindingsPage() {
         <div className="flex items-center gap-2 border-b border-border px-4 py-2">
           <ShieldAlert className="h-4 w-4 text-muted-foreground" />
           <span className="text-sm font-medium">Findings</span>
+          <FirmwareSelector projectId={projectId!} firmwareList={firmwareList} className="ml-2" />
           <div className="ml-auto">
             {projectId && <ReportExport projectId={projectId} />}
           </div>

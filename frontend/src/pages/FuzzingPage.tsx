@@ -18,10 +18,14 @@ import {
   listCrashes,
   triageCrash,
 } from '@/api/fuzzing'
+import { listFirmware } from '@/api/firmware'
+import { useProjectStore } from '@/stores/projectStore'
+import FirmwareSelector from '@/components/projects/FirmwareSelector'
 import { CampaignCard } from '@/components/fuzzing/CampaignCard'
 import { CampaignDetail } from '@/components/fuzzing/CampaignDetail'
 import { extractErrorMessage } from '@/utils/error'
 import type {
+  FirmwareDetail,
   FuzzingCampaign,
   FuzzingCrash,
   FuzzingTargetAnalysis,
@@ -29,6 +33,8 @@ import type {
 
 export default function FuzzingPage() {
   const { projectId } = useParams<{ projectId: string }>()
+  const selectedFirmwareId = useProjectStore((s) => s.selectedFirmwareId)
+  const [firmwareList, setFirmwareList] = useState<FirmwareDetail[]>([])
 
   const [campaigns, setCampaigns] = useState<FuzzingCampaign[]>([])
   const [loading, setLoading] = useState(true)
@@ -74,7 +80,8 @@ export default function FuzzingPage() {
 
   useEffect(() => {
     loadCampaigns()
-  }, [loadCampaigns])
+    if (projectId) listFirmware(projectId).then(setFirmwareList).catch(() => {})
+  }, [loadCampaigns, projectId])
 
   // Poll for updates while a campaign is running
   useEffect(() => {
@@ -118,7 +125,7 @@ export default function FuzzingPage() {
     setAnalyzing(true)
     setAnalysis(null)
     try {
-      const result = await analyzeTarget(projectId, binaryPath.trim())
+      const result = await analyzeTarget(projectId, binaryPath.trim(), selectedFirmwareId)
       setAnalysis(result)
     } catch (err: unknown) {
       setError(extractErrorMessage(err, 'Analysis failed'))
@@ -136,7 +143,7 @@ export default function FuzzingPage() {
         binary_path: binaryPath.trim(),
         timeout_per_exec: timeoutPerExec,
         memory_limit: memoryLimit,
-      })
+      }, selectedFirmwareId)
       // Auto-start
       const started = await startCampaign(projectId, campaign.id)
       setSelectedId(started.id)
@@ -183,10 +190,13 @@ export default function FuzzingPage() {
               AFL++ QEMU-mode fuzzing for cross-architecture firmware binaries
             </p>
           </div>
-          <Button variant="outline" size="sm" onClick={loadCampaigns}>
-            <RefreshCw className="mr-1.5 h-3.5 w-3.5" />
-            Refresh
-          </Button>
+          <div className="flex items-center gap-3">
+            <FirmwareSelector projectId={projectId!} firmwareList={firmwareList} />
+            <Button variant="outline" size="sm" onClick={loadCampaigns}>
+              <RefreshCw className="mr-1.5 h-3.5 w-3.5" />
+              Refresh
+            </Button>
+          </div>
         </div>
       </div>
 

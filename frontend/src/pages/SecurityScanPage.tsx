@@ -12,6 +12,7 @@ import {
   type YaraScanResult,
 } from '@/api/findings'
 import { listFirmware } from '@/api/firmware'
+import { useProjectStore } from '@/stores/projectStore'
 import FirmwareSelector from '@/components/projects/FirmwareSelector'
 import type { Finding, FirmwareDetail, Severity } from '@/types'
 
@@ -27,6 +28,7 @@ const SEVERITY_COLORS: Record<Severity, string> = {
 
 export default function SecurityScanPage() {
   const { projectId } = useParams<{ projectId: string }>()
+  const selectedFirmwareId = useProjectStore((s) => s.selectedFirmwareId)
   const [tab, setTab] = useState<Tab>('audit')
   const [firmwareList, setFirmwareList] = useState<FirmwareDetail[]>([])
   const [auditing, setAuditing] = useState(false)
@@ -48,14 +50,16 @@ export default function SecurityScanPage() {
     if (!projectId) return
     setLoadingFindings(true)
     try {
-      const results = await listFindings(projectId, { source })
+      const params: Record<string, string> = { source }
+      if (selectedFirmwareId) params.firmware_id = selectedFirmwareId
+      const results = await listFindings(projectId, params)
       setFindings(results)
     } catch {
       setFindings([])
     } finally {
       setLoadingFindings(false)
     }
-  }, [projectId, source])
+  }, [projectId, source, selectedFirmwareId])
 
   useEffect(() => {
     loadFindings()
@@ -252,9 +256,24 @@ export default function SecurityScanPage() {
                         {f.severity}
                       </Badge>
                     </td>
-                    <td className="py-1.5 pr-3 truncate max-w-[400px]">{f.title}</td>
+                    <td className="py-1.5 pr-3 truncate max-w-[400px]">
+                      <Link
+                        to={`/projects/${projectId}/findings`}
+                        state={{ findingId: f.id }}
+                        className="hover:underline hover:text-primary"
+                      >
+                        {f.title}
+                      </Link>
+                    </td>
                     <td className="py-1.5 pr-3 font-mono text-muted-foreground truncate max-w-[200px]">
-                      {f.file_path || '-'}
+                      {f.file_path ? (
+                        <Link
+                          to={`/projects/${projectId}/explore?path=${encodeURIComponent(f.file_path)}`}
+                          className="hover:underline hover:text-primary"
+                        >
+                          {f.file_path}
+                        </Link>
+                      ) : '-'}
                     </td>
                   </tr>
                 ))}

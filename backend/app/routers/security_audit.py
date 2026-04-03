@@ -35,9 +35,10 @@ async def _persist_finding(
     svc: FindingService,
     project_id: uuid.UUID,
     sf: SecurityFinding,
+    firmware_id: uuid.UUID | None = None,
 ) -> Finding:
     """Convert a SecurityFinding to a DB Finding."""
-    return await _persist_finding_with_source(svc, project_id, sf, "security_audit")
+    return await _persist_finding_with_source(svc, project_id, sf, "security_audit", firmware_id)
 
 
 async def _persist_finding_with_source(
@@ -45,6 +46,7 @@ async def _persist_finding_with_source(
     project_id: uuid.UUID,
     sf: SecurityFinding,
     source: str,
+    firmware_id: uuid.UUID | None = None,
 ) -> Finding:
     """Convert a SecurityFinding to a DB Finding with the given source."""
     from app.schemas.finding import FindingCreate
@@ -60,6 +62,7 @@ async def _persist_finding_with_source(
             line_number=sf.line_number,
             cwe_ids=sf.cwe_ids,
             source=source,
+            firmware_id=firmware_id,
         ),
     )
 
@@ -110,7 +113,7 @@ async def run_audit(
     # Scan all extracted firmware versions
     loop = asyncio.get_running_loop()
     total_checks = 0
-    all_findings: list[SecurityFinding] = []
+    all_findings: list[tuple[SecurityFinding, uuid.UUID]] = []
     all_errors: list[str] = []
 
     for firmware in firmware_list:
@@ -118,13 +121,13 @@ async def run_audit(
             None, run_security_audit, firmware.extracted_path
         )
         total_checks += scan_result.checks_run
-        all_findings.extend(scan_result.findings)
+        all_findings.extend((sf, firmware.id) for sf in scan_result.findings)
         all_errors.extend(scan_result.errors)
 
     # Persist findings
     svc = FindingService(db)
-    for sf in all_findings:
-        await _persist_finding(svc, project_id, sf)
+    for sf, fw_id in all_findings:
+        await _persist_finding(svc, project_id, sf, fw_id)
 
     await db.commit()
 
@@ -192,7 +195,7 @@ async def run_yara_scan(
     total_rules = 0
     total_scanned = 0
     total_matched = 0
-    all_findings: list[SecurityFinding] = []
+    all_yara_findings: list[tuple[SecurityFinding, uuid.UUID]] = []
     all_errors: list[str] = []
 
     for firmware in firmware_list:
@@ -202,13 +205,13 @@ async def run_yara_scan(
         total_rules = max(total_rules, scan_result.rules_loaded)
         total_scanned += scan_result.files_scanned
         total_matched += scan_result.files_matched
-        all_findings.extend(scan_result.findings)
+        all_yara_findings.extend((sf, firmware.id) for sf in scan_result.findings)
         all_errors.extend(scan_result.errors)
 
     # Persist findings
     svc = FindingService(db)
-    for sf in all_findings:
-        await _persist_finding_with_source(svc, project_id, sf, "yara_scan")
+    for sf, fw_id in all_yara_findings:
+        await _persist_finding_with_source(svc, project_id, sf, "yara_scan", fw_id)
 
     await db.commit()
 
@@ -217,6 +220,6 @@ async def run_yara_scan(
         rules_loaded=total_rules,
         files_scanned=total_scanned,
         files_matched=total_matched,
-        findings_created=len(all_findings),
+        findings_created=len(all_yara_findings),
         errors=all_errors,
     )

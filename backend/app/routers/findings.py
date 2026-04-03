@@ -45,6 +45,7 @@ async def list_findings(
     severity: str | None = Query(None),
     status: str | None = Query(None),
     source: str | None = Query(None),
+    firmware_id: uuid.UUID | None = Query(None, description="Filter by firmware version"),
     limit: int = Query(100, ge=1, le=1000, description="Maximum results to return"),
     offset: int = Query(0, ge=0, description="Number of results to skip"),
     db: AsyncSession = Depends(get_db),
@@ -53,7 +54,7 @@ async def list_findings(
     svc = FindingService(db)
     return await svc.list_by_project(
         project_id, severity=severity, status=status, source=source,
-        limit=limit, offset=offset,
+        firmware_id=firmware_id, limit=limit, offset=offset,
     )
 
 

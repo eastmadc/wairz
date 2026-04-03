@@ -2,15 +2,24 @@ import { useState, useEffect } from 'react'
 import { useParams } from 'react-router-dom'
 import { Loader2, AlertTriangle } from 'lucide-react'
 import { getComponentMap } from '@/api/componentMap'
+import { listFirmware } from '@/api/firmware'
+import { useProjectStore } from '@/stores/projectStore'
 import { extractErrorMessage } from '@/utils/error'
-import type { ComponentGraph } from '@/types'
+import type { ComponentGraph, FirmwareDetail } from '@/types'
+import FirmwareSelector from '@/components/projects/FirmwareSelector'
 import ComponentMap from '@/components/component-map/ComponentMap'
 
 export default function ComponentMapPage() {
   const { projectId } = useParams<{ projectId: string }>()
+  const selectedFirmwareId = useProjectStore((s) => s.selectedFirmwareId)
+  const [firmwareList, setFirmwareList] = useState<FirmwareDetail[]>([])
   const [graph, setGraph] = useState<ComponentGraph | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (projectId) listFirmware(projectId).then(setFirmwareList).catch(() => {})
+  }, [projectId])
 
   useEffect(() => {
     if (!projectId) return
@@ -19,7 +28,7 @@ export default function ComponentMapPage() {
     setLoading(true)
     setError(null)
 
-    getComponentMap(projectId)
+    getComponentMap(projectId, selectedFirmwareId)
       .then((data) => {
         if (!cancelled) setGraph(data)
       })
@@ -35,7 +44,7 @@ export default function ComponentMapPage() {
     return () => {
       cancelled = true
     }
-  }, [projectId])
+  }, [projectId, selectedFirmwareId])
 
   if (loading) {
     return (
@@ -71,7 +80,12 @@ export default function ComponentMapPage() {
   }
 
   return (
-    <div className="-m-6 flex h-[calc(100vh-3.5rem)]">
+    <div className="-m-6 flex h-[calc(100vh-3.5rem)] flex-col">
+      {firmwareList.filter((fw) => fw.extracted_path).length > 1 && (
+        <div className="shrink-0 border-b border-border px-4 py-2">
+          <FirmwareSelector projectId={projectId!} firmwareList={firmwareList} />
+        </div>
+      )}
       <div className="relative min-w-0 flex-1">
         <ComponentMap graph={graph} />
       </div>

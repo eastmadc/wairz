@@ -30,6 +30,7 @@ class FindingCreate(BaseModel):
     cve_ids: list[str] | None = None
     cwe_ids: list[str] | None = None
     conversation_id: uuid.UUID | None = None
+    firmware_id: uuid.UUID | None = None
     source: str = "manual"
     component_id: uuid.UUID | None = None
 
@@ -52,6 +53,7 @@ class FindingResponse(BaseModel):
 
     id: uuid.UUID
     project_id: uuid.UUID
+    firmware_id: uuid.UUID | None
     conversation_id: uuid.UUID | None
     title: str
     severity: str

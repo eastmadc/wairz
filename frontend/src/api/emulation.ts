@@ -11,10 +11,12 @@ import type {
 export async function startEmulation(
   projectId: string,
   request: EmulationStartRequest,
+  firmwareId?: string | null,
 ): Promise<EmulationSession> {
   const { data } = await apiClient.post<EmulationSession>(
     `/projects/${projectId}/emulation/start`,
     request,
+    { params: firmwareId ? { firmware_id: firmwareId } : undefined },
   )
   return data
 }

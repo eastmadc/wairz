@@ -137,6 +137,7 @@ export type FindingSource = 'manual' | 'ai_discovered' | 'sbom_scan' | 'fuzzing'
 export interface Finding {
   id: string
   project_id: string
+  firmware_id: string | null
   conversation_id: string | null
   title: string
   severity: Severity

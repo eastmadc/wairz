@@ -25,6 +25,9 @@ import {
   deletePreset,
 } from '@/api/emulation'
 import { listFirmware } from '@/api/firmware'
+import { useProjectStore } from '@/stores/projectStore'
+import type { FirmwareDetail } from '@/types'
+import FirmwareSelector from '@/components/projects/FirmwareSelector'
 import KernelManager from '@/components/emulation/KernelManager'
 import { SessionCard } from '@/components/emulation/SessionCard'
 import { EmulationTerminal } from '@/components/emulation/EmulationTerminal'
@@ -40,6 +43,8 @@ import type {
 export default function EmulationPage() {
   const { projectId } = useParams<{ projectId: string }>()
   const [searchParams, setSearchParams] = useSearchParams()
+  const selectedFirmwareId = useProjectStore((s) => s.selectedFirmwareId)
+  const [firmwareList, setFirmwareList] = useState<FirmwareDetail[]>([])
 
   const [sessions, setSessions] = useState<EmulationSession[]>([])
   const [loading, setLoading] = useState(true)
@@ -118,19 +123,20 @@ export default function EmulationPage() {
     loadPresets()
   }, [loadSessions, loadPresets])
 
-  // Fetch firmware architecture for kernel selection
+  // Fetch firmware list for selector and architecture for kernel selection
   useEffect(() => {
     if (!projectId) return
     listFirmware(projectId)
       .then((fwList) => {
-        const fw = fwList[0]
+        setFirmwareList(fwList)
+        const fw = fwList.find((f) => f.id === selectedFirmwareId) ?? fwList[0]
         if (fw) {
           setFirmwareArch(fw.architecture ?? null)
           setFirmwareKernelPath(fw.kernel_path ?? null)
         }
       })
       .catch(() => {})
-  }, [projectId])
+  }, [projectId, selectedFirmwareId])
 
   // Poll for status updates (faster during active sessions)
   useEffect(() => {
@@ -162,7 +168,7 @@ export default function EmulationPage() {
         init_path: mode === 'system' && initPath.trim() ? initPath.trim() : undefined,
         pre_init_script: mode === 'system' && preInitScript.trim() ? preInitScript.trim() : undefined,
         stub_profile: mode === 'system' && stubProfile !== 'none' ? stubProfile : undefined,
-      })
+      }, selectedFirmwareId)
       setActiveSession(session)
       if (session.status === 'running' || session.status === 'error') {
         setShowTerminal(session.status === 'running')
@@ -301,10 +307,13 @@ export default function EmulationPage() {
               Run firmware binaries or boot the full OS using QEMU
             </p>
           </div>
-          <Button variant="outline" size="sm" onClick={loadSessions}>
-            <RefreshCw className="mr-1.5 h-3.5 w-3.5" />
-            Refresh
-          </Button>
+          <div className="flex items-center gap-3">
+            <FirmwareSelector projectId={projectId!} firmwareList={firmwareList} />
+            <Button variant="outline" size="sm" onClick={loadSessions}>
+              <RefreshCw className="mr-1.5 h-3.5 w-3.5" />
+              Refresh
+            </Button>
+          </div>
         </div>
       </div>
 
