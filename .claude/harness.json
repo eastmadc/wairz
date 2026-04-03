@@ -15,7 +15,20 @@
       "no-confirm-alert",
       "no-transition-all"
     ],
-    "custom": []
+    "custom": [
+      {
+        "name": "auto-session4-no-silent-build",
+        "pattern": "2>/dev/null.*\\|\\|.*echo.*WARN",
+        "filePattern": "**/Dockerfile",
+        "message": "Learned from session 4: Silent build failures hide missing tools. Let builds fail loudly or check at runtime with which."
+      },
+      {
+        "name": "auto-session4-pydantic-schema-sync",
+        "pattern": "class.*Response.*BaseModel",
+        "filePattern": "backend/app/schemas/*.py",
+        "message": "Learned from session 4: Verify Pydantic response schemas include all ORM model fields. Missing extracted_path hid the action buttons."
+      }
+    ]
   },
   "protectedFiles": [
     ".claude/harness.json"
@@ -76,6 +89,6 @@
     "sessions": 0,
     "campaigns": 0,
     "override": null,
-    "sessions_completed": 7
+    "sessions_completed": 23
   }
 }
