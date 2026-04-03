@@ -74,16 +74,30 @@
 - Frontend shows progress bar with stage name and percentage during unpacking
 - Fields cleared when extraction completes or fails
 
-## Session 5+ Priorities
+### MCP crash fix (GH #21) — DONE
+- MCP server no longer crashes on startup when project has no firmware
+- Returns descriptive errors at tool-call level instead of sys.exit(1)
+- Project management tools (switch_project, list_projects) work without firmware
+
+### GitHub issues triaged
+- #21: Fixed (MCP crash) — this session
+- #14: Already fixed (zipfile timestamp clamping)
+- #10: Already fixed (nginx resolver trick)
+- #15: Already fixed (CFS CPU limits removed)
+- #13: Already fixed (Ghidra ARM64 native build)
+- #7: Already fixed (ZIP firmware upload)
+- #2: Already done (file search in FileTree)
+
+## Session 6+ Priorities
 
 ### P2: Frontend Polish
 - VulnerabilitiesTab already extracted to Zustand (session 3) — verify in browser
 - Test file search UI in browser
 - Test Load More button on vuln page
 
-### P4: Squash clean-history branch
-- Many commits need squashing into logical groups
-- Push to fork
+### P4: Squash clean-history branch — DONE (squashed branch ready)
+- `squashed` branch has single commit on top of main
+- Push with: `git push myfork squashed:main`
 
 ### P5: Android A/B OTA testing
 - payload-dumper-go installed but untested with real A/B OTA
