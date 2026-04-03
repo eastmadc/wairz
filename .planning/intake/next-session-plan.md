@@ -46,21 +46,40 @@
 - Qualcomm EDL: recommend import-only (75-85% of devices block unsigned firehose)
 - Full campaign plan written: `.planning/campaigns/device-acquisition-v2.md` (10 phases, 4-6 sessions)
 
-## Session 5 Priorities
+## Session 5 Completed
 
-### P1: YARA Malware Scanning (Security Hardening Phase 1)
-- Needs yara-python dependency in backend + Dockerfile change
-- 30+ built-in rules for firmware backdoors/malware
-- `scan_with_yara` MCP tool
+### P1: YARA Malware Scanning — DONE
+- Added yara-python dependency + libyara-dev in Dockerfile
+- Created 26 YARA rules across 4 rule files:
+  - firmware_backdoors.yar (6 rules): reverse shells, hardcoded creds, hidden telnet, wget|sh
+  - firmware_malware.yar (6 rules): Mirai, VPNFilter, BotenaGo, crypto miners, web shells
+  - suspicious_patterns.yar (8 rules): encoded commands, data exfil, persistence, debug interfaces, private keys
+  - iot_threats.yar (6 rules): default creds, UPnP vulns, insecure updates, weak crypto, command injection
+- Created yara_service.py with scan_firmware() function (thread executor, 50MB/file limit, 200 max findings)
+- Added scan_with_yara MCP tool in ai/tools/security.py
+- Added POST /api/v1/projects/{id}/security/yara REST endpoint
+- Frontend: YARA Scan button + result card on ProjectDetailPage, yara_scan source filter in FindingsList/Detail
+- 18 tests (all passing), 355 total backend tests passing
+
+### Bug fixes (this session)
+- Fixed security audit 500 error on multi-firmware projects (MultipleResultsFound → scan all extracted firmware)
+- Fixed comparison per-category truncation (was starving removed/modified when added > 500)
+- Both YARA scan endpoint also handles multi-firmware correctly
+
+### P3: Progress Reporting for Extractions — DONE
+- Added `unpack_stage` (string) and `unpack_progress` (int 0-100) columns to Firmware model
+- Created Alembic migration `a3b4c5d6e7f8`
+- Added progress callback to `unpack_firmware()` — reports at classification, format-specific extraction, fallback chain stages
+- Background task (`_run_unpack_background`) writes progress to DB via async callback
+- Frontend shows progress bar with stage name and percentage during unpacking
+- Fields cleared when extraction completes or fails
+
+## Session 5+ Priorities
 
 ### P2: Frontend Polish
 - VulnerabilitiesTab already extracted to Zustand (session 3) — verify in browser
 - Test file search UI in browser
 - Test Load More button on vuln page
-
-### P3: Progress reporting for long extractions
-- Binwalk/unblob fallback chain can take 30+ min
-- Frontend shows no progress during extraction — just "unpacking"
 
 ### P4: Squash clean-history branch
 - Many commits need squashing into logical groups

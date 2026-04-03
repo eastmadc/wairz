@@ -9,11 +9,29 @@ export interface SecurityAuditResult {
   errors: string[]
 }
 
+export interface YaraScanResult {
+  status: string
+  rules_loaded: number
+  files_scanned: number
+  files_matched: number
+  findings_created: number
+  errors: string[]
+}
+
 export async function runSecurityAudit(
   projectId: string,
 ): Promise<SecurityAuditResult> {
   const { data } = await apiClient.post<SecurityAuditResult>(
     `/projects/${projectId}/security/audit`,
+  )
+  return data
+}
+
+export async function runYaraScan(
+  projectId: string,
+): Promise<YaraScanResult> {
+  const { data } = await apiClient.post<YaraScanResult>(
+    `/projects/${projectId}/security/yara`,
   )
   return data
 }

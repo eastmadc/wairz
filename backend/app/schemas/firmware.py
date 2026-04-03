@@ -34,6 +34,8 @@ class FirmwareDetailResponse(BaseModel):
     kernel_path: str | None
     version_label: str | None = None
     unpack_log: str | None
+    unpack_stage: str | None = None
+    unpack_progress: int | None = None
     created_at: datetime
 
 

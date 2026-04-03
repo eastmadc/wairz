@@ -2,9 +2,10 @@
 
 Tools for evaluating the security posture of an extracted firmware filesystem:
 config file auditing, setuid detection, init script analysis, filesystem
-permissions, CVE lookups, and certificate analysis.
+permissions, CVE lookups, certificate analysis, and YARA malware scanning.
 """
 
+import asyncio
 import logging
 import os
 import re
@@ -939,6 +940,66 @@ async def _handle_check_kernel_hardening(
 
 
 # ---------------------------------------------------------------------------
+# scan_with_yara
+# ---------------------------------------------------------------------------
+
+
+async def _handle_scan_with_yara(input: dict, context: ToolContext) -> str:
+    """Scan firmware with YARA rules for malware and suspicious patterns."""
+    from app.services.yara_service import scan_firmware
+
+    path_filter = input.get("path")
+
+    loop = asyncio.get_running_loop()
+    result = await loop.run_in_executor(
+        None, scan_firmware, context.extracted_path, None, path_filter
+    )
+
+    lines: list[str] = []
+
+    if result.errors:
+        for err in result.errors[:5]:
+            lines.append(f"⚠ {err}")
+        lines.append("")
+
+    lines.append(f"YARA scan complete:")
+    lines.append(f"  Rules loaded: {result.rules_loaded}")
+    lines.append(f"  Files scanned: {result.files_scanned}")
+    lines.append(f"  Files with matches: {result.files_matched}")
+    lines.append(f"  Total findings: {len(result.findings)}")
+    lines.append("")
+
+    if not result.findings:
+        lines.append("No malware or suspicious patterns detected.")
+        return "\n".join(lines)
+
+    # Group by severity
+    by_severity: dict[str, list] = {}
+    for f in result.findings:
+        by_severity.setdefault(f.severity, []).append(f)
+
+    for sev in ["critical", "high", "medium", "low", "info"]:
+        findings = by_severity.get(sev, [])
+        if not findings:
+            continue
+        lines.append(f"[{sev.upper()}] ({len(findings)} finding(s)):")
+        for f in findings[:20]:
+            lines.append(f"  • {f.title}")
+            if f.file_path:
+                lines.append(f"    File: {f.file_path}")
+            if f.evidence:
+                # Show first 2 lines of evidence
+                ev_lines = f.evidence.split("\n")[:2]
+                for ev in ev_lines:
+                    lines.append(f"    {ev}")
+        if len(findings) > 20:
+            lines.append(f"  ... and {len(findings) - 20} more")
+        lines.append("")
+
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
 # Registration
 # ---------------------------------------------------------------------------
 
@@ -1105,4 +1166,30 @@ def register_security_tools(registry: ToolRegistry) -> None:
             "required": [],
         },
         handler=_handle_check_kernel_hardening,
+    )
+
+    registry.register(
+        name="scan_with_yara",
+        description=(
+            "Scan firmware files with YARA rules to detect malware, backdoors, "
+            "and suspicious patterns. Uses 30+ built-in rules covering: "
+            "IoT botnets (Mirai, VPNFilter, BotenaGo), reverse shells, "
+            "hardcoded backdoors, crypto miners, web shells, data exfiltration, "
+            "embedded private keys, weak crypto, insecure update mechanisms, "
+            "and command injection vectors. Optionally filter to a subdirectory."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": (
+                        "Subdirectory within the firmware to scan "
+                        "(default: scan entire filesystem)"
+                    ),
+                },
+            },
+            "required": [],
+        },
+        handler=_handle_scan_with_yara,
     )

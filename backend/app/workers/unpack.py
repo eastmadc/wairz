@@ -66,7 +66,11 @@ def _analyze_filesystem(result: UnpackResult, extraction_dir: str) -> None:
     result.success = True
 
 
-async def unpack_firmware(firmware_path: str, output_base_dir: str) -> UnpackResult:
+async def unpack_firmware(
+    firmware_path: str,
+    output_base_dir: str,
+    progress_callback=None,
+) -> UnpackResult:
     """Orchestrate the full unpacking pipeline with adaptive fallback.
 
     Pipeline:
@@ -75,9 +79,20 @@ async def unpack_firmware(firmware_path: str, output_base_dir: str) -> UnpackRes
     3. If fast path fails or format is unknown, run fallback chain:
        binwalk (600s) → unblob (1200s)
     4. Post-extraction: find filesystem root, detect architecture/OS/kernel
+
+    Args:
+        progress_callback: Optional async callable(stage: str, progress: int)
+            called at key pipeline stages to report progress (0-100).
     """
     import shutil
     import tarfile as _tarfile
+
+    async def _report(stage: str, progress: int) -> None:
+        if progress_callback:
+            try:
+                await progress_callback(stage, progress)
+            except Exception:
+                pass  # Never let progress reporting break extraction
 
     result = UnpackResult()
     extraction_dir = os.path.join(output_base_dir, "extracted")
@@ -101,8 +116,10 @@ async def unpack_firmware(firmware_path: str, output_base_dir: str) -> UnpackRes
     except OSError:
         pass  # Can't check — proceed anyway
 
+    await _report("Classifying firmware", 5)
     fw_type = classify_firmware(firmware_path)
     result.unpack_log = f"Firmware classified as: {fw_type}\n"
+    await _report(f"Classified as {fw_type}", 10)
 
     # === STAGE 1: Format-Specific Fast Paths ===
 
@@ -120,6 +137,7 @@ async def unpack_firmware(firmware_path: str, output_base_dir: str) -> UnpackRes
         return result
 
     if fw_type in ("android_ota", "android_sparse", "android_boot"):
+        await _report("Extracting Android firmware", 15)
         try:
             if fw_type == "android_boot":
                 boot_dir = os.path.join(extraction_dir, "boot")
@@ -134,6 +152,7 @@ async def unpack_firmware(firmware_path: str, output_base_dir: str) -> UnpackRes
                     result.extracted_path = boot_dir
                 result.extraction_dir = extraction_dir
                 result.success = True
+                await _report("Extraction complete", 100)
                 return result
             result.unpack_log += await _extract_android_ota(firmware_path, extraction_dir)
             bomb_error = check_extraction_limits(extraction_dir, fw_size)
@@ -152,6 +171,7 @@ async def unpack_firmware(firmware_path: str, output_base_dir: str) -> UnpackRes
 
     elif fw_type == "partition_dump_tar":
         # Raw partition image dump (EDL, MTKClient, or device bridge)
+        await _report("Extracting partition dump", 15)
         try:
             from app.config import get_settings as _get_settings
             _settings = _get_settings()
@@ -185,6 +205,7 @@ async def unpack_firmware(firmware_path: str, output_base_dir: str) -> UnpackRes
             logger.warning("Partition dump fast path failed, falling through", exc_info=True)
 
     elif fw_type == "linux_rootfs_tar":
+        await _report("Extracting Linux rootfs", 15)
         try:
             from app.config import get_settings as _get_settings
             _settings = _get_settings()
@@ -222,8 +243,10 @@ async def unpack_firmware(firmware_path: str, output_base_dir: str) -> UnpackRes
         ("unblob", run_unblob_extraction, 1200),
     ]
 
-    for name, func, timeout in fallback_extractors:
+    for idx, (name, func, timeout) in enumerate(fallback_extractors):
+        progress_base = 30 + idx * 30  # binwalk: 30-60, unblob: 60-90
         try:
+            await _report(f"Running {name} extraction", progress_base)
             result.unpack_log += f"\nTrying {name} (timeout {timeout}s)...\n"
             log = await func(firmware_path, extraction_dir, timeout=timeout)
             result.unpack_log += log
@@ -244,8 +267,10 @@ async def unpack_firmware(firmware_path: str, output_base_dir: str) -> UnpackRes
                     removed += cleanup_unblob_artifacts(entry.path)
             if removed:
                 result.unpack_log += f"Cleaned up {removed} intermediate artifact(s).\n"
+            await _report("Analyzing filesystem", progress_base + 20)
             _analyze_filesystem(result, extraction_dir)
             if result.success:
+                await _report("Extraction complete", 100)
                 result.unpack_log += f"\n{name} extraction succeeded.\n"
                 return result
 

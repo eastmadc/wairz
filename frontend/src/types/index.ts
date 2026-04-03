@@ -30,6 +30,8 @@ export interface FirmwareDetail extends FirmwareSummary {
   extracted_path: string | null
   version_label: string | null
   unpack_log: string | null
+  unpack_stage: string | null
+  unpack_progress: number | null
 }
 
 export interface FileEntry {
@@ -130,7 +132,7 @@ export interface BinaryInfoResponse {
 
 export type Severity = 'critical' | 'high' | 'medium' | 'low' | 'info'
 export type FindingStatus = 'open' | 'confirmed' | 'false_positive' | 'fixed'
-export type FindingSource = 'manual' | 'ai_discovered' | 'sbom_scan' | 'fuzzing' | 'security_review' | 'security_audit'
+export type FindingSource = 'manual' | 'ai_discovered' | 'sbom_scan' | 'fuzzing' | 'security_review' | 'security_audit' | 'yara_scan'
 
 export interface Finding {
   id: string
