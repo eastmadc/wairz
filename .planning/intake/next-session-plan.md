@@ -1,201 +1,157 @@
-# Next Session Plan
+# Wairz Master Plan
 
 > Created: 2026-04-01
-> Updated: 2026-04-03 (session 4 — zip bomb prevention + campaign housekeeping)
+> Updated: 2026-04-03 (session 8 — architecture review + roadmap convergence)
 > Resume with: /do continue
 
-## Session 4 Completed
+---
 
-### Campaign Housekeeping
-- Closed Security Hardening campaign (phases 2-3 done, phase 4 tests done, YARA deferred)
-- Marked Device Acquisition v2 as blocked (phases 1-9 done, phase 10 needs manual hardware test)
-- Verified P2 Flow Robustness: concurrent unpack race (SELECT FOR UPDATE) and disk space check (shutil.disk_usage) were already implemented in prior sessions
+## Status Overview
 
-### Zip Bomb Prevention (P2 remaining item)
-- Added 3 config settings: max_extraction_size_mb (10GB), max_extraction_files (500K), max_compression_ratio (200:1)
-- Added `check_extraction_limits()` in unpack_common.py — post-extraction validator using recursive os.scandir
-- Added `check_tar_bomb()` in unpack_linux.py — pre-extraction tar member inspection
-- Added pre-extraction ZIP bomb check in firmware_service.py `_extract_archive()`
-- Integrated guards at all 5 extraction points in unpack.py (Android OTA, partition dump tar, rootfs tar, binwalk, unblob)
-- Wrote 18 tests (all passing): 8 for check_extraction_limits, 6 for check_tar_bomb, 4 for ZIP extraction
+**Campaigns:** 6 completed, 1 blocked (Device Acq v2 — needs hardware)
+**Architecture Review:** Complete. 6 critical fixed, 9 warnings fixed, 23 backlog.
+**Roadmap:** 22 features across 4 tiers, sourced from competitive analysis + real assessment output.
+**Tests:** 355+ backend, 0 frontend. All passing.
 
-### SquashFS Extraction Fix (bug found during SBOM comparison investigation)
-- **Root cause:** Dockerfile used devttys0/sasquatch fork which failed silently on ARM64 (-Werror build flags)
-- **Fix:** Switched to onekey-sec/sasquatch fork (maintained by unblob team), added liblz4-dev + libzstd-dev build deps
-- Added 5 missing unblob extractor deps: lz4, zstd, lziprecover, unar, partclone
-- All 15/15 unblob external dependencies now satisfied (was 10/15)
-- Verified fix: re-extracted test11 firmware → SquashFS rootfs now properly extracted (11,840 files vs 287)
-- Re-generated SBOM: test11 now has 319 components (was 9) and 2,415 vulns (was 19) — matches test4 reference
+---
 
-## Session 3 Completed
+## Phase 1: Quick Wins + Extraction (1 session)
 
-### Quality Sprint (this session)
-- Fixed 6 bare exception handlers (fuzzing_service, firmware_service, emulation_service) — added exc_info=True and diagnostic logging
-- Extracted 95-line embedded shell script from emulation_service.py to `backend/app/templates/wairz_init_wrapper.sh`
-- Refactored VulnerabilitiesTab: extracted 15 props to Zustand store (`stores/vulnerabilityStore.ts`), reduced to 2 props
-- Investigated N+1 queries — already safe (explicit JOINs in place)
+**Goal:** Ship the easiest high-impact items. No new architecture needed.
 
-### Research Fleet (this session)
-- 3 parallel agents investigated: tool ecosystem gaps, security assessment gaps, architecture quality
-- Top findings: YARA integration (CRITICAL), Unblob validation (HIGH), Androguard (HIGH)
-- Competitive gap vs EMBA: missing malware detection, SELinux/AppArmor, firewall analysis
-- 36 exception handlers audited, 11 services identified with zero test coverage
+| # | Item | Source | Effort | What to do |
+|---|------|--------|--------|------------|
+| 1.1 | **Unblob primary extractor** | F1.2 | Small | Swap extraction order in `unpack.py`: try unblob first, binwalk as fallback. All 15 deps already satisfied (session 4). |
+| 1.2 | **SPDX SBOM export** | F1.3 | Small | Add `/api/v1/projects/{id}/firmware/{fw_id}/sbom/export?format=spdx-json` endpoint. Generate SPDX 2.3 JSON from existing component data. |
+| 1.3 | **Kernel .config analysis** | F3.5 | Small | New MCP tool `check_kernel_config`. Extract config from vmlinuz (`scripts/extract-ikconfig` pattern) or `/proc/config.gz`. Run against kconfig-hardened-check rules. |
+| 1.4 | **Capa binary capability detection** | F2.5 | Small | `pip install flare-capa`. New MCP tool `detect_binary_capabilities`. Run capa on selected binaries, return capability summary. |
+| 1.5 | **Dependency-Track SBOM push** | F1.6 | Small | New service method + MCP tool. POST CycloneDX JSON to DT's `/api/v1/bom` endpoint. Config: `DEPENDENCY_TRACK_URL` + `DEPENDENCY_TRACK_API_KEY` in settings. |
 
-### Device Acquisition v2 Campaign (this session)
-- Deep research on MTKClient (bkerler/mtkclient): 100+ chipsets, subprocess wrapping, USB VID:PID detection
-- Qualcomm EDL: recommend import-only (75-85% of devices block unsigned firehose)
-- Full campaign plan written: `.planning/campaigns/device-acquisition-v2.md` (10 phases, 4-6 sessions)
+**Verification:** Upload test firmware, run full SBOM export in both formats, verify capa on a binary.
 
-## Session 5 Completed
+---
 
-### P1: YARA Malware Scanning — DONE
-- Added yara-python dependency + libyara-dev in Dockerfile
-- Created 26 YARA rules across 4 rule files:
-  - firmware_backdoors.yar (6 rules): reverse shells, hardcoded creds, hidden telnet, wget|sh
-  - firmware_malware.yar (6 rules): Mirai, VPNFilter, BotenaGo, crypto miners, web shells
-  - suspicious_patterns.yar (8 rules): encoded commands, data exfil, persistence, debug interfaces, private keys
-  - iot_threats.yar (6 rules): default creds, UPnP vulns, insecure updates, weak crypto, command injection
-- Created yara_service.py with scan_firmware() function (thread executor, 50MB/file limit, 200 max findings)
-- Added scan_with_yara MCP tool in ai/tools/security.py
-- Added POST /api/v1/projects/{id}/security/yara REST endpoint
-- Frontend: YARA Scan button + result card on ProjectDetailPage, yara_scan source filter in FindingsList/Detail
-- 18 tests (all passing), 355 total backend tests passing
+## Phase 2: Android + Compliance (2 sessions)
 
-### Bug fixes (this session)
-- Fixed security audit 500 error on multi-firmware projects (MultipleResultsFound → scan all extracted firmware)
-- Fixed comparison per-category truncation (was starving removed/modified when added > 500)
-- Both YARA scan endpoint also handles multi-firmware correctly
+**Goal:** Close the Android gap. Start compliance story.
 
-### P3: Progress Reporting for Extractions — DONE
-- Added `unpack_stage` (string) and `unpack_progress` (int 0-100) columns to Firmware model
-- Created Alembic migration `a3b4c5d6e7f8`
-- Added progress callback to `unpack_firmware()` — reports at classification, format-specific extraction, fallback chain stages
-- Background task (`_run_unpack_background`) writes progress to DB via async callback
-- Frontend shows progress bar with stage name and percentage during unpacking
-- Fields cleared when extraction completes or fails
+### Session A: Androguard + VEX
 
-### MCP crash fix (GH #21) — DONE
-- MCP server no longer crashes on startup when project has no firmware
-- Returns descriptive errors at tool-call level instead of sys.exit(1)
-- Project management tools (switch_project, list_projects) work without firmware
+| # | Item | Source | Effort | What to do |
+|---|------|--------|--------|------------|
+| 2.1 | **Androguard APK analysis** | F1.1 | Medium | `pip install androguard`. New `androguard_service.py`. MCP tools: `analyze_apk` (manifest, permissions, intents, activities, receivers, services), `check_apk_signatures`, `list_apk_permissions`. Enrich existing APK inventory in SBOM with version + permissions. |
+| 2.2 | **VEX document generation** | F1.4 | Medium | Add VEX status field to `SbomVulnerability` model (`not_affected`, `affected`, `fixed`, `under_investigation`). New endpoint to export CycloneDX VEX or OpenVEX format. MCP tool: `set_vulnerability_status` to triage CVEs. |
+| 2.3 | **Frontend: CVE triage workflow** | Backlog | Small | Expandable rows in vuln table showing CVE description + CVSS vector. Inline status buttons (Affected/Not Affected/Investigating). Bulk triage via checkbox select. |
 
-### GitHub issues triaged
-- #21: Fixed (MCP crash) — this session
-- #14: Already fixed (zipfile timestamp clamping)
-- #10: Already fixed (nginx resolver trick)
-- #15: Already fixed (CFS CPU limits removed)
-- #13: Already fixed (Ghidra ARM64 native build)
-- #7: Already fixed (ZIP firmware upload)
-- #2: Already done (file search in FileTree)
+### Session B: Compliance + SELinux
 
-## Session 6+ Priorities
+| # | Item | Source | Effort | What to do |
+|---|------|--------|--------|------------|
+| 2.4 | **Compliance reporting (ETSI EN 303 645)** | F2.1 | Medium | Map existing findings to ETSI's 13 provisions. New MCP tool `check_compliance` + REST endpoint. Provision mapping: no default passwords → Provision 1, vulnerability disclosure → Provision 2, secure updates → Provision 3, etc. Generate compliance report as project document. |
+| 2.5 | **SELinux policy analysis** | F2.3 | Medium | New `selinux_service.py`. Parse `sepolicy` binary with `sesearch`/`seinfo` (install in Dockerfile). MCP tools: `analyze_selinux_policy` (permissive domains, unconfined, domain transitions), `check_selinux_enforcement`. |
+| 2.6 | **Semgrep for firmware scripts** | F2.6 | Small | `pip install semgrep`. New MCP tool `scan_scripts`. Scan `.sh`, `.lua`, `.php`, `.cgi`, `.py` files with firmware-specific Semgrep rules (command injection, hardcoded paths, eval usage). |
 
-### P2: Frontend Polish
-- VulnerabilitiesTab already extracted to Zustand (session 3) — verify in browser
-- Test file search UI in browser
-- Test Load More button on vuln page
+**Verification:** Run full assessment on GL.iNet firmware. VEX triage 50 CVEs. Generate ETSI compliance report. Analyze SELinux from Android firmware.
 
-### P4: Squash clean-history branch — DONE (squashed branch ready)
-- `squashed` branch has single commit on top of main
-- Push with: `git push myfork squashed:main`
+---
 
-### P5: Android A/B OTA testing
-- payload-dumper-go installed but untested with real A/B OTA
-- Needs Pixel OTA download
+## Phase 3: Autonomous Assessment (1-2 sessions)
 
-### P6: Device Acquisition v2 — Phase 10
-- Manual hardware test with real MediaTek device
-- Blocked until hardware available
+**Goal:** The killer feature. AI runs a full assessment without user interaction.
 
-### P5: Remaining Android Campaign
-- A/B OTA testing (needs Pixel firmware download)
-- boot.img extraction (not started)
+| # | Item | Source | Effort | What to do |
+|---|------|--------|--------|------------|
+| 3.1 | **Autonomous assessment orchestrator** | F2.2 | Medium | New MCP tool `run_full_assessment`. Orchestrates: credential scan → crypto scan → init script analysis → binary protections → kernel hardening → filesystem permissions → SBOM generation → CVE scan → YARA scan → compliance check. Returns structured findings. The GL.iNet report proves this workflow — automate what the AI already does manually. |
+| 3.2 | **Assessment report generator** | F2.2 | Medium | New MCP tool `generate_assessment_report`. Takes all findings + SBOM + compliance results and produces a structured markdown report (matching the GL.iNet report format). Save as project document. |
+| 3.3 | **Secure boot chain analysis** | F2.4 | Medium | New MCP tool `check_secure_boot`. Detect U-Boot verified boot, dm-verity, UEFI Secure Boot. Parse certificate chains. Check for known-weak signing keys. |
+| 3.4 | **WebSocket event bus** | F0.3 | Small | Replace polling with Server-Sent Events or WebSocket push for: unpacking progress, emulation status, fuzzing stats, assessment progress. Pub/sub via Redis. |
 
-## Priority 1: Vuln UI + Data Quality — DONE (session 2)
+**Verification:** Upload a firmware image, invoke `run_full_assessment`, get a complete report without any other manual steps.
 
-### A. Vuln list pagination — DONE
-- Added Load More button with limit/offset pagination in SbomPage.tsx
-- Wired up limit/offset params in frontend API client (api/sbom.ts)
+---
 
-### B. Filter Grype false positives — DONE
-- Added CPE vendor extraction + mismatch filtering in grype_service.py
-- Skips vulns where Grype vendor (e.g. "adobe") doesn't match component vendor (e.g. "google")
+## Phase 4: Infrastructure Hardening (1-2 sessions)
 
-### C. CVE detail readability
-- NOT DONE — expandable rows deferred (lower priority, existing modal works)
+**Goal:** Production-readiness for multi-user and LAN deployment.
 
-## Priority 2: Android Campaign Completion — MOSTLY DONE (session 2)
+| # | Item | Source | Effort | What to do |
+|---|------|--------|--------|------------|
+| 4.1 | **Background job queue (arq)** | F0.2 | Medium | `pip install arq`. Replace all `asyncio.create_task` for heavy ops (Ghidra, SBOM, YARA, Grype, unpack) with arq jobs. Redis already provisioned. Retry logic, timeout, progress tracking. |
+| 4.2 | **Authentication** | F0.1 | Medium | API key auth for REST API (header-based). Optional OAuth2/OIDC for web UI. Start simple: single admin API key from env var, upgrade later. |
+| 4.3 | **Frontend E2E tests (Playwright)** | F0.4 | Medium | Install Playwright. Write tests for: project create → firmware upload → wait for unpack → explore files → run security scan → view findings → export report. Use Citadel's `citadel:qa` skill. |
+| 4.4 | **Binary dependency graphing** | F3.2 | Medium | New MCP tool `map_binary_dependencies`. Parse ELF NEEDED entries for all binaries. Build adjacency graph. Return as ReactFlow-compatible JSON for frontend visualization. |
 
-### A. Android ZIP detection in upload flow — DONE
-- Added `_is_android_firmware_zip()` to firmware_service.py
-- Android ZIPs now preserved intact for unpack pipeline
+**Verification:** Full pipeline test with arq queue. Auth-protected API. Playwright tests green.
 
-### B. Partition naming — DONE
-- Added `_identify_partition_by_content()` to unpack.py
-- Renames partition_N_fstype to system/vendor/product based on contents
+---
 
-### C. A/B OTA testing — NOT DONE
-- payload-dumper-go installed but untested with real A/B OTA
-- Needs Pixel OTA download to verify
+## Phase 5: Emulation + Expansion (2-3 sessions)
 
-## Priority 3: Stabilize + Test (1 session, /fleet)
+**Goal:** Match EMBA's automated emulation. Expand to new firmware types.
 
-### A. Squash and push clean history
-- 18 commits on clean-history branch need squashing into logical groups
-- Push to fork, consider which commits are ready for upstream PRs
+| # | Item | Source | Effort | What to do |
+|---|------|--------|--------|------------|
+| 5.1 | **Automated system emulation** | F1.5 | Large | Research FirmAE integration or build auto-config pipeline. Detect architecture + kernel from firmware, select matching QEMU machine type + kernel, configure network, start container automatically. Target: 50%+ success rate on common router firmware. |
+| 5.2 | **CI/CD pipeline integration** | F3.3 | Medium | GitHub Action: `wairz-scan`. Inputs: firmware URL or artifact. Outputs: SBOM, findings summary, compliance status, pass/fail gate. Uses Wairz REST API. |
+| 5.3 | **RTOS/bare-metal recognition** | F3.1 | Large | Detect FreeRTOS, Zephyr, VxWorks, ThreadX from binary patterns. Extract version info. Basic SBOM generation. Ghidra analysis works today — add firmware type classification. |
+| 5.4 | **Network protocol analysis** | F3.6 | Large | Capture pcap from emulated firmware. Service fingerprinting. Depends on F1.5 automated emulation. |
+| 5.5 | **CycloneDX v1.7 / HBOM** | F3.4 | Small | Upgrade CycloneDX export to v1.7 (ECMA-424). Add HBOM (hardware BOM) fields for device metadata. |
 
-### B. Run test suite — DONE (session 2)
-- 209 tests passing (169 existing + 25 new Android + 15 other)
-- 10 pre-existing failures (sandbox/registry tests from prior changes)
-- Added test_firmware_classification.py (12 tests) and test_android_sbom.py (13 tests)
+---
 
-### C. Clean slate test
-- docker compose down -v && docker compose up --build
-- Upload embedded Linux firmware → verify everything still works
-- Upload Android firmware → verify full pipeline
-- Run SBOM + vuln scan on both
+## Review Backlog (P3 — do when touching adjacent code)
 
-## Priority 4: Quality Loops (per-session, /improve)
+These are from the architecture review. Not worth dedicated sessions — fix opportunistically.
 
-These are independent and can be done anytime:
+| # | Item | Files | When |
+|---|------|-------|------|
+| R1 | Split emulation_service.py (1637 lines) | `services/emulation_service.py` | When touching emulation (Phase 5) |
+| R2 | Split FileViewer.tsx (846 lines) | `components/explorer/FileViewer.tsx` | When touching explorer UI |
+| R3 | Split ProjectDetailPage.tsx (593 lines) | `pages/ProjectDetailPage.tsx` | When touching project page |
+| R4 | Add Error Boundary to React app | `App.tsx` | Phase 4 (frontend tests) |
+| R5 | Centralize duplicated status/severity configs | `utils/statusConfig.ts` | When touching frontend |
+| R6 | Add missing DB indexes | `firmware.sha256`, `emulation_session.firmware_id` | Phase 4 (Alembic migration) |
+| R7 | Add pagination to list_projects, list_documents | `routers/projects.py`, `routers/documents.py` | When touching those endpoints |
+| R8 | Standardize error handling hierarchy | All services | Phase 4 |
+| R9 | Standardize commit pattern across routers | All routers | Phase 4 |
+| R10 | Standardize firmware resolution pattern | `routers/deps.py` | When touching routers |
 
-### A. /improve backend/app/services/emulation_service.py
-- 115-line embedded shell scripts should be external files
-- First ouroboros/improve loop target
+---
 
-### B. /improve backend/app/workers/unpack.py
-- File is now very large after Android additions
-- Could split into unpack_linux.py, unpack_android.py, unpack_common.py
+## Blocked Items
 
-### C. /improve frontend SBOM page
-- VulnerabilitiesTab receives 12 props (code smell from review)
-- Component state management could use Zustand store
+| Item | Blocker | Action |
+|------|---------|--------|
+| Device Acquisition v2 Phase 10 | Physical MediaTek device in BROM mode | Wait for hardware availability |
+| A/B OTA validation | Pixel firmware download | Download when needed |
+| Frida integration | Not prioritized | Defer to Phase 5+ |
+| Samsung Odin protocol | Not prioritized | Defer to v3 |
+| Qualcomm EDL live acquisition | Research-only, most devices block | Defer indefinitely |
 
-## Priority 5: Features (future sessions)
+---
 
-### A. Unblob as secondary extractor
-- Handles 78+ formats vs binwalk's ~30
-- Encrypted D-Link, QNAP, EROFS, etc.
+## Completed Campaigns (reference)
 
-### B. Androguard integration
-- Deep APK analysis (permissions, activities, intents, receivers)
-- Would enrich the APK inventory significantly
+| Campaign | Sessions | Key Deliverables |
+|----------|----------|-----------------|
+| ARM64 Platform Support | 1 | Ghidra native build, AFL++ QEMU mode, all containers on aarch64 |
+| SBOM/Vuln Phase 1 | 1 | Grype multi-arch, vuln scan endpoint, firmware classifier |
+| Android Firmware Support | 2 | 11-phase extraction pipeline, 21 classification tests |
+| Android SBOM Enhancement | 1 | APK inventory, build.prop, init.rc, SELinux, 418 components |
+| Device Acquisition v1 | 2 | ADB bridge, 7 REST endpoints, 4-step wizard, 30 tests |
+| Security Hardening | 2 | YARA (26 rules), API key patterns (18), kernel sysctl (18 params) |
+| Architecture Review (session 8) | 1 | 6 critical fixed, 9 warnings fixed, roadmap created |
 
-### C. Search functionality (GitHub issue #2)
-- File content search in the file explorer
-- Backend already has search_files MCP tool
-
-### D. CFS scheduler fix (GitHub issue #15)
-- Breaks docker compose on kernels without CPU CFS
-- Affects Raspberry Pi deployments
+---
 
 ## Citadel Routing Guide
 
-| Task | Command |
-|------|---------|
-| Resume Android campaign | `/do continue` |
-| Vuln UI fixes | `/marshal fix vuln pagination + false positives + readability` |
-| Run test suite | `/do test` |
-| Quality loop | `/improve emulation_service.py` |
-| Clean slate test | `/do test the app with real firmware` |
-| Squash + push | `/do commit` then `! git push myfork clean-history:main --force` |
+| What you want | Command |
+|---|---|
+| Start Phase 1 quick wins | `/citadel:fleet` with 3 parallel agents (unblob, SPDX, capa) |
+| Start Androguard campaign | `/citadel:archon` with phase plan from Phase 2 |
+| Run autonomous assessment | After Phase 3: MCP tool `run_full_assessment` |
+| Run frontend tests | `/citadel:qa` with Playwright |
+| Fix a review backlog item | `/citadel:refactor` on the specific file |
+| Check competitive position | `.planning/research/security-assessment-roadmap.md` |
+| Check architecture review | Session 8 review output (in conversation history) |
