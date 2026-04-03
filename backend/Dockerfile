@@ -195,10 +195,12 @@ COPY --from=kernels . /opt/kernels/
 RUN mkdir -p /data/firmware /tmp/ghidra_projects \
     && chown -R wairz:wairz /data /app /tmp/ghidra_projects /opt/ghidra /opt/kernels
 
-USER wairz
+COPY entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh
 
 ENV GHIDRA_INSTALL_DIR=/opt/ghidra
 
 EXPOSE 8000
 
-CMD ["sh", "-c", "uv run python -m alembic upgrade head && uv run python -m uvicorn app.main:app --host 0.0.0.0 --port 8000"]
+# Entrypoint runs as root to fix Docker socket GID, then drops to wairz.
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
