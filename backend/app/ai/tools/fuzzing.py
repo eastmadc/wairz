@@ -735,7 +735,7 @@ async def _handle_start_campaign(input: dict, context: ToolContext) -> str:
     try:
         campaign = await svc.create_campaign(firmware, binary_path, config)
         campaign = await svc.start_campaign(campaign.id, context.project_id)
-        await context.db.commit()
+        await context.db.flush()
     except ValueError as exc:
         return f"Error: {exc}"
     except Exception as exc:
@@ -836,7 +836,7 @@ async def _handle_stop_campaign(input: dict, context: ToolContext) -> str:
     try:
         from uuid import UUID
         campaign = await svc.stop_campaign(UUID(campaign_id), context.project_id)
-        await context.db.commit()
+        await context.db.flush()
     except ValueError as exc:
         return f"Error: {exc}"
 
@@ -860,7 +860,7 @@ async def _handle_triage_crash(input: dict, context: ToolContext) -> str:
     try:
         from uuid import UUID
         crash = await svc.triage_crash(UUID(campaign_id), UUID(crash_id), context.project_id)
-        await context.db.commit()
+        await context.db.flush()
     except ValueError as exc:
         return f"Error: {exc}"
 

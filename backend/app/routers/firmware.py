@@ -16,11 +16,24 @@ from app.schemas.firmware import (
     FirmwareUpdate,
     FirmwareUploadResponse,
 )
+from app.config import get_settings
 from app.services.firmware_metadata_service import FirmwareMetadataService
 from app.services.firmware_service import FirmwareService
 from app.workers.unpack import detect_kernel, unpack_firmware
 
 logger = logging.getLogger(__name__)
+
+MAX_UPLOAD_BYTES = get_settings().max_upload_size_mb * 1024 * 1024
+
+
+async def _check_upload_size(file: UploadFile, label: str = "file") -> None:
+    """Reject uploads that exceed MAX_UPLOAD_SIZE_MB without reading the full body."""
+    if file.size is not None and file.size > MAX_UPLOAD_BYTES:
+        raise HTTPException(
+            413,
+            f"{label} too large ({file.size / 1024 / 1024:.0f} MB). "
+            f"Maximum is {get_settings().max_upload_size_mb} MB.",
+        )
 
 router = APIRouter(prefix="/api/v1/projects/{project_id}/firmware", tags=["firmware"])
 
@@ -36,6 +49,7 @@ async def upload_firmware(
     version_label: str | None = Form(None),
     service: FirmwareService = Depends(get_firmware_service),
 ):
+    await _check_upload_size(file, "Firmware")
     firmware = await service.upload(project_id, file, version_label=version_label)
     return firmware
 
@@ -215,6 +229,7 @@ async def upload_rootfs(
 ):
     """Upload a pre-extracted rootfs archive (.tar.gz, .tar, .zip) for firmware
     whose automated extraction failed."""
+    await _check_upload_size(file, "Rootfs archive")
     proj_result = await db.execute(select(Project).where(Project.id == project_id))
     project = proj_result.scalar_one_or_none()
     if not project:

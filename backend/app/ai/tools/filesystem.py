@@ -229,7 +229,7 @@ async def _handle_get_component_map(input: dict, context: ToolContext) -> str:
             ]},
         )
         context.db.add(cache_entry)
-        await context.db.commit()
+        await context.db.flush()
 
     nodes = data["nodes"]
     edges = data["edges"]

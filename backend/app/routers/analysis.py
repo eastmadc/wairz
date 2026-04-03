@@ -248,7 +248,8 @@ async def get_binary_info(
     except Exception as e:
         raise HTTPException(400, f"Failed to analyze binary: {e}")
 
-    protections = check_binary_protections(full_path)
+    loop = asyncio.get_running_loop()
+    protections = await loop.run_in_executor(None, check_binary_protections, full_path)
 
     return {
         "binary_path": path,

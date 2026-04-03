@@ -1,3 +1,4 @@
+import asyncio
 import dataclasses
 import uuid
 
@@ -36,8 +37,11 @@ async def list_directory(
     path: str = Query("/", description="Directory path to list"),
     service: FileService = Depends(get_file_service),
 ):
+    loop = asyncio.get_running_loop()
     try:
-        entries, truncated = service.list_directory(path)
+        entries, truncated = await loop.run_in_executor(
+            None, service.list_directory, path
+        )
     except FileNotFoundError as e:
         raise HTTPException(404, str(e))
     return {
@@ -55,8 +59,11 @@ async def read_file(
     format: str = Query("auto", description="Response format: auto, base64"),
     service: FileService = Depends(get_file_service),
 ):
+    loop = asyncio.get_running_loop()
     try:
-        content = service.read_file(path, offset, length, format=format)
+        content = await loop.run_in_executor(
+            None, service.read_file, path, offset, length, format
+        )
     except FileNotFoundError as e:
         raise HTTPException(404, str(e))
     except PermissionError as e:
@@ -69,8 +76,9 @@ async def file_info(
     path: str = Query(..., description="File path to inspect"),
     service: FileService = Depends(get_file_service),
 ):
+    loop = asyncio.get_running_loop()
     try:
-        info = service.file_info(path)
+        info = await loop.run_in_executor(None, service.file_info, path)
     except FileNotFoundError as e:
         raise HTTPException(404, str(e))
     except PermissionError as e:
@@ -84,7 +92,10 @@ async def search_files(
     path: str = Query("/", description="Directory to search in"),
     service: FileService = Depends(get_file_service),
 ):
-    matches, truncated = service.search_files(pattern, path)
+    loop = asyncio.get_running_loop()
+    matches, truncated = await loop.run_in_executor(
+        None, service.search_files, pattern, path
+    )
     return {
         "pattern": pattern,
         "matches": matches,

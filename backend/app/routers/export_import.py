@@ -12,8 +12,11 @@ from sqlalchemy.orm import selectinload
 from app.database import get_db
 from app.models.project import Project
 from app.schemas.project import ProjectResponse
+from app.config import get_settings
 from app.services.export_service import ExportService
 from app.services.import_service import ImportService
+
+MAX_IMPORT_BYTES = get_settings().max_upload_size_mb * 1024 * 1024
 
 router = APIRouter(
     prefix="/api/v1/projects",
@@ -61,6 +64,12 @@ async def import_project(
     db: AsyncSession = Depends(get_db),
 ):
     """Import a .wairz archive as a new project."""
+    if file.size is not None and file.size > MAX_IMPORT_BYTES:
+        raise HTTPException(
+            413,
+            f"Import file too large ({file.size / 1024 / 1024:.0f} MB). "
+            f"Maximum is {get_settings().max_upload_size_mb} MB.",
+        )
     if not file.filename or not (
         file.filename.endswith(".wairz") or file.filename.endswith(".zip")
     ):

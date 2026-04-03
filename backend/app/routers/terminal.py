@@ -1,12 +1,18 @@
+"""WebSocket terminal — sandboxed shell for firmware filesystem exploration.
+
+Spawns a lightweight Docker container with the firmware directory mounted
+read-only, providing an isolated shell. Uses the same container+exec pattern
+as the emulation terminal (routers/emulation.py).
+"""
+
 import asyncio
-import fcntl
+import io
 import logging
 import os
-import signal
-import struct
-import termios
+import tarfile
 import uuid
 
+import docker
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from sqlalchemy import select
 
@@ -20,6 +26,57 @@ router = APIRouter(
     prefix="/api/v1/projects/{project_id}/terminal",
     tags=["terminal"],
 )
+
+# Lightweight image for the terminal shell — pre-pulled at first use
+TERMINAL_IMAGE = "alpine:3.19"
+
+
+def _resolve_host_path(container_path: str) -> str | None:
+    """Translate a backend-container path to the host path for Docker mounts.
+
+    Same logic as EmulationService._resolve_host_path — when the backend
+    runs inside Docker, volume mounts reference HOST paths.
+    """
+    real_path = os.path.realpath(container_path)
+
+    if not os.path.exists("/.dockerenv"):
+        return real_path
+
+    hostname = os.environ.get("HOSTNAME", "")
+    if not hostname:
+        return real_path
+
+    try:
+        client = docker.from_env()
+        our_container = client.containers.get(hostname)
+        mounts = our_container.attrs.get("Mounts", [])
+
+        for mount in mounts:
+            dest = mount.get("Destination", "")
+            source = mount.get("Source", "")
+            if not dest or not source:
+                continue
+            if real_path.startswith(dest + os.sep) or real_path == dest:
+                relative = os.path.relpath(real_path, dest)
+                host_path = os.path.join(source, relative)
+                return host_path
+    except Exception:
+        logger.warning("Could not resolve host path for %s", real_path, exc_info=True)
+
+    return None
+
+
+def _copy_dir_to_container(
+    container: "docker.models.containers.Container",
+    src_path: str,
+    dest_path: str,
+) -> None:
+    """Copy a directory into a container via tar stream (fallback when bind mount unavailable)."""
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w") as tar:
+        tar.add(src_path, arcname=".")
+    buf.seek(0)
+    container.put_archive(dest_path, buf)
 
 
 @router.websocket("/ws")
@@ -58,65 +115,114 @@ async def websocket_terminal(
         await websocket.close(code=4004)
         return
 
-    # Spawn PTY
-    master_fd, slave_fd = os.openpty()
-    child_pid = os.fork()
-
-    if child_pid == 0:
-        # Child process
-        os.close(master_fd)
-        os.setsid()
-        fcntl.ioctl(slave_fd, termios.TIOCSCTTY, 0)
-        os.dup2(slave_fd, 0)
-        os.dup2(slave_fd, 1)
-        os.dup2(slave_fd, 2)
-        if slave_fd > 2:
-            os.close(slave_fd)
-
-        real_root = os.path.realpath(extracted_path)
-
-        env = {
-            "TERM": "xterm-256color",
-            "HOME": real_root,
-            "PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
-            "PS1": r"wairz:\w\$ ",
-            "LANG": "C.UTF-8",
-        }
-
-        os.chdir(real_root)
-        os.execve("/bin/bash", ["/bin/bash", "--norc", "--noprofile"], env)
-        # execve doesn't return
-
-    # Parent process
-    os.close(slave_fd)
-
+    # Spawn a sandboxed Docker container
     loop = asyncio.get_running_loop()
+    try:
+        client = await loop.run_in_executor(None, docker.from_env)
+    except Exception as exc:
+        await websocket.send_json({"type": "error", "data": f"Docker unavailable: {exc}"})
+        await websocket.close(code=4004)
+        return
 
-    # Send welcome banner
-    banner = f"\r\n  Firmware root: {extracted_path}\r\n\r\n"
-    await websocket.send_json({"type": "output", "data": banner})
+    container = None
+    try:
+        # Resolve host path for bind mount
+        host_path = _resolve_host_path(extracted_path)
 
-    reader_task = None
-    writer_task = None
+        if host_path:
+            container = await loop.run_in_executor(
+                None,
+                lambda: client.containers.run(
+                    TERMINAL_IMAGE,
+                    command=["sleep", "infinity"],
+                    detach=True,
+                    volumes={host_path: {"bind": "/workspace", "mode": "ro"}},
+                    working_dir="/workspace",
+                    mem_limit="256m",
+                    nano_cpus=int(1e9),
+                    pids_limit=128,
+                    network_mode="none",
+                    labels={"wairz.terminal": str(project_id)},
+                    auto_remove=True,
+                ),
+            )
+        else:
+            # Fallback: create container then copy firmware in
+            container = await loop.run_in_executor(
+                None,
+                lambda: client.containers.run(
+                    TERMINAL_IMAGE,
+                    command=["sleep", "infinity"],
+                    detach=True,
+                    working_dir="/workspace",
+                    mem_limit="256m",
+                    nano_cpus=int(1e9),
+                    pids_limit=128,
+                    network_mode="none",
+                    labels={"wairz.terminal": str(project_id)},
+                    auto_remove=True,
+                ),
+            )
+            await loop.run_in_executor(
+                None,
+                lambda: _copy_dir_to_container(container, extracted_path, "/workspace"),
+            )
 
-    async def read_pty():
-        """Read from PTY master and send to WebSocket."""
+    except Exception as exc:
+        await websocket.send_json({"type": "error", "data": f"Failed to start terminal: {exc}"})
+        await websocket.close(code=4004)
+        if container:
+            try:
+                container.kill()
+            except Exception:
+                pass
+        return
+
+    # Create an interactive exec instance
+    try:
+        exec_id = client.api.exec_create(
+            container.id,
+            ["/bin/sh"],
+            stdin=True,
+            tty=True,
+            stdout=True,
+            stderr=True,
+            workdir="/workspace",
+        )
+        sock = client.api.exec_start(exec_id, socket=True, tty=True)
+        raw_sock = sock._sock
+    except Exception as exc:
+        await websocket.send_json({"type": "error", "data": f"Failed to exec shell: {exc}"})
+        await websocket.close(code=4004)
+        try:
+            container.kill()
+        except Exception:
+            pass
+        return
+
+    await websocket.send_json({
+        "type": "output",
+        "data": f"\r\n  Firmware root: /workspace (read-only, sandboxed)\r\n\r\n",
+    })
+
+    async def read_container():
+        """Read from container socket and send to WebSocket."""
         try:
             while True:
-                data = await loop.run_in_executor(None, os.read, master_fd, 4096)
+                data = await loop.run_in_executor(None, raw_sock.recv, 4096)
                 if not data:
                     break
-                await websocket.send_json(
-                    {"type": "output", "data": data.decode("utf-8", errors="replace")}
-                )
+                await websocket.send_json({
+                    "type": "output",
+                    "data": data.decode("utf-8", errors="replace"),
+                })
         except OSError:
-            # PTY closed
             pass
         except Exception:
-            logger.debug("PTY reader stopped")
+            logger.debug("Container reader stopped", exc_info=True)
 
-    async def write_pty():
-        """Read from WebSocket and write to PTY master."""
+    async def write_container():
+        """Read from WebSocket and write to container socket."""
         try:
             while True:
                 msg = await websocket.receive_json()
@@ -125,53 +231,57 @@ async def websocket_terminal(
                 if msg_type == "input":
                     input_data = msg.get("data", "")
                     if input_data:
-                        os.write(master_fd, input_data.encode("utf-8"))
+                        await loop.run_in_executor(
+                            None, raw_sock.sendall, input_data.encode("utf-8")
+                        )
 
                 elif msg_type == "resize":
                     cols = msg.get("cols", 80)
                     rows = msg.get("rows", 24)
-                    winsize = struct.pack("HHHH", rows, cols, 0, 0)
-                    fcntl.ioctl(master_fd, termios.TIOCSWINSZ, winsize)
+                    try:
+                        client.api.exec_resize(exec_id, height=rows, width=cols)
+                    except Exception:
+                        pass
+
+                elif msg_type == "ping":
+                    await websocket.send_json({"type": "pong"})
+
         except WebSocketDisconnect:
             pass
         except Exception:
-            logger.debug("PTY writer stopped")
+            logger.debug("Container writer stopped", exc_info=True)
+
+    async def keepalive():
+        """Send periodic pings to keep the WebSocket alive."""
+        try:
+            while True:
+                await asyncio.sleep(15)
+                await websocket.send_json({"type": "ping"})
+        except Exception:
+            pass
 
     try:
-        reader_task = asyncio.create_task(read_pty())
-        writer_task = asyncio.create_task(write_pty())
-        # Wait for either task to finish (usually writer finishes on disconnect)
+        reader_task = asyncio.create_task(read_container())
+        writer_task = asyncio.create_task(write_container())
+        keepalive_task = asyncio.create_task(keepalive())
         done, pending = await asyncio.wait(
             [reader_task, writer_task], return_when=asyncio.FIRST_COMPLETED
         )
         for task in pending:
             task.cancel()
+        keepalive_task.cancel()
     finally:
-        # Cleanup: kill child process and close FDs
+        # Cleanup: close sockets, kill container
         try:
-            os.kill(child_pid, signal.SIGTERM)
-        except OSError:
-            pass
-
-        try:
-            os.close(master_fd)
-        except OSError:
-            pass
-
-        # Reap child
-        try:
-            os.waitpid(child_pid, os.WNOHANG)
-        except ChildProcessError:
-            pass
-
-        # Ensure kill if still running
-        try:
-            os.kill(child_pid, signal.SIGKILL)
-        except OSError:
+            raw_sock.close()
+        except Exception:
             pass
         try:
-            os.waitpid(child_pid, os.WNOHANG)
-        except ChildProcessError:
+            sock.close()
+        except Exception:
             pass
-
+        try:
+            container.kill()
+        except Exception:
+            pass
         logger.info("Terminal session ended: project=%s", project_id)

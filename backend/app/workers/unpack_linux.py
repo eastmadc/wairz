@@ -248,4 +248,11 @@ def _firmware_tar_filter(member, dest_path):
     if not (member.isreg() or member.isdir() or member.issym() or member.islnk()):
         return None
 
+    # Validate hard link targets stay within the extraction directory
+    if member.islnk():
+        link_target = member.linkname.lstrip("/")
+        resolved_link = os.path.realpath(os.path.join(dest_path, link_target))
+        if not resolved_link.startswith(real_dest + os.sep) and resolved_link != real_dest:
+            raise _tarfile.AbsolutePathError(member)
+
     return member

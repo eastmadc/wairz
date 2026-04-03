@@ -270,7 +270,7 @@ async def _handle_generate_sbom(input: dict, context: ToolContext) -> str:
         )
         context.db.add(db_comp)
 
-    await context.db.commit()
+    await context.db.flush()
 
     return await _format_sbom_summary(context, cached=False)
 
@@ -723,7 +723,7 @@ async def _handle_assess_vulnerabilities(
         lines.append(f"  {vuln.cve_id}:{sev_change}{status_str}")
         updated += 1
 
-    await context.db.commit()
+    await context.db.flush()
 
     header = f"Assessed {updated} vulnerability(ies)"
     if not_found:
