@@ -156,17 +156,32 @@ async def list_sbom_components(
 
 @router.get("/export")
 async def export_sbom(
-    format: str = Query("cyclonedx-json", pattern="^(cyclonedx-json)$"),
+    format: str = Query("cyclonedx-json", pattern="^(cyclonedx-json|spdx-json|cyclonedx-vex-json)$"),
     firmware=Depends(_resolve_firmware),
     db: AsyncSession = Depends(get_db),
 ):
-    """Export SBOM in CycloneDX JSON format."""
+    """Export SBOM in CycloneDX JSON, SPDX 2.3 JSON, or CycloneDX VEX JSON format."""
     stmt = select(SbomComponent).where(SbomComponent.firmware_id == firmware.id)
     result = await db.execute(stmt)
     components = result.scalars().all()
 
     if not components:
         raise HTTPException(404, "No SBOM generated yet. Run POST /generate first.")
+
+    if format == "cyclonedx-vex-json":
+        # Load vulnerabilities joined with components
+        vuln_stmt = (
+            select(SbomVulnerability, SbomComponent)
+            .join(SbomComponent, SbomVulnerability.component_id == SbomComponent.id)
+            .where(SbomVulnerability.firmware_id == firmware.id)
+            .order_by(SbomVulnerability.cvss_score.desc().nullslast())
+        )
+        vuln_result = await db.execute(vuln_stmt)
+        vuln_rows = vuln_result.all()
+        return _build_vex_response(components, vuln_rows, firmware)
+
+    if format == "spdx-json":
+        return _build_spdx_response(components, firmware)
 
     # Build CycloneDX 1.5 JSON manually
     bom = {
@@ -389,6 +404,68 @@ async def vulnerability_summary(
     return SbomSummaryResponse(**summary)
 
 
+@router.post("/push-to-dependency-track")
+async def push_to_dependency_track(
+    firmware=Depends(_resolve_firmware),
+    db: AsyncSession = Depends(get_db),
+):
+    """Push the current CycloneDX SBOM to a Dependency-Track instance."""
+    from app.services.dependency_track_service import DependencyTrackService
+
+    svc = DependencyTrackService()
+    if not svc.is_configured:
+        raise HTTPException(
+            400,
+            "Dependency-Track not configured. "
+            "Set DEPENDENCY_TRACK_URL and DEPENDENCY_TRACK_API_KEY environment variables.",
+        )
+
+    # Build CycloneDX JSON from components
+    stmt = select(SbomComponent).where(SbomComponent.firmware_id == firmware.id)
+    result = await db.execute(stmt)
+    components = result.scalars().all()
+
+    if not components:
+        raise HTTPException(404, "No SBOM generated yet. Run POST /generate first.")
+
+    bom = {
+        "bomFormat": "CycloneDX",
+        "specVersion": "1.5",
+        "version": 1,
+        "metadata": {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "tools": [{"vendor": "wairz", "name": "wairz-sbom", "version": "0.1.0"}],
+            "component": {
+                "type": "firmware",
+                "name": firmware.original_filename or "unknown",
+                "version": "1.0",
+            },
+        },
+        "components": [
+            {
+                "type": _map_type_to_cyclonedx(c.type),
+                "name": c.name,
+                **({"version": c.version} if c.version else {}),
+                **({"purl": c.purl} if c.purl else {}),
+                **({"cpe": c.cpe} if c.cpe else {}),
+                **({"supplier": {"name": c.supplier}} if c.supplier else {}),
+            }
+            for c in components
+        ],
+    }
+
+    try:
+        dt_result = await svc.push_sbom(
+            sbom_json=bom,
+            project_name=firmware.original_filename or "wairz-firmware",
+            project_version="1.0",
+        )
+    except Exception as e:
+        raise HTTPException(502, f"Failed to push to Dependency-Track: {e}")
+
+    return {"status": "pushed", "dependency_track_response": dt_result}
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -403,3 +480,245 @@ def _map_type_to_cyclonedx(comp_type: str) -> str:
         "firmware": "firmware",
     }
     return mapping.get(comp_type, "application")
+
+
+def _map_resolution_to_vex_state(vuln) -> str:
+    """Map internal resolution_status to CycloneDX VEX analysis state."""
+    status = vuln.resolution_status or "open"
+    if status == "resolved":
+        return "resolved"
+    if status in ("ignored", "false_positive"):
+        return "not_affected"
+    # status == "open"
+    if vuln.adjusted_severity:
+        return "exploitable"
+    return "in_triage"
+
+
+def _map_resolution_to_vex_response(vuln) -> list[str] | None:
+    """Map internal resolution_status to CycloneDX VEX analysis response."""
+    status = vuln.resolution_status or "open"
+    if status == "resolved":
+        return ["update"]
+    if status == "ignored":
+        return ["will_not_fix"]
+    return None
+
+
+def _map_justification_to_vex(vuln) -> str | None:
+    """Map internal resolution_justification to CycloneDX VEX justification.
+
+    CycloneDX VEX justification values:
+      code_not_present, code_not_reachable, requires_configuration,
+      requires_dependency, requires_environment, protected_by_compiler,
+      protected_by_mitigating_control, protected_at_runtime,
+      protected_at_perimeter, protected_by_policy
+    """
+    justification = vuln.resolution_justification
+    if not justification:
+        return None
+    # If the justification already matches a CycloneDX value, use it directly
+    valid_values = {
+        "code_not_present", "code_not_reachable", "requires_configuration",
+        "requires_dependency", "requires_environment", "protected_by_compiler",
+        "protected_by_mitigating_control", "protected_at_runtime",
+        "protected_at_perimeter", "protected_by_policy",
+    }
+    normalized = justification.strip().lower().replace(" ", "_").replace("-", "_")
+    if normalized in valid_values:
+        return normalized
+    return None
+
+
+def _build_vex_response(
+    components: list, vuln_rows: list, firmware
+) -> Response:
+    """Build a CycloneDX 1.5 VEX document with vulnerability analysis."""
+    now = datetime.now(timezone.utc).isoformat()
+
+    # Build component bom-refs keyed by component ID
+    comp_bom_refs: dict[str, str] = {}
+    cdx_components = []
+    for comp in components:
+        bom_ref = f"comp-{comp.id}"
+        comp_bom_refs[str(comp.id)] = bom_ref
+        cdx_comp: dict = {
+            "type": _map_type_to_cyclonedx(comp.type),
+            "bom-ref": bom_ref,
+            "name": comp.name,
+        }
+        if comp.version:
+            cdx_comp["version"] = comp.version
+        if comp.purl:
+            cdx_comp["purl"] = comp.purl
+        if comp.cpe:
+            cdx_comp["cpe"] = comp.cpe
+        if comp.supplier:
+            cdx_comp["supplier"] = {"name": comp.supplier}
+        cdx_components.append(cdx_comp)
+
+    # Build vulnerability entries
+    cdx_vulns = []
+    for vuln, comp in vuln_rows:
+        vex_state = _map_resolution_to_vex_state(vuln)
+
+        # Ratings: use adjusted values if available, else original
+        effective_score = (
+            float(vuln.adjusted_cvss_score)
+            if vuln.adjusted_cvss_score is not None
+            else (float(vuln.cvss_score) if vuln.cvss_score is not None else None)
+        )
+        effective_severity = vuln.adjusted_severity or vuln.severity
+
+        ratings = []
+        if effective_score is not None:
+            rating: dict = {
+                "score": effective_score,
+                "severity": effective_severity,
+                "method": "CVSSv31",
+            }
+            if vuln.cvss_vector:
+                rating["vector"] = vuln.cvss_vector
+            ratings.append(rating)
+
+        vuln_entry: dict = {
+            "id": vuln.cve_id,
+            "source": {"name": "NVD", "url": "https://nvd.nist.gov/"},
+        }
+        if ratings:
+            vuln_entry["ratings"] = ratings
+        if vuln.description:
+            vuln_entry["description"] = vuln.description
+
+        # Affects
+        comp_ref = comp_bom_refs.get(str(comp.id))
+        if comp_ref:
+            vuln_entry["affects"] = [{"ref": comp_ref}]
+
+        # Analysis
+        analysis: dict = {"state": vex_state}
+
+        justification = _map_justification_to_vex(vuln)
+        if justification and vex_state == "not_affected":
+            analysis["justification"] = justification
+
+        detail = vuln.resolution_justification or vuln.adjustment_rationale
+        if detail:
+            analysis["detail"] = detail
+
+        response = _map_resolution_to_vex_response(vuln)
+        if response:
+            analysis["response"] = response
+
+        vuln_entry["analysis"] = analysis
+        cdx_vulns.append(vuln_entry)
+
+    bom = {
+        "bomFormat": "CycloneDX",
+        "specVersion": "1.5",
+        "version": 1,
+        "metadata": {
+            "timestamp": now,
+            "tools": [
+                {
+                    "vendor": "wairz",
+                    "name": "wairz-sbom",
+                    "version": "0.1.0",
+                }
+            ],
+            "component": {
+                "type": "firmware",
+                "name": firmware.original_filename or "unknown",
+                "version": "1.0",
+            },
+        },
+        "components": cdx_components,
+        "vulnerabilities": cdx_vulns,
+    }
+
+    content = json.dumps(bom, indent=2)
+    return Response(
+        content=content,
+        media_type="application/json",
+        headers={
+            "Content-Disposition": f'attachment; filename="vex-{firmware.id}.cdx.json"'
+        },
+    )
+
+
+def _build_spdx_response(components: list, firmware) -> Response:
+    """Build an SPDX 2.3 JSON document from SBOM components."""
+    now = datetime.now(timezone.utc).isoformat()
+
+    packages = []
+    relationships = []
+
+    for idx, comp in enumerate(components):
+        spdx_id = f"SPDXRef-Package-{idx}"
+
+        pkg: dict = {
+            "SPDXID": spdx_id,
+            "name": comp.name,
+            "downloadLocation": "NOASSERTION",
+            "filesAnalyzed": False,
+            "licenseConcluded": "NOASSERTION",
+            "licenseDeclared": "NOASSERTION",
+            "copyrightText": "NOASSERTION",
+        }
+
+        if comp.version:
+            pkg["versionInfo"] = comp.version
+        if comp.supplier:
+            pkg["supplier"] = f"Organization: {comp.supplier}"
+
+        external_refs = []
+        if comp.cpe:
+            external_refs.append({
+                "referenceCategory": "SECURITY",
+                "referenceType": "cpe23Type",
+                "referenceLocator": comp.cpe,
+            })
+        if comp.purl:
+            external_refs.append({
+                "referenceCategory": "PACKAGE-MANAGER",
+                "referenceType": "purl",
+                "referenceLocator": comp.purl,
+            })
+        if external_refs:
+            pkg["externalRefs"] = external_refs
+
+        if comp.detection_source:
+            pkg["comment"] = f"Detected by: {comp.detection_source} ({comp.detection_confidence or 'unknown'})"
+
+        packages.append(pkg)
+        relationships.append({
+            "spdxElementId": "SPDXRef-DOCUMENT",
+            "relatedSpdxElement": spdx_id,
+            "relationshipType": "DESCRIBES",
+        })
+
+    doc = {
+        "spdxVersion": "SPDX-2.3",
+        "dataLicense": "CC0-1.0",
+        "SPDXID": "SPDXRef-DOCUMENT",
+        "name": f"wairz-sbom-{firmware.original_filename or 'firmware'}",
+        "documentNamespace": f"https://wairz.local/spdx/{firmware.id}",
+        "creationInfo": {
+            "created": now,
+            "creators": [
+                "Tool: wairz-sbom-0.1.0",
+                "Organization: wairz",
+            ],
+        },
+        "packages": packages,
+        "relationships": relationships,
+    }
+
+    content = json.dumps(doc, indent=2)
+    return Response(
+        content=content,
+        media_type="application/json",
+        headers={
+            "Content-Disposition": f'attachment; filename="sbom-{firmware.id}.spdx.json"'
+        },
+    )

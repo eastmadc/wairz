@@ -587,7 +587,7 @@ function VulnerabilitiesTab({ projectId, vulnerabilities }: {
     justificationDialog, setJustificationDialog: onJustificationDialog,
     justificationText, setJustificationText: onJustificationText,
     hasMore, loadingMore,
-    resolve, loadMore,
+    resolve, bulkResolve, loadMore,
   } = useVulnerabilityStore()
 
   const onResolve = useCallback((vulnId: string, status: VulnerabilityResolutionStatus, justification?: string) => {
@@ -598,6 +598,9 @@ function VulnerabilitiesTab({ projectId, vulnerabilities }: {
     loadMore(projectId)
   }, [projectId, loadMore])
   const [selectedVuln, setSelectedVuln] = useState<string | null>(null)
+  const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set())
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  const [bulkAction, setBulkAction] = useState<VulnerabilityResolutionStatus | null>(null)
   const [sortColumn, setSortColumn] = useState<SortColumn>('severity')
   const [sortDirection, setSortDirection] = useState<SortDirection>('asc')
 
@@ -669,6 +672,49 @@ function VulnerabilitiesTab({ projectId, vulnerabilities }: {
       : <ArrowDown className="h-3 w-3" />
   }
 
+  const toggleExpand = (id: string) => {
+    setExpandedRows((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  const toggleSelect = (id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  const toggleSelectAll = () => {
+    if (selectedIds.size === sortedVulns.length) {
+      setSelectedIds(new Set())
+    } else {
+      setSelectedIds(new Set(sortedVulns.map((v) => v.id)))
+    }
+  }
+
+  const handleBulkAction = (status: VulnerabilityResolutionStatus) => {
+    if (status === 'open') {
+      bulkResolve(projectId, [...selectedIds], 'open')
+      setSelectedIds(new Set())
+      return
+    }
+    setBulkAction(status)
+  }
+
+  const confirmBulkAction = () => {
+    if (!bulkAction) return
+    bulkResolve(projectId, [...selectedIds], bulkAction, justificationText || undefined)
+    setSelectedIds(new Set())
+    setBulkAction(null)
+    onJustificationText('')
+  }
+
   return (
     <div className="space-y-4">
       {/* Resolution status filter */}
@@ -716,15 +762,36 @@ function VulnerabilitiesTab({ projectId, vulnerabilities }: {
         <span className="ml-auto text-xs text-muted-foreground">{vulnerabilities.length} vulnerability(ies)</span>
       </div>
 
-      {/* Justification dialog */}
-      {justificationDialog && (
+      {/* Bulk action bar */}
+      {selectedIds.size > 0 && (
+        <div className="flex items-center gap-3 rounded-lg border border-primary/30 bg-primary/5 px-4 py-2.5">
+          <span className="text-sm font-medium">{selectedIds.size} selected</span>
+          <div className="flex items-center gap-2 ml-auto">
+            <Button variant="outline" size="sm" onClick={() => handleBulkAction('resolved')}>Resolve</Button>
+            <Button variant="outline" size="sm" onClick={() => handleBulkAction('ignored')}>Ignore</Button>
+            <Button variant="outline" size="sm" onClick={() => handleBulkAction('false_positive')}>False Positive</Button>
+            <Button variant="ghost" size="sm" onClick={() => setSelectedIds(new Set())} className="text-muted-foreground">
+              <X className="h-3.5 w-3.5" />
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {/* Justification dialog (single or bulk) */}
+      {(justificationDialog || bulkAction) && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
           <div className="mx-4 w-full max-w-md rounded-lg border border-border bg-background p-4 shadow-lg">
             <div className="flex items-center justify-between mb-3">
               <h3 className="text-sm font-medium">
-                {justificationDialog.status === 'resolved' ? 'Resolve Vulnerability' : justificationDialog.status === 'ignored' ? 'Ignore Vulnerability' : 'Mark as False Positive'}
+                {(() => {
+                  const status = bulkAction ?? justificationDialog?.status
+                  const prefix = bulkAction ? `Bulk (${selectedIds.size}) — ` : ''
+                  if (status === 'resolved') return `${prefix}Resolve Vulnerability`
+                  if (status === 'ignored') return `${prefix}Ignore Vulnerability`
+                  return `${prefix}Mark as False Positive`
+                })()}
               </h3>
-              <button onClick={() => { onJustificationDialog(null); onJustificationText('') }} className="text-muted-foreground hover:text-foreground">
+              <button onClick={() => { onJustificationDialog(null); setBulkAction(null); onJustificationText('') }} className="text-muted-foreground hover:text-foreground">
                 <X className="h-4 w-4" />
               </button>
             </div>
@@ -736,10 +803,16 @@ function VulnerabilitiesTab({ projectId, vulnerabilities }: {
               rows={3}
             />
             <div className="mt-3 flex justify-end gap-2">
-              <Button variant="outline" size="sm" onClick={() => { onJustificationDialog(null); onJustificationText('') }}>
+              <Button variant="outline" size="sm" onClick={() => { onJustificationDialog(null); setBulkAction(null); onJustificationText('') }}>
                 Cancel
               </Button>
-              <Button size="sm" onClick={() => onResolve(justificationDialog.vulnId, justificationDialog.status, justificationText || undefined)}>
+              <Button size="sm" onClick={() => {
+                if (bulkAction) {
+                  confirmBulkAction()
+                } else if (justificationDialog) {
+                  onResolve(justificationDialog.vulnId, justificationDialog.status, justificationText || undefined)
+                }
+              }}>
                 Confirm
               </Button>
             </div>
@@ -758,6 +831,16 @@ function VulnerabilitiesTab({ projectId, vulnerabilities }: {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-border text-left text-xs text-muted-foreground">
+                <th className="py-2 pr-2 w-8" onClick={(e) => e.stopPropagation()}>
+                  <input
+                    type="checkbox"
+                    checked={sortedVulns.length > 0 && selectedIds.size === sortedVulns.length}
+                    ref={(el) => { if (el) el.indeterminate = selectedIds.size > 0 && selectedIds.size < sortedVulns.length }}
+                    onChange={toggleSelectAll}
+                    className="h-3.5 w-3.5 rounded border-border accent-primary cursor-pointer"
+                  />
+                </th>
+                <th className="py-2 pr-2 w-6"></th>
                 <th className="py-2 pr-4 font-medium cursor-pointer select-none hover:text-foreground" onClick={() => handleSort('cve')}>
                   <span className="inline-flex items-center gap-1">CVE <SortIcon column="cve" /></span>
                 </th>
@@ -783,8 +866,25 @@ function VulnerabilitiesTab({ projectId, vulnerabilities }: {
                 const hasAdjustment = v.adjusted_severity && v.adjusted_severity !== v.severity
                 const hasScoreAdjustment = v.adjusted_cvss_score != null && v.adjusted_cvss_score !== v.cvss_score
                 const resConfig = RESOLUTION_CONFIG[v.resolution_status] ?? RESOLUTION_CONFIG.open
+                const isExpanded = expandedRows.has(v.id)
                 return (
-                  <tr key={v.id} className="border-b border-border/50 hover:bg-accent/30 cursor-pointer" onClick={() => setSelectedVuln(v.id)}>
+                  <React.Fragment key={v.id}>
+                  <tr className={`border-b border-border/50 hover:bg-accent/30 cursor-pointer ${isExpanded ? 'bg-accent/20' : ''}`} onClick={() => toggleExpand(v.id)}>
+                    <td className="py-2 pr-2" onClick={(e) => e.stopPropagation()}>
+                      <input
+                        type="checkbox"
+                        checked={selectedIds.has(v.id)}
+                        onChange={() => toggleSelect(v.id)}
+                        className="h-3.5 w-3.5 rounded border-border accent-primary cursor-pointer"
+                      />
+                    </td>
+                    <td className="py-2 pr-2">
+                      {isExpanded ? (
+                        <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
+                      ) : (
+                        <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />
+                      )}
+                    </td>
                     <td className="py-2 pr-4">
                       <a
                         href={`https://nvd.nist.gov/vuln/detail/${v.cve_id}`}
@@ -867,6 +967,12 @@ function VulnerabilitiesTab({ projectId, vulnerabilities }: {
                       </button>
                       {actionMenuId === v.id && (
                         <div className="absolute right-0 top-full z-10 mt-1 w-44 rounded-md border border-border bg-popover p-1 shadow-md">
+                          <button
+                            onClick={() => { onActionMenu(null); setSelectedVuln(v.id) }}
+                            className="w-full rounded-sm px-2 py-1.5 text-left text-xs hover:bg-accent"
+                          >
+                            View Details
+                          </button>
                           {v.resolution_status === 'open' ? (
                             <>
                               <button
@@ -900,6 +1006,101 @@ function VulnerabilitiesTab({ projectId, vulnerabilities }: {
                       )}
                     </td>
                   </tr>
+                  {/* Inline expanded detail row */}
+                  {isExpanded && (
+                    <tr className="border-b border-border/50">
+                      <td colSpan={9} className="bg-muted/30 px-4 py-3">
+                        <div className="space-y-3 text-xs">
+                          {/* Description */}
+                          <div>
+                            <p className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">Description</p>
+                            <p className="text-sm leading-relaxed">{v.description ?? 'No description available.'}</p>
+                          </div>
+
+                          {/* Details grid */}
+                          <div className="grid grid-cols-2 gap-x-8 gap-y-2 sm:grid-cols-4">
+                            <div>
+                              <span className="text-muted-foreground">CVSS Score</span>
+                              <p className="font-mono font-medium">
+                                {v.effective_cvss_score != null ? v.effective_cvss_score.toFixed(1) : v.cvss_score != null ? v.cvss_score.toFixed(1) : '—'}
+                                {hasScoreAdjustment && (
+                                  <span className="ml-1 text-muted-foreground/50 line-through text-[10px]">
+                                    {v.cvss_score != null ? v.cvss_score.toFixed(1) : ''}
+                                  </span>
+                                )}
+                              </p>
+                            </div>
+                            <div>
+                              <span className="text-muted-foreground">Component</span>
+                              <p className="font-medium">
+                                {v.component_name}
+                                {v.component_version && <span className="ml-1 font-mono text-muted-foreground">{v.component_version}</span>}
+                              </p>
+                            </div>
+                            <div>
+                              <span className="text-muted-foreground">Published</span>
+                              <p>{v.published_date ? formatDate(v.published_date) : '—'}</p>
+                            </div>
+                            <div>
+                              <span className="text-muted-foreground">Status</span>
+                              <p>
+                                <span className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium ${resConfig.className}`}>
+                                  {v.resolved_by === 'ai' && <Bot className="h-2.5 w-2.5" />}
+                                  {resConfig.label}
+                                </span>
+                              </p>
+                            </div>
+                          </div>
+
+                          {/* CVSS Vector */}
+                          {v.cvss_vector && (
+                            <div>
+                              <span className="text-muted-foreground">CVSS Vector</span>
+                              <p className="font-mono text-muted-foreground break-all mt-0.5">{v.cvss_vector}</p>
+                            </div>
+                          )}
+
+                          {/* AI Assessment */}
+                          {(hasAdjustment || hasScoreAdjustment || v.adjustment_rationale) && (
+                            <div className="rounded-md border border-border bg-background/50 p-3">
+                              <div className="flex items-center gap-2 mb-1.5">
+                                <Bot className="h-3 w-3 text-muted-foreground" />
+                                <span className="font-medium">AI Assessment</span>
+                              </div>
+                              {(hasAdjustment || hasScoreAdjustment) && (
+                                <div className="flex flex-wrap gap-3 mb-1.5">
+                                  {hasAdjustment && (
+                                    <span>Severity: <span className="line-through text-muted-foreground">{v.severity}</span> {' -> '} <span className="font-medium">{v.adjusted_severity}</span></span>
+                                  )}
+                                  {hasScoreAdjustment && (
+                                    <span>CVSS: <span className="line-through text-muted-foreground">{v.cvss_score?.toFixed(1)}</span> {' -> '} <span className="font-medium">{v.adjusted_cvss_score?.toFixed(1)}</span></span>
+                                  )}
+                                </div>
+                              )}
+                              {v.adjustment_rationale && (
+                                <p className="text-muted-foreground leading-relaxed">{v.adjustment_rationale}</p>
+                              )}
+                            </div>
+                          )}
+
+                          {/* Resolution details */}
+                          {v.resolution_status !== 'open' && v.resolution_justification && (
+                            <div className="rounded-md border border-border bg-background/50 p-3">
+                              <span className="font-medium">Resolution Justification</span>
+                              <p className="mt-1 text-muted-foreground leading-relaxed">{v.resolution_justification}</p>
+                              {v.resolved_by && (
+                                <p className="mt-1 text-muted-foreground">
+                                  Resolved by {v.resolved_by === 'ai' ? 'AI Assistant' : 'User'}
+                                  {v.resolved_at && ` on ${formatDate(v.resolved_at)}`}
+                                </p>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                  </React.Fragment>
                 )
               })}
             </tbody>

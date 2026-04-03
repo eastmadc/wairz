@@ -239,12 +239,12 @@ async def unpack_firmware(
     # === STAGE 2: Generic Fallback Chain ===
 
     fallback_extractors = [
-        ("binwalk", run_binwalk_extraction, 600),
         ("unblob", run_unblob_extraction, 1200),
+        ("binwalk", run_binwalk_extraction, 600),
     ]
 
     for idx, (name, func, timeout) in enumerate(fallback_extractors):
-        progress_base = 30 + idx * 30  # binwalk: 30-60, unblob: 60-90
+        progress_base = 30 + idx * 30  # unblob: 30-60, binwalk: 60-90
         try:
             await _report(f"Running {name} extraction", progress_base)
             result.unpack_log += f"\nTrying {name} (timeout {timeout}s)...\n"

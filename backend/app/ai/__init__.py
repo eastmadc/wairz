@@ -1,4 +1,5 @@
 from app.ai.tool_registry import ToolRegistry
+from app.ai.tools.android import register_android_tools
 from app.ai.tools.binary import register_binary_tools
 from app.ai.tools.comparison import register_comparison_tools
 from app.ai.tools.documents import register_document_tools
@@ -22,6 +23,7 @@ def create_tool_registry() -> ToolRegistry:
     register_reporting_tools(registry)
     register_document_tools(registry)
     register_sbom_tools(registry)
+    register_android_tools(registry)
     register_emulation_tools(registry)
     register_fuzzing_tools(registry)
     register_comparison_tools(registry)

@@ -1,0 +1,208 @@
+rules:
+  # -----------------------------------------------------------------------
+  # Command injection (bash)
+  # -----------------------------------------------------------------------
+  - id: firmware-cmd-injection-eval
+    patterns:
+      - pattern: eval $...
+    message: >-
+      Use of eval with variable arguments allows command injection if
+      the variable is user-controlled or derived from external input.
+    languages: [bash]
+    severity: ERROR
+    metadata:
+      category: command_injection
+      cwe: "CWE-78: Improper Neutralization of Special Elements used in an OS Command"
+
+  - id: firmware-cmd-injection-backtick-unquoted
+    pattern: $VAR=`... $ARG ...`
+    message: >-
+      Unquoted variable inside backtick command substitution. If the
+      variable contains special characters, this can lead to command injection.
+    languages: [bash]
+    severity: WARNING
+    metadata:
+      category: command_injection
+      cwe: "CWE-78: Improper Neutralization of Special Elements used in an OS Command"
+
+  - id: firmware-cmd-injection-php-system
+    patterns:
+      - pattern-either:
+          - pattern: system($ARG)
+          - pattern: exec($ARG)
+          - pattern: popen($ARG, ...)
+          - pattern: passthru($ARG)
+          - pattern: shell_exec($ARG)
+    message: >-
+      OS command execution with dynamic argument. If the argument is
+      derived from user input, this is a command injection vulnerability.
+    languages: [php]
+    severity: ERROR
+    metadata:
+      category: command_injection
+      cwe: "CWE-78: Improper Neutralization of Special Elements used in an OS Command"
+
+  # -----------------------------------------------------------------------
+  # Insecure downloads (bash)
+  # -----------------------------------------------------------------------
+  - id: firmware-insecure-wget-http
+    patterns:
+      - pattern: wget ... http://... ...
+    message: >-
+      wget downloading over plain HTTP. Firmware update or resource
+      fetched without TLS can be tampered with via MITM attack.
+    languages: [bash]
+    severity: WARNING
+    metadata:
+      category: insecure_download
+      cwe: "CWE-319: Cleartext Transmission of Sensitive Information"
+
+  - id: firmware-insecure-wget-no-check
+    patterns:
+      - pattern: wget --no-check-certificate ...
+    message: >-
+      wget called with --no-check-certificate disables TLS
+      verification, enabling MITM attacks.
+    languages: [bash]
+    severity: ERROR
+    metadata:
+      category: insecure_download
+      cwe: "CWE-295: Improper Certificate Validation"
+
+  - id: firmware-insecure-curl-http
+    patterns:
+      - pattern: curl ... http://... ...
+    message: >-
+      curl downloading over plain HTTP. Resources fetched without TLS
+      can be tampered with via MITM attack.
+    languages: [bash]
+    severity: WARNING
+    metadata:
+      category: insecure_download
+      cwe: "CWE-319: Cleartext Transmission of Sensitive Information"
+
+  - id: firmware-insecure-curl-no-verify
+    patterns:
+      - pattern-either:
+          - pattern: curl -k ...
+          - pattern: curl --insecure ...
+    message: >-
+      curl called with -k/--insecure disables TLS certificate
+      verification, enabling MITM attacks.
+    languages: [bash]
+    severity: ERROR
+    metadata:
+      category: insecure_download
+      cwe: "CWE-295: Improper Certificate Validation"
+
+  # -----------------------------------------------------------------------
+  # Hardcoded credentials (generic)
+  # -----------------------------------------------------------------------
+  - id: firmware-hardcoded-password-bash
+    pattern: $VAR="..."
+    metavariable-regex:
+      metavariable: $VAR
+      regex: (?i)(password|passwd|pass|pwd|secret|api_key|apikey|token)
+    message: >-
+      Hardcoded credential assignment detected. Credentials embedded in
+      scripts are extractable from firmware images.
+    languages: [bash]
+    severity: ERROR
+    metadata:
+      category: hardcoded_credentials
+      cwe: "CWE-798: Use of Hard-coded Credentials"
+
+  - id: firmware-hardcoded-password-php
+    pattern: $VAR = "..."
+    metavariable-regex:
+      metavariable: $VAR
+      regex: (?i).*(password|passwd|pass|pwd|secret|api_key|apikey|token).*
+    message: >-
+      Hardcoded credential assignment detected in PHP script. Credentials
+      embedded in scripts are extractable from firmware images.
+    languages: [php]
+    severity: ERROR
+    metadata:
+      category: hardcoded_credentials
+      cwe: "CWE-798: Use of Hard-coded Credentials"
+
+  - id: firmware-hardcoded-password-lua
+    patterns:
+      - pattern-either:
+          - pattern: password = "..."
+          - pattern: passwd = "..."
+          - pattern: secret = "..."
+          - pattern: api_key = "..."
+          - pattern: token = "..."
+    message: >-
+      Hardcoded credential assignment detected in Lua script. Credentials
+      embedded in scripts are extractable from firmware images.
+    languages: [lua]
+    severity: ERROR
+    metadata:
+      category: hardcoded_credentials
+      cwe: "CWE-798: Use of Hard-coded Credentials"
+
+  # -----------------------------------------------------------------------
+  # Insecure permissions (bash)
+  # -----------------------------------------------------------------------
+  - id: firmware-chmod-world-writable
+    patterns:
+      - pattern-either:
+          - pattern: chmod 777 ...
+          - pattern: chmod 666 ...
+          - pattern: chmod o+w ...
+    message: >-
+      World-writable permissions set on file or directory. This allows
+      any user/process to modify the target, which is a privilege
+      escalation vector on embedded devices.
+    languages: [bash]
+    severity: WARNING
+    metadata:
+      category: insecure_permissions
+      cwe: "CWE-732: Incorrect Permission Assignment for Critical Resource"
+
+  # -----------------------------------------------------------------------
+  # Eval / dynamic execution (lua, php)
+  # -----------------------------------------------------------------------
+  - id: firmware-lua-loadstring
+    pattern: loadstring(...)
+    message: >-
+      loadstring() compiles and executes a string as Lua code. If the
+      string is externally influenced, this enables code injection.
+    languages: [lua]
+    severity: WARNING
+    metadata:
+      category: dynamic_execution
+      cwe: "CWE-94: Improper Control of Generation of Code"
+
+  - id: firmware-php-eval
+    patterns:
+      - pattern-either:
+          - pattern: eval($ARG)
+          - pattern: assert($ARG)
+          - pattern: preg_replace("/.../e", ..., ...)
+          - pattern: create_function(..., $ARG)
+    message: >-
+      Dynamic code execution in PHP. If the argument is user-controlled,
+      this allows arbitrary code execution.
+    languages: [php]
+    severity: ERROR
+    metadata:
+      category: dynamic_execution
+      cwe: "CWE-94: Improper Control of Generation of Code"
+
+  # -----------------------------------------------------------------------
+  # Debug / development artifacts (bash)
+  # -----------------------------------------------------------------------
+  - id: firmware-bash-debug-mode
+    pattern: set -x
+    message: >-
+      Bash debug mode (set -x) left enabled. This prints every command
+      and its arguments to stderr, potentially leaking credentials or
+      secrets in logs on production firmware.
+    languages: [bash]
+    severity: WARNING
+    metadata:
+      category: debug_artifact
+      cwe: "CWE-489: Active Debug Code"

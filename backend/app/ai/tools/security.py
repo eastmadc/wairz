@@ -2,15 +2,21 @@
 
 Tools for evaluating the security posture of an extracted firmware filesystem:
 config file auditing, setuid detection, init script analysis, filesystem
-permissions, CVE lookups, certificate analysis, and YARA malware scanning.
+permissions, CVE lookups, certificate analysis, YARA malware scanning,
+and kernel configuration extraction and hardening analysis.
 """
 
 import asyncio
+import gzip
+import json
 import logging
 import os
 import re
+import shutil
 import stat
+import tempfile
 from datetime import datetime, timezone
+from pathlib import Path
 
 from app.ai.tool_registry import ToolContext, ToolRegistry
 from app.utils.sandbox import safe_walk, validate_path
@@ -1000,6 +1006,1266 @@ async def _handle_scan_with_yara(input: dict, context: ToolContext) -> str:
 
 
 # ---------------------------------------------------------------------------
+# extract_kernel_config
+# ---------------------------------------------------------------------------
+
+# Magic bytes marking the start of an embedded kernel config (IKCONFIG)
+_IKCFG_ST = b"IKCFG_ST"
+_IKCFG_ED = b"IKCFG_ED"
+
+# Common locations for kernel images in firmware
+_KERNEL_IMAGE_NAMES = [
+    "vmlinuz", "vmlinux", "zImage", "Image", "uImage", "bzImage",
+    "vmlinuz.bin", "kernel.bin", "kernel.img",
+]
+
+# Common locations for pre-extracted kernel configs
+_CONFIG_SEARCH_PATHS = [
+    "proc/config.gz",
+    "boot/config-*",
+    "lib/modules/*/build/.config",
+    "etc/kernel/config",
+]
+
+
+def _extract_ikconfig(data: bytes) -> str | None:
+    """Extract kernel config from a binary image containing IKCFG_ST magic."""
+    offset = 0
+    while True:
+        idx = data.find(_IKCFG_ST, offset)
+        if idx == -1:
+            return None
+        # The gzip data starts immediately after the IKCFG_ST marker
+        gz_start = idx + len(_IKCFG_ST)
+        # Find the end marker to know the extent
+        end_idx = data.find(_IKCFG_ED, gz_start)
+        if end_idx == -1:
+            # Try to decompress anyway from gz_start
+            gz_blob = data[gz_start:]
+        else:
+            gz_blob = data[gz_start:end_idx]
+
+        try:
+            config_text = gzip.decompress(gz_blob).decode("utf-8", errors="replace")
+            if "CONFIG_" in config_text:
+                return config_text
+        except Exception:
+            pass
+
+        # Try next occurrence
+        offset = idx + 1
+
+    return None
+
+
+async def _handle_extract_kernel_config(
+    input: dict, context: ToolContext
+) -> str:
+    """Extract kernel .config from firmware — either from a kernel binary
+    (IKCONFIG) or from pre-extracted config files."""
+    import glob as globmod
+
+    extracted_root = os.path.realpath(context.extracted_path)
+    path = input.get("path")
+
+    # If a specific path is provided, try to extract from that binary
+    if path:
+        full_path = context.resolve_path(path)
+        if not os.path.isfile(full_path):
+            return f"Error: '{path}' is not a file."
+
+        # Check if it's a gzip file (e.g. /proc/config.gz)
+        if path.endswith(".gz"):
+            try:
+                with open(full_path, "rb") as f:
+                    config_text = gzip.decompress(f.read()).decode(
+                        "utf-8", errors="replace"
+                    )
+                if "CONFIG_" in config_text:
+                    lines = config_text.splitlines()
+                    return (
+                        f"Extracted kernel config from {path} "
+                        f"({len(lines)} lines):\n\n{config_text}"
+                    )
+            except Exception as e:
+                return f"Error decompressing '{path}': {e}"
+
+        # Check if it's already a text config file
+        try:
+            with open(full_path, "r", errors="replace") as f:
+                head = f.read(4096)
+            if "CONFIG_" in head:
+                with open(full_path, "r", errors="replace") as f:
+                    config_text = f.read(512_000)
+                lines = config_text.splitlines()
+                return (
+                    f"Kernel config from {path} "
+                    f"({len(lines)} lines):\n\n{config_text}"
+                )
+        except Exception:
+            pass
+
+        # Try IKCONFIG extraction from binary
+        try:
+            with open(full_path, "rb") as f:
+                data = f.read()
+            config_text = _extract_ikconfig(data)
+            if config_text:
+                lines = config_text.splitlines()
+                return (
+                    f"Extracted IKCONFIG from {path} "
+                    f"({len(lines)} lines):\n\n{config_text}"
+                )
+            return (
+                f"No embedded kernel config (IKCFG_ST) found in '{path}'. "
+                "The kernel may not have been compiled with CONFIG_IKCONFIG."
+            )
+        except Exception as e:
+            return f"Error reading '{path}': {e}"
+
+    # Auto-search mode: look in common locations
+    results: list[str] = []
+
+    # 1. Check pre-extracted config files
+    for pattern in _CONFIG_SEARCH_PATHS:
+        full_pattern = os.path.join(extracted_root, pattern)
+        for match_path in globmod.glob(full_pattern):
+            real = os.path.realpath(match_path)
+            if not real.startswith(extracted_root):
+                continue
+            rel = "/" + os.path.relpath(real, extracted_root)
+
+            if match_path.endswith(".gz"):
+                try:
+                    with open(match_path, "rb") as f:
+                        config_text = gzip.decompress(f.read()).decode(
+                            "utf-8", errors="replace"
+                        )
+                    if "CONFIG_" in config_text:
+                        lines = config_text.splitlines()
+                        return (
+                            f"Extracted kernel config from {rel} "
+                            f"({len(lines)} lines):\n\n{config_text}"
+                        )
+                except Exception:
+                    results.append(f"Found {rel} but failed to decompress")
+            else:
+                try:
+                    with open(match_path, "r", errors="replace") as f:
+                        config_text = f.read(512_000)
+                    if "CONFIG_" in config_text:
+                        lines = config_text.splitlines()
+                        return (
+                            f"Kernel config from {rel} "
+                            f"({len(lines)} lines):\n\n{config_text}"
+                        )
+                except Exception:
+                    results.append(f"Found {rel} but failed to read")
+
+    # 2. Search for kernel image files and try IKCONFIG extraction
+    kernel_files: list[str] = []
+    for dirpath, _dirnames, filenames in safe_walk(extracted_root, extracted_root):
+        for fname in filenames:
+            if fname in _KERNEL_IMAGE_NAMES or fname.startswith("vmlinuz"):
+                fpath = os.path.join(dirpath, fname)
+                kernel_files.append(fpath)
+        if len(kernel_files) >= 10:
+            break
+
+    for kpath in kernel_files:
+        rel = "/" + os.path.relpath(kpath, extracted_root)
+        try:
+            with open(kpath, "rb") as f:
+                data = f.read()
+            config_text = _extract_ikconfig(data)
+            if config_text:
+                lines = config_text.splitlines()
+                return (
+                    f"Extracted IKCONFIG from {rel} "
+                    f"({len(lines)} lines):\n\n{config_text}"
+                )
+            results.append(f"Checked {rel} — no IKCFG_ST magic found")
+        except Exception as e:
+            results.append(f"Checked {rel} — error: {e}")
+
+    if results:
+        return (
+            "No kernel config found. Searched locations:\n"
+            + "\n".join(f"  • {r}" for r in results)
+            + "\n\nThe kernel may not have CONFIG_IKCONFIG enabled."
+        )
+    return (
+        "No kernel config found. No config files or kernel images "
+        "were found in the firmware filesystem.\n"
+        "Hint: If you have a vmlinuz path, pass it explicitly via "
+        "the 'path' parameter."
+    )
+
+
+# ---------------------------------------------------------------------------
+# check_kernel_config
+# ---------------------------------------------------------------------------
+
+
+async def _handle_check_kernel_config(
+    input: dict, context: ToolContext
+) -> str:
+    """Run kconfig-hardened-check against a kernel .config to identify
+    security hardening gaps."""
+    config_text = input.get("config_text")
+    path = input.get("path")
+
+    # Resolve the config content
+    if config_text:
+        # Config text provided directly
+        pass
+    elif path:
+        full_path = context.resolve_path(path)
+        if not os.path.isfile(full_path):
+            return f"Error: '{path}' is not a file."
+        # If .gz, decompress first
+        if path.endswith(".gz"):
+            try:
+                with open(full_path, "rb") as f:
+                    config_text = gzip.decompress(f.read()).decode(
+                        "utf-8", errors="replace"
+                    )
+            except Exception as e:
+                return f"Error decompressing '{path}': {e}"
+        else:
+            try:
+                with open(full_path, "r", errors="replace") as f:
+                    config_text = f.read(512_000)
+            except Exception as e:
+                return f"Error reading '{path}': {e}"
+    else:
+        # Try auto-extraction
+        auto_result = await _handle_extract_kernel_config(
+            {}, context
+        )
+        if "lines):\n\n" in auto_result:
+            # Successfully extracted — pull out the config text
+            config_text = auto_result.split("lines):\n\n", 1)[1]
+        else:
+            return (
+                "No kernel config provided and auto-extraction failed.\n"
+                + auto_result
+                + "\n\nProvide config_text or path to a kernel config file."
+            )
+
+    if not config_text or "CONFIG_" not in config_text:
+        return (
+            "The provided content does not appear to be a valid kernel "
+            "config (no CONFIG_* entries found)."
+        )
+
+    # Write config to a temp file for kconfig-hardened-check
+    tmp_fd, tmp_path = tempfile.mkstemp(suffix=".config", prefix="wairz_kconf_")
+    try:
+        with os.fdopen(tmp_fd, "w") as f:
+            f.write(config_text)
+
+        # Try running kconfig-hardened-check
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "kconfig-hardened-check", "-c", tmp_path, "-m", "json",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, stderr = await asyncio.wait_for(
+                proc.communicate(), timeout=60
+            )
+        except FileNotFoundError:
+            return await _fallback_kernel_config_check(config_text)
+        except asyncio.TimeoutError:
+            return "Error: kconfig-hardened-check timed out after 60 seconds."
+
+        # kconfig-hardened-check may return non-zero if there are FAIL results
+        # — that's expected. Only treat it as error if no stdout at all.
+        output = stdout.decode("utf-8", errors="replace").strip()
+        if not output:
+            err = stderr.decode("utf-8", errors="replace").strip()
+            if err:
+                # Might be a version that doesn't support JSON mode
+                return await _fallback_kernel_config_check(config_text)
+            return (
+                "kconfig-hardened-check produced no output.\n"
+                f"stderr: {err}"
+            )
+
+        # Parse JSON output
+        try:
+            data = json.loads(output)
+        except json.JSONDecodeError:
+            # Not JSON — maybe older version, use raw output
+            lines = output.splitlines()
+            return (
+                f"kconfig-hardened-check results ({len(lines)} lines):\n\n"
+                + output
+            )
+
+        return _format_kconfig_results(data)
+
+    finally:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+
+
+def _format_kconfig_results(data: list | dict) -> str:
+    """Format kconfig-hardened-check JSON output into a readable summary."""
+    # The JSON output is a list of check results
+    if isinstance(data, dict):
+        # Some versions wrap in a dict
+        checks = data.get("checks", data.get("results", []))
+    elif isinstance(data, list):
+        checks = data
+    else:
+        return f"Unexpected output format: {type(data)}"
+
+    if not checks:
+        return "kconfig-hardened-check returned no check results."
+
+    # Group by result
+    ok_checks: list[dict] = []
+    fail_checks: list[dict] = []
+    notfound_checks: list[dict] = []
+
+    for check in checks:
+        result = check.get("result", "").upper() if isinstance(check, dict) else ""
+        if "OK" in result:
+            ok_checks.append(check)
+        elif "FAIL" in result:
+            fail_checks.append(check)
+        else:
+            notfound_checks.append(check)
+
+    lines: list[str] = []
+    lines.append("Kernel Config Hardening Check Results")
+    lines.append("=" * 40)
+    lines.append(
+        f"  PASS: {len(ok_checks)}  |  FAIL: {len(fail_checks)}  "
+        f"|  OTHER: {len(notfound_checks)}"
+    )
+    lines.append("")
+
+    if fail_checks:
+        lines.append(f"FAILED CHECKS ({len(fail_checks)}):")
+        lines.append("-" * 40)
+        for check in fail_checks:
+            name = check.get("option", check.get("name", "?"))
+            desired = check.get("desired", check.get("expected", "?"))
+            actual = check.get("actual", check.get("value", "?"))
+            decision = check.get("decision", check.get("reason", ""))
+            line = f"  [FAIL] {name}: {actual} (expected: {desired})"
+            if decision:
+                line += f" — {decision}"
+            lines.append(line)
+        lines.append("")
+
+    if notfound_checks:
+        lines.append(f"NOT FOUND / OTHER ({len(notfound_checks)}):")
+        lines.append("-" * 40)
+        for check in notfound_checks[:30]:
+            name = check.get("option", check.get("name", "?"))
+            result = check.get("result", "?")
+            lines.append(f"  [{result}] {name}")
+        if len(notfound_checks) > 30:
+            lines.append(f"  ... and {len(notfound_checks) - 30} more")
+        lines.append("")
+
+    lines.append(f"PASSED CHECKS: {len(ok_checks)} (not shown)")
+    lines.append("")
+    lines.append(
+        "Tip: Focus on FAIL items. Many are defense-in-depth options — "
+        "prioritize those relevant to the firmware's threat model."
+    )
+
+    return "\n".join(lines)
+
+
+async def _fallback_kernel_config_check(config_text: str) -> str:
+    """Basic kernel config hardening check when kconfig-hardened-check is
+    not installed. Checks a curated set of critical security options."""
+
+    # (option, secure_value, severity, description)
+    checks: list[tuple[str, str, str, str]] = [
+        # Memory protection
+        ("CONFIG_STACKPROTECTOR_STRONG", "y", "high",
+         "Stack buffer overflow protection (strong)"),
+        ("CONFIG_STACKPROTECTOR", "y", "high",
+         "Stack buffer overflow protection"),
+        ("CONFIG_VMAP_STACK", "y", "medium",
+         "Virtually-mapped kernel stacks (guard pages)"),
+        ("CONFIG_RANDOMIZE_BASE", "y", "high",
+         "Kernel ASLR (KASLR)"),
+        ("CONFIG_RANDOMIZE_MEMORY", "y", "medium",
+         "Randomize kernel memory sections"),
+        # Hardened usercopy
+        ("CONFIG_HARDENED_USERCOPY", "y", "high",
+         "Bounds-check user/kernel memory copies"),
+        # Slab hardening
+        ("CONFIG_SLAB_FREELIST_RANDOM", "y", "medium",
+         "Randomize slab freelist"),
+        ("CONFIG_SLAB_FREELIST_HARDENED", "y", "medium",
+         "Harden slab freelist metadata"),
+        # Read-only data
+        ("CONFIG_STRICT_KERNEL_RWX", "y", "high",
+         "Read-only kernel code and data"),
+        ("CONFIG_STRICT_MODULE_RWX", "y", "high",
+         "Read-only module code and data"),
+        # Dangerous features that should be disabled
+        ("CONFIG_DEVMEM", "n", "high",
+         "/dev/mem access (should be disabled)"),
+        ("CONFIG_DEVKMEM", "n", "high",
+         "/dev/kmem access (should be disabled)"),
+        ("CONFIG_KEXEC", "n", "medium",
+         "kexec (can bypass secure boot)"),
+        ("CONFIG_HIBERNATION", "n", "low",
+         "Hibernation (exposes memory image)"),
+        ("CONFIG_ACPI_CUSTOM_METHOD", "n", "high",
+         "Custom ACPI methods (arbitrary code execution)"),
+        # Module signing
+        ("CONFIG_MODULE_SIG", "y", "high",
+         "Module signature verification"),
+        ("CONFIG_MODULE_SIG_FORCE", "y", "medium",
+         "Require valid module signatures"),
+        # Debug / info leak
+        ("CONFIG_KALLSYMS", "n", "medium",
+         "Kernel symbol table (information leak)"),
+        ("CONFIG_DEBUG_FS", "n", "medium",
+         "debugfs (information leak / attack surface)"),
+        ("CONFIG_KPROBES", "n", "low",
+         "Kprobes (kernel probing infrastructure)"),
+        # Security modules
+        ("CONFIG_SECURITY", "y", "medium",
+         "Security frameworks enabled"),
+        ("CONFIG_SECCOMP", "y", "high",
+         "seccomp syscall filtering"),
+        ("CONFIG_SECCOMP_FILTER", "y", "high",
+         "seccomp BPF filter"),
+        # Integrity
+        ("CONFIG_BUG_ON_DATA_CORRUPTION", "y", "medium",
+         "Panic on detected data corruption"),
+        ("CONFIG_FORTIFY_SOURCE", "y", "high",
+         "Compile-time buffer overflow detection"),
+        ("CONFIG_INIT_ON_ALLOC_DEFAULT_ON", "y", "medium",
+         "Zero memory on allocation"),
+    ]
+
+    # Parse config into a dict
+    config_map: dict[str, str] = {}
+    for line in config_text.splitlines():
+        line = line.strip()
+        if line.startswith("#") and "is not set" in line:
+            # # CONFIG_FOO is not set
+            m = re.match(r"#\s*(CONFIG_\w+)\s+is not set", line)
+            if m:
+                config_map[m.group(1)] = "n"
+        elif line.startswith("CONFIG_"):
+            m = re.match(r"(CONFIG_\w+)=(.+)", line)
+            if m:
+                config_map[m.group(1)] = m.group(2)
+
+    pass_count = 0
+    fail_items: list[str] = []
+    notfound_items: list[str] = []
+
+    for option, secure_val, severity, desc in checks:
+        actual = config_map.get(option)
+        if actual is None:
+            notfound_items.append(f"  [NOTFOUND] {option} — {desc}")
+        elif actual == secure_val:
+            pass_count += 1
+        else:
+            fail_items.append(
+                f"  [{severity.upper()}] {option}={actual} "
+                f"(expected: {secure_val}) — {desc}"
+            )
+
+    lines: list[str] = []
+    lines.append(
+        "Kernel Config Hardening Check (built-in fallback)"
+    )
+    lines.append(
+        "Note: kconfig-hardened-check is not installed. "
+        "Using a reduced set of 26 critical checks."
+    )
+    lines.append("=" * 50)
+    lines.append(
+        f"  PASS: {pass_count}  |  FAIL: {len(fail_items)}  "
+        f"|  NOT FOUND: {len(notfound_items)}"
+    )
+    lines.append("")
+
+    if fail_items:
+        lines.append(f"FAILED CHECKS ({len(fail_items)}):")
+        lines.append("-" * 40)
+        lines.extend(fail_items)
+        lines.append("")
+
+    if notfound_items:
+        lines.append(f"NOT FOUND ({len(notfound_items)}):")
+        lines.append("-" * 40)
+        lines.extend(notfound_items)
+        lines.append("")
+
+    lines.append(f"PASSED CHECKS: {pass_count}")
+    lines.append("")
+    lines.append(
+        "Install kconfig-hardened-check for a comprehensive analysis "
+        "(400+ checks): pip install kconfig-hardened-check"
+    )
+
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# analyze_selinux_policy / check_selinux_enforcement
+# ---------------------------------------------------------------------------
+
+
+async def _handle_analyze_selinux_policy(
+    input: dict, context: ToolContext
+) -> str:
+    """Full SELinux policy analysis for Android firmware."""
+    from app.services.selinux_service import SELinuxService
+
+    loop = asyncio.get_running_loop()
+    svc = SELinuxService(context.extracted_path)
+    result = await loop.run_in_executor(None, svc.analyze_policy)
+
+    if not result["has_selinux"]:
+        return (
+            "No SELinux policy found in firmware. "
+            "SELinux analysis is only available for Android firmware with "
+            "policy files in /system/etc/selinux/ or similar locations."
+        )
+
+    lines: list[str] = ["# SELinux Policy Analysis", ""]
+
+    # Enforcement status
+    enf = result["enforcement"]
+    if enf.get("enforcing") is True:
+        lines.append("Enforcement: ENFORCING")
+    elif enf.get("enforcing") is False:
+        lines.append("Enforcement: PERMISSIVE / DISABLED (security risk)")
+    else:
+        lines.append("Enforcement: UNKNOWN")
+    if enf.get("source"):
+        lines.append(f"  Source: {enf['source']}")
+    if enf.get("details"):
+        for k, v in enf["details"].items():
+            lines.append(f"  {k} = {v}")
+    lines.append("")
+
+    # Policy files
+    lines.append(f"Policy files found: {len(result['policy_files'])}")
+    for pf in result["policy_files"][:30]:
+        lines.append(f"  {pf}")
+    if len(result["policy_files"]) > 30:
+        lines.append(f"  ... and {len(result['policy_files']) - 30} more")
+    lines.append("")
+
+    # CIL stats
+    cs = result.get("cil_stats", {})
+    if cs.get("total_cil_files", 0) > 0:
+        lines.append("CIL policy statistics:")
+        lines.append(f"  CIL files: {cs.get('total_cil_files', 0)}")
+        lines.append(f"  Type declarations: {cs.get('type_declarations', 0)}")
+        lines.append(f"  Allow rules: {cs.get('allow_rules', 0)}")
+        lines.append(f"  Neverallow rules: {cs.get('neverallow_rules', 0)}")
+        lines.append(f"  Type transitions: {cs.get('type_transitions', 0)}")
+        lines.append(f"  Permissive declarations: {cs.get('typepermissive', 0)}")
+        lines.append("")
+
+    # Permissive domains
+    perm = result["permissive_domains"]
+    if perm:
+        lines.append(f"PERMISSIVE DOMAINS ({len(perm)}) — security risk:")
+        for d in perm[:50]:
+            lines.append(f"  - {d}")
+        if len(perm) > 50:
+            lines.append(f"  ... and {len(perm) - 50} more")
+        lines.append("")
+        lines.append(
+            "Permissive domains bypass SELinux enforcement. Processes running "
+            "in these domains can perform any action — SELinux logs violations "
+            "but does not block them. This is a significant security weakness."
+        )
+    else:
+        lines.append("No permissive domains found (good).")
+
+    return "\n".join(lines)
+
+
+async def _handle_check_selinux_enforcement(
+    input: dict, context: ToolContext
+) -> str:
+    """Quick SELinux enforcement status check."""
+    from app.services.selinux_service import SELinuxService
+
+    loop = asyncio.get_running_loop()
+    svc = SELinuxService(context.extracted_path)
+
+    # Check if there are any policy files at all
+    policy_files = await loop.run_in_executor(None, svc._find_policy_files)
+    if not policy_files:
+        return (
+            "No SELinux policy found in firmware. "
+            "SELinux analysis is only available for Android firmware."
+        )
+
+    enforcement = await loop.run_in_executor(None, svc.check_enforcement)
+
+    lines: list[str] = []
+
+    # Enforcement
+    if enforcement.get("enforcing") is True:
+        lines.append("SELinux: ENFORCING")
+    elif enforcement.get("enforcing") is False:
+        lines.append("SELinux: NOT ENFORCING (security risk)")
+    else:
+        lines.append("SELinux: UNKNOWN enforcement status")
+    lines.append(f"Source: {enforcement.get('source', 'unknown')}")
+
+    if enforcement.get("details"):
+        for k, v in enforcement["details"].items():
+            lines.append(f"  {k} = {v}")
+    lines.append("")
+
+    # Quick permissive domain check
+    permissive = await loop.run_in_executor(
+        None, svc._find_permissive_domains_all, policy_files
+    )
+    unique = sorted(set(permissive))
+    if unique:
+        lines.append(f"Permissive domains: {len(unique)}")
+        for d in unique[:20]:
+            lines.append(f"  - {d}")
+        if len(unique) > 20:
+            lines.append(f"  ... and {len(unique) - 20} more")
+        lines.append("")
+        lines.append("These domains weaken SELinux protection.")
+    else:
+        lines.append("No permissive domains found.")
+
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# check_compliance (ETSI EN 303 645)
+# ---------------------------------------------------------------------------
+
+
+async def _handle_check_compliance(input: dict, context: ToolContext) -> str:
+    """Generate a compliance report against a security standard."""
+    standard = input.get("standard", "etsi-en-303-645")
+
+    if standard != "etsi-en-303-645":
+        return f"Unsupported standard: {standard}. Currently supported: etsi-en-303-645"
+
+    from app.services.compliance_service import ETSIComplianceService
+
+    service = ETSIComplianceService(context.db)
+    report = await service.generate_report(
+        project_id=context.project_id,
+        firmware_id=context.firmware_id,
+    )
+    return service.format_report_text(report)
+
+
+# ---------------------------------------------------------------------------
+# scan_scripts (Semgrep)
+# ---------------------------------------------------------------------------
+
+_SEMGREP_RULES_PATH = Path(__file__).parent / "semgrep_rules" / "firmware.yaml"
+
+# Map language filter names to file extensions for pre-filtering
+_LANG_EXTENSIONS: dict[str, set[str]] = {
+    "bash": {".sh", ".bash", ".ash"},
+    "php": {".php", ".cgi", ".inc"},
+    "lua": {".lua"},
+    "python": {".py"},
+}
+
+
+async def _handle_scan_scripts(input: dict, context: ToolContext) -> str:
+    """Scan firmware scripts with Semgrep for security issues."""
+
+    if not shutil.which("semgrep"):
+        return (
+            "Error: semgrep is not installed. "
+            "Install it with: pip install semgrep  "
+            "(or see https://semgrep.dev/docs/getting-started/)"
+        )
+
+    if not _SEMGREP_RULES_PATH.is_file():
+        return f"Error: Semgrep rules file not found at {_SEMGREP_RULES_PATH}"
+
+    # Resolve target path
+    target_rel = input.get("path") or "/"
+    target_path = context.resolve_path(target_rel)
+
+    if not os.path.isdir(target_path):
+        return (
+            f"Error: path '{target_rel}' is not a directory "
+            "in the firmware filesystem."
+        )
+
+    # Build language filter args
+    languages = input.get("languages")
+    if languages:
+        if isinstance(languages, str):
+            languages = [lang.strip() for lang in languages.split(",")]
+        valid = set(_LANG_EXTENSIONS.keys())
+        invalid = [lang for lang in languages if lang not in valid]
+        if invalid:
+            return (
+                f"Error: unsupported language(s): {', '.join(invalid)}. "
+                f"Supported: {', '.join(sorted(valid))}"
+            )
+
+    cmd = [
+        "semgrep", "scan",
+        "--config", str(_SEMGREP_RULES_PATH),
+        "--json",
+        "--no-git-ignore",
+        "--quiet",
+        target_path,
+    ]
+
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await asyncio.wait_for(
+            proc.communicate(), timeout=120
+        )
+    except asyncio.TimeoutError:
+        return (
+            "Error: Semgrep scan timed out after 120 seconds. "
+            "Try scanning a smaller directory."
+        )
+    except Exception as exc:
+        return f"Error running semgrep: {exc}"
+
+    # Parse JSON output
+    try:
+        data = json.loads(stdout)
+    except json.JSONDecodeError:
+        err_msg = (
+            stderr.decode(errors="replace").strip()
+            if stderr else "unknown error"
+        )
+        if proc.returncode != 0 and not stdout:
+            return (
+                f"Semgrep exited with code {proc.returncode}: {err_msg}"
+            )
+        return f"Error: could not parse Semgrep output. stderr: {err_msg}"
+
+    results = data.get("results", [])
+    errors = data.get("errors", [])
+
+    # Apply language filter if specified
+    if languages:
+        allowed_exts: set[str] = set()
+        for lang in languages:
+            allowed_exts.update(_LANG_EXTENSIONS[lang])
+        results = [
+            r for r in results
+            if any(
+                r.get("path", "").endswith(ext) for ext in allowed_exts
+            )
+        ]
+
+    lines: list[str] = []
+
+    if errors:
+        for err in errors[:5]:
+            msg = (
+                err.get("message", str(err))
+                if isinstance(err, dict) else str(err)
+            )
+            lines.append(f"Warning: {msg}")
+        lines.append("")
+
+    lines.append(f"Semgrep scan complete: {len(results)} finding(s)")
+    lines.append("")
+
+    if not results:
+        lines.append("No issues detected in scanned scripts.")
+        return "\n".join(lines)
+
+    # Group by category
+    by_category: dict[str, list] = {}
+    extracted_root = context.extracted_path
+    for r in results:
+        meta = r.get("extra", {}).get("metadata", {})
+        category = meta.get("category", "other")
+        by_category.setdefault(category, []).append(r)
+
+    for category, findings in sorted(by_category.items()):
+        label = category.replace("_", " ").upper()
+        lines.append(f"== {label} ({len(findings)}) ==")
+        for f in findings[:25]:
+            severity = f.get("extra", {}).get("severity", "WARNING")
+            rule_id = f.get("check_id", "unknown")
+            file_path = _rel(f.get("path", ""), extracted_root)
+            line_start = f.get("start", {}).get("line", "?")
+            line_end = f.get("end", {}).get("line", "?")
+            message = f.get("extra", {}).get("message", "")
+            matched = f.get("extra", {}).get("lines", "").strip()
+
+            lines.append(f"  [{severity}] {rule_id}")
+            lines.append(f"    File: {file_path}:{line_start}-{line_end}")
+            if matched:
+                match_lines = matched.split("\n")[:2]
+                for ml in match_lines:
+                    lines.append(f"    > {ml}")
+            if message:
+                lines.append(f"    {message}")
+            lines.append("")
+        if len(findings) > 25:
+            lines.append(f"  ... and {len(findings) - 25} more")
+            lines.append("")
+
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# check_secure_boot
+# ---------------------------------------------------------------------------
+
+# Weak key indicators in certificate CN/issuer fields
+_WEAK_KEY_INDICATORS = [
+    "test", "debug", "sample", "example", "do not trust", "do not ship",
+    "insecure", "unsigned", "placeholder",
+]
+
+
+def _check_weak_cert_cn(cert_data: bytes, file_path: str, real_root: str) -> list[dict]:
+    """Check a certificate for weak key indicators. Returns list of warnings."""
+    try:
+        from cryptography import x509
+    except ImportError:
+        return []
+
+    cert = None
+    try:
+        cert = x509.load_pem_x509_certificate(cert_data)
+    except Exception:
+        try:
+            cert = x509.load_der_x509_certificate(cert_data)
+        except Exception:
+            return []
+
+    if cert is None:
+        return []
+
+    warnings: list[dict] = []
+    rel_path = "/" + os.path.relpath(file_path, real_root)
+
+    # Check subject CN and issuer for weak indicators
+    for attr_source, label in [
+        (cert.subject, "subject"),
+        (cert.issuer, "issuer"),
+    ]:
+        cn_attrs = attr_source.get_attributes_for_oid(x509.oid.NameOID.COMMON_NAME)
+        for attr in cn_attrs:
+            cn_lower = attr.value.lower()
+            for indicator in _WEAK_KEY_INDICATORS:
+                if indicator in cn_lower:
+                    warnings.append({
+                        "severity": "CRITICAL",
+                        "file": rel_path,
+                        "detail": (
+                            f"Certificate {label} CN contains '{indicator}': "
+                            f"{attr.value}"
+                        ),
+                    })
+
+    # Self-signed in production context
+    if cert.issuer == cert.subject:
+        warnings.append({
+            "severity": "HIGH",
+            "file": rel_path,
+            "detail": (
+                f"Self-signed certificate used in secure boot context: "
+                f"{cert.subject.rfc4514_string()}"
+            ),
+        })
+
+    return warnings
+
+
+async def _handle_check_secure_boot(input: dict, context: ToolContext) -> str:
+    """Detect and assess secure boot mechanisms in firmware.
+
+    Checks for U-Boot verified boot, dm-verity (Android), and UEFI Secure Boot.
+    Analyzes certificate chains and flags weak/test keys.
+    """
+    extracted_root = os.path.realpath(context.extracted_path)
+    real_root = context.real_root_for(input.get("path", "/"))
+
+    mechanisms: list[dict] = []
+    weak_key_warnings: list[dict] = []
+
+    # -----------------------------------------------------------------------
+    # A. U-Boot Verified Boot
+    # -----------------------------------------------------------------------
+    uboot: dict = {
+        "name": "U-Boot Verified Boot",
+        "detected": False,
+        "status": "not_detected",
+        "evidence": [],
+    }
+
+    # Search for U-Boot environment files
+    uboot_env_files = ["fw_env.config", "u-boot.env", "uboot.env"]
+    for dirpath, _dirs, files in safe_walk(extracted_root):
+        for fname in files:
+            if fname in uboot_env_files:
+                rel = _rel(os.path.join(dirpath, fname), extracted_root)
+                uboot["evidence"].append(f"U-Boot env file: {rel}")
+                uboot["detected"] = True
+
+    # Look for FIT image indicators in device tree files
+    fit_signature_found = False
+    for dirpath, _dirs, files in safe_walk(extracted_root):
+        for fname in files:
+            if fname.endswith((".dtb", ".dts", ".its", ".itb")):
+                fpath = os.path.join(dirpath, fname)
+                try:
+                    with open(fpath, "r", errors="replace") as f:
+                        content = f.read(256_000)
+                    if "signature" in content.lower() or "hash" in content.lower():
+                        rel = _rel(fpath, extracted_root)
+                        uboot["evidence"].append(
+                            f"FIT signature/hash in device tree: {rel}"
+                        )
+                        fit_signature_found = True
+                        uboot["detected"] = True
+                except (OSError, PermissionError):
+                    continue
+
+    # Check for verified boot CONFIG in kernel config
+    for dirpath, _dirs, files in safe_walk(extracted_root):
+        for fname in files:
+            if fname in (".config", "config.gz") or fname.startswith("config-"):
+                fpath = os.path.join(dirpath, fname)
+                try:
+                    if fname.endswith(".gz"):
+                        with open(fpath, "rb") as f:
+                            content = gzip.decompress(f.read()).decode(
+                                "utf-8", errors="replace"
+                            )
+                    else:
+                        with open(fpath, "r", errors="replace") as f:
+                            content = f.read(512_000)
+                    if "CONFIG_FIT_SIGNATURE" in content:
+                        rel = _rel(fpath, extracted_root)
+                        uboot["evidence"].append(
+                            f"CONFIG_FIT_SIGNATURE found in: {rel}"
+                        )
+                        uboot["detected"] = True
+                        fit_signature_found = True
+                except (OSError, PermissionError):
+                    continue
+
+    # Check for public key files in /etc/ used for U-Boot verification
+    for dirpath, _dirs, files in safe_walk(extracted_root):
+        for fname in files:
+            if fname.endswith((".dtb",)) and "key" in fname.lower():
+                fpath = os.path.join(dirpath, fname)
+                rel = _rel(fpath, extracted_root)
+                uboot["evidence"].append(f"Possible signing key DTB: {rel}")
+                uboot["detected"] = True
+
+    # Check for uImage magic bytes in binary files (0x27051956)
+    uimage_magic = b"\x27\x05\x19\x56"
+    for dirpath, _dirs, files in safe_walk(extracted_root):
+        for fname in files:
+            if fname.lower() in (
+                "uimage", "firmware.bin", "kernel.bin", "image.bin",
+            ):
+                fpath = os.path.join(dirpath, fname)
+                try:
+                    with open(fpath, "rb") as f:
+                        header = f.read(4)
+                    if header == uimage_magic:
+                        rel = _rel(fpath, extracted_root)
+                        uboot["evidence"].append(f"uImage format binary: {rel}")
+                        uboot["detected"] = True
+                except (OSError, PermissionError):
+                    continue
+
+    if uboot["detected"]:
+        if fit_signature_found:
+            uboot["status"] = "enabled"
+        else:
+            uboot["status"] = "partial"
+            uboot["evidence"].append(
+                "WARNING: U-Boot environment found but no FIT signature "
+                "verification detected — boot may not be verified"
+            )
+
+    mechanisms.append(uboot)
+
+    # -----------------------------------------------------------------------
+    # B. dm-verity (Android)
+    # -----------------------------------------------------------------------
+    dmverity: dict = {
+        "name": "dm-verity / Android Verified Boot",
+        "detected": False,
+        "status": "not_detected",
+        "evidence": [],
+    }
+
+    # Search for verity_key files
+    for dirpath, _dirs, files in safe_walk(extracted_root):
+        for fname in files:
+            if "verity_key" in fname.lower():
+                fpath = os.path.join(dirpath, fname)
+                rel = _rel(fpath, extracted_root)
+                dmverity["evidence"].append(f"Verity key file: {rel}")
+                dmverity["detected"] = True
+
+                # Check cert for weak keys
+                try:
+                    with open(fpath, "rb") as f:
+                        cert_data = f.read(100_000)
+                    warnings = _check_weak_cert_cn(
+                        cert_data, fpath, real_root
+                    )
+                    weak_key_warnings.extend(warnings)
+                except (OSError, PermissionError):
+                    pass
+
+    # Parse fstab files for verify or avb flags
+    fstab_verify_found = False
+    for dirpath, _dirs, files in safe_walk(extracted_root):
+        for fname in files:
+            if fname.startswith("fstab") or fname == "fstab":
+                fpath = os.path.join(dirpath, fname)
+                try:
+                    with open(fpath, "r", errors="replace") as f:
+                        for line in f:
+                            line = line.strip()
+                            if not line or line.startswith("#"):
+                                continue
+                            parts = line.split()
+                            # Android fstab: src mnt_point type mnt_flags fs_mgr_flags
+                            if len(parts) >= 5:
+                                fs_mgr = parts[4]
+                                if "verify" in fs_mgr or "avb" in fs_mgr:
+                                    rel = _rel(fpath, extracted_root)
+                                    flag = (
+                                        "avb" if "avb" in fs_mgr else "verify"
+                                    )
+                                    dmverity["evidence"].append(
+                                        f"fstab {flag} flag for {parts[1]}: "
+                                        f"{rel}"
+                                    )
+                                    dmverity["detected"] = True
+                                    fstab_verify_found = True
+                except (OSError, PermissionError):
+                    continue
+
+    # Look for vbmeta partition indicators
+    for dirpath, _dirs, files in safe_walk(extracted_root):
+        for fname in files:
+            if "vbmeta" in fname.lower():
+                fpath = os.path.join(dirpath, fname)
+                rel = _rel(fpath, extracted_root)
+                dmverity["evidence"].append(f"vbmeta partition image: {rel}")
+                dmverity["detected"] = True
+
+    # Check build.prop for verified boot state
+    for dirpath, _dirs, files in safe_walk(extracted_root):
+        for fname in files:
+            if fname in ("build.prop", "default.prop"):
+                fpath = os.path.join(dirpath, fname)
+                try:
+                    with open(fpath, "r", errors="replace") as f:
+                        for line in f:
+                            if "ro.boot.verifiedbootstate" in line:
+                                rel = _rel(fpath, extracted_root)
+                                dmverity["evidence"].append(
+                                    f"Verified boot state: {line.strip()} "
+                                    f"({rel})"
+                                )
+                                dmverity["detected"] = True
+                            elif "ro.boot.veritymode" in line:
+                                rel = _rel(fpath, extracted_root)
+                                dmverity["evidence"].append(
+                                    f"Verity mode: {line.strip()} ({rel})"
+                                )
+                                dmverity["detected"] = True
+                except (OSError, PermissionError):
+                    continue
+
+    if dmverity["detected"]:
+        if fstab_verify_found:
+            dmverity["status"] = "enabled"
+        else:
+            dmverity["status"] = "partial"
+
+    mechanisms.append(dmverity)
+
+    # -----------------------------------------------------------------------
+    # C. UEFI Secure Boot
+    # -----------------------------------------------------------------------
+    uefi: dict = {
+        "name": "UEFI Secure Boot",
+        "detected": False,
+        "status": "not_detected",
+        "evidence": [],
+    }
+
+    # Search for EFI directories and certificate files
+    efi_cert_files: list[str] = []
+    uefi_key_names = {"pk", "kek", "db", "dbx", "pk.cer", "kek.cer",
+                      "db.cer", "dbx.cer", "pk.auth", "kek.auth",
+                      "db.auth", "dbx.auth"}
+
+    for dirpath, _dirs, files in safe_walk(extracted_root):
+        # Detect EFI directory structures
+        dir_lower = os.path.basename(dirpath).lower()
+        if dir_lower == "efi" or "/efi/" in dirpath.lower():
+            rel = _rel(dirpath, extracted_root)
+            if not any("EFI directory" in e for e in uefi["evidence"]):
+                uefi["evidence"].append(f"EFI directory found: {rel}")
+            uefi["detected"] = True
+
+        for fname in files:
+            fname_lower = fname.lower()
+
+            # Check for PK/KEK/db/dbx files
+            if fname_lower in uefi_key_names:
+                fpath = os.path.join(dirpath, fname)
+                rel = _rel(fpath, extracted_root)
+                uefi["evidence"].append(
+                    f"UEFI key database file: {rel}"
+                )
+                uefi["detected"] = True
+                efi_cert_files.append(fpath)
+
+            # Check for .cer/.auth files in EFI paths
+            elif (
+                fname_lower.endswith((".cer", ".auth"))
+                and "/efi/" in dirpath.lower()
+            ):
+                fpath = os.path.join(dirpath, fname)
+                rel = _rel(fpath, extracted_root)
+                uefi["evidence"].append(f"EFI certificate: {rel}")
+                uefi["detected"] = True
+                efi_cert_files.append(fpath)
+
+    # Parse any found EFI certificates for weak keys
+    for cert_path in efi_cert_files:
+        try:
+            with open(cert_path, "rb") as f:
+                cert_data = f.read(100_000)
+            warnings = _check_weak_cert_cn(cert_data, cert_path, real_root)
+            weak_key_warnings.extend(warnings)
+        except (OSError, PermissionError):
+            continue
+
+    if uefi["detected"]:
+        has_pk = any(
+            "pk" in e.lower() and "key database" in e.lower()
+            for e in uefi["evidence"]
+        )
+        if has_pk:
+            uefi["status"] = "enabled"
+        else:
+            uefi["status"] = "partial"
+            uefi["evidence"].append(
+                "WARNING: EFI structure found but no Platform Key (PK) "
+                "detected — Secure Boot may not be fully configured"
+            )
+
+    mechanisms.append(uefi)
+
+    # -----------------------------------------------------------------------
+    # D. Build report
+    # -----------------------------------------------------------------------
+    detected = [m for m in mechanisms if m["detected"]]
+    lines: list[str] = []
+
+    if not detected:
+        lines.append("## Secure Boot Assessment: NO MECHANISMS DETECTED")
+        lines.append("")
+        lines.append(
+            "No secure boot mechanisms (U-Boot verified boot, dm-verity, "
+            "UEFI Secure Boot) were found in this firmware image."
+        )
+        lines.append("")
+        lines.append(
+            "This means the firmware may be vulnerable to boot-level "
+            "tampering, rootkit installation, and firmware replacement attacks."
+        )
+        return "\n".join(lines)
+
+    # Overall posture
+    all_enabled = all(m["status"] == "enabled" for m in detected)
+    any_partial = any(m["status"] == "partial" for m in detected)
+
+    if all_enabled and not weak_key_warnings:
+        posture = "STRONG"
+    elif all_enabled and weak_key_warnings:
+        posture = "WEAKENED (weak keys detected)"
+    elif any_partial:
+        posture = "PARTIAL"
+    else:
+        posture = "PRESENT"
+
+    lines.append(f"## Secure Boot Assessment: {posture}")
+    lines.append(f"Mechanisms detected: {len(detected)}/{len(mechanisms)}")
+    lines.append("")
+
+    for m in mechanisms:
+        status_label = {
+            "enabled": "ENABLED",
+            "partial": "PARTIAL",
+            "not_detected": "NOT DETECTED",
+        }.get(m["status"], m["status"].upper())
+
+        lines.append(f"### {m['name']}: {status_label}")
+        if m["evidence"]:
+            for ev in m["evidence"]:
+                prefix = "  ! " if ev.startswith("WARNING") else "  - "
+                lines.append(f"{prefix}{ev}")
+        else:
+            lines.append("  (no evidence found)")
+        lines.append("")
+
+    # Weak key warnings
+    if weak_key_warnings:
+        lines.append("### WEAK KEY WARNINGS")
+        for w in weak_key_warnings:
+            lines.append(f"  [{w['severity']}] {w['file']}: {w['detail']}")
+        lines.append("")
+
+    # Summary
+    lines.append("### Summary")
+    for m in detected:
+        lines.append(f"  - {m['name']}: {m['status'].upper()}")
+    if weak_key_warnings:
+        lines.append(
+            f"  - {len(weak_key_warnings)} weak key warning(s) — "
+            "review certificates for test/debug keys"
+        )
+
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
 # Registration
 # ---------------------------------------------------------------------------
 
@@ -1192,4 +2458,200 @@ def register_security_tools(registry: ToolRegistry) -> None:
             "required": [],
         },
         handler=_handle_scan_with_yara,
+    )
+
+    registry.register(
+        name="extract_kernel_config",
+        description=(
+            "Extract the kernel .config from firmware. Searches for embedded "
+            "IKCONFIG in kernel images (vmlinuz, zImage, uImage) using the "
+            "IKCFG_ST magic marker, and checks common locations like "
+            "/proc/config.gz, /boot/config-*, /lib/modules/*/build/.config. "
+            "Pass a specific kernel image path, or omit to auto-search."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": (
+                        "Path to a kernel image (vmlinuz, zImage, etc.), "
+                        "config.gz, or .config file. If omitted, searches "
+                        "common firmware locations automatically."
+                    ),
+                },
+            },
+            "required": [],
+        },
+        handler=_handle_extract_kernel_config,
+    )
+
+    registry.register(
+        name="check_kernel_config",
+        description=(
+            "Analyze a kernel .config for security hardening gaps. Uses "
+            "kconfig-hardened-check if installed (400+ checks), otherwise "
+            "falls back to a built-in set of 26 critical checks covering "
+            "stack protection, KASLR, FORTIFY_SOURCE, seccomp, /dev/mem, "
+            "module signing, and more. Provide config_text directly, a "
+            "path to a config file, or omit both to auto-extract."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "config_text": {
+                    "type": "string",
+                    "description": (
+                        "Raw kernel config text (from extract_kernel_config). "
+                        "If omitted, uses 'path' or auto-extracts."
+                    ),
+                },
+                "path": {
+                    "type": "string",
+                    "description": (
+                        "Path to a kernel .config file or config.gz. "
+                        "If omitted and no config_text, auto-extracts."
+                    ),
+                },
+            },
+            "required": [],
+        },
+        handler=_handle_check_kernel_config,
+    )
+
+    # ----- SELinux policy analysis -----
+
+    registry.register(
+        name="analyze_selinux_policy",
+        description=(
+            "Analyze SELinux policy in Android firmware. Finds policy files "
+            "(CIL, binary sepolicy) in /system/etc/selinux/ and related "
+            "directories, identifies permissive domains, counts allow/neverallow "
+            "rules, and checks enforcement status. Works offline using CIL text "
+            "parsing with optional setools/seinfo fallback for binary policies. "
+            "Only applicable to Android firmware."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {},
+            "required": [],
+        },
+        handler=_handle_analyze_selinux_policy,
+    )
+
+    registry.register(
+        name="check_selinux_enforcement",
+        description=(
+            "Quick check of SELinux enforcement status and permissive domains "
+            "in Android firmware. Reads build.prop for ro.boot.selinux and "
+            "related properties, and lists any permissive domains that weaken "
+            "the security posture. Only applicable to Android firmware."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {},
+            "required": [],
+        },
+        handler=_handle_check_selinux_enforcement,
+    )
+
+    registry.register(
+        name="check_compliance",
+        description=(
+            "Generate a compliance report against a security standard. "
+            "Maps all existing findings to the standard's provisions and "
+            "returns a compliance matrix with pass/fail/partial/not_tested "
+            "status for each provision. Currently supports ETSI EN 303 645 "
+            "(Cyber Security for Consumer IoT), which covers 13 provisions: "
+            "default passwords, vulnerability management, software updates, "
+            "credential storage, secure communication, attack surface, "
+            "software integrity, data security, resilience, telemetry, "
+            "data deletion, installation, and input validation. "
+            "Run security analysis tools first for best coverage."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "standard": {
+                    "type": "string",
+                    "description": (
+                        "The compliance standard to check against. "
+                        "Currently supported: 'etsi-en-303-645' (default)."
+                    ),
+                    "default": "etsi-en-303-645",
+                },
+            },
+            "required": [],
+        },
+        handler=_handle_check_compliance,
+    )
+
+    registry.register(
+        name="scan_scripts",
+        description=(
+            "Scan firmware shell scripts, PHP, Lua, and Python files for "
+            "security issues using Semgrep with firmware-specific rules. "
+            "Detects: command injection (eval, system, exec, popen), "
+            "insecure downloads (HTTP without TLS, disabled cert checks), "
+            "hardcoded credentials (passwords, API keys), insecure "
+            "permissions (chmod 777/666/o+w), dangerous dynamic execution "
+            "(loadstring, eval, assert), and debug artifacts (set -x). "
+            "Requires semgrep CLI to be installed."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": (
+                        "Directory to scan within the firmware filesystem "
+                        "(e.g. '/etc/init.d', '/usr/lib/lua'). "
+                        "Defaults to the entire firmware root."
+                    ),
+                },
+                "languages": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": (
+                        "Filter results to specific languages: "
+                        "'bash', 'php', 'lua', 'python'. "
+                        "Omit to scan all supported languages."
+                    ),
+                },
+            },
+            "required": [],
+        },
+        handler=_handle_scan_scripts,
+    )
+
+    # ----- Secure boot chain analysis -----
+
+    registry.register(
+        name="check_secure_boot",
+        description=(
+            "Detect and assess secure boot mechanisms in firmware. "
+            "Checks for U-Boot verified boot (FIT signatures, CONFIG_FIT_SIGNATURE, "
+            "signing key DTBs), dm-verity / Android Verified Boot (verity_key files, "
+            "fstab verify/avb flags, vbmeta partitions, build.prop boot state), and "
+            "UEFI Secure Boot (EFI directories, PK/KEK/db/dbx key databases, "
+            ".cer/.auth certificate files). Also performs weak key detection across "
+            "all mechanisms — flags certificates with test/debug/sample CNs and "
+            "self-signed certs in boot verification contexts. Returns a posture "
+            "assessment: STRONG, WEAKENED, PARTIAL, or NOT DETECTED."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": (
+                        "Optional path within the firmware filesystem to "
+                        "restrict the search. Defaults to scanning the "
+                        "entire firmware root."
+                    ),
+                },
+            },
+            "required": [],
+        },
+        handler=_handle_check_secure_boot,
     )
