@@ -216,6 +216,106 @@ def diff_binary(binary_a_path: str, binary_b_path: str, binary_rel_path: str) ->
     return result
 
 
+MAX_TEXT_DIFF_SIZE = 512 * 1024  # 512 KB per file for text diffing
+
+# Extensions commonly containing readable/diffable content in firmware
+_TEXT_EXTENSIONS = frozenset({
+    ".conf", ".cfg", ".ini", ".json", ".xml", ".yaml", ".yml",
+    ".sh", ".ash", ".bash", ".csh", ".lua", ".py", ".pl", ".rb",
+    ".html", ".htm", ".css", ".js", ".php", ".cgi",
+    ".txt", ".log", ".md", ".csv", ".tsv",
+    ".service", ".timer", ".mount", ".socket", ".target",
+    ".rules", ".pem", ".crt", ".key",
+})
+
+# Paths that are always interesting for firmware comparison
+_TEXT_PATH_PATTERNS = (
+    "/etc/", "/usr/share/", "/www/", "/opt/",
+    "init.d/", "rc.d/", "crontab",
+)
+
+
+def is_diffable_text(path: str, abs_path: str) -> bool:
+    """Check if a file is likely a text file worth diffing."""
+    _, ext = os.path.splitext(path.lower())
+    if ext in _TEXT_EXTENSIONS:
+        return True
+    if any(p in path for p in _TEXT_PATH_PATTERNS):
+        # Check if it's actually text by reading first bytes
+        try:
+            with open(abs_path, "rb") as f:
+                chunk = f.read(512)
+                if b"\x00" in chunk:
+                    return False
+                return True
+        except OSError:
+            return False
+    return False
+
+
+def diff_text_file(path_a: str, path_b: str, rel_path: str) -> dict:
+    """Generate a unified diff between two text files.
+
+    Returns a dict with the diff lines and metadata.
+    """
+    import difflib
+
+    result: dict = {
+        "path": rel_path,
+        "diff": "",
+        "lines_added": 0,
+        "lines_removed": 0,
+        "truncated": False,
+        "error": None,
+    }
+
+    try:
+        size_a = os.path.getsize(path_a) if os.path.exists(path_a) else 0
+        size_b = os.path.getsize(path_b) if os.path.exists(path_b) else 0
+
+        if size_a > MAX_TEXT_DIFF_SIZE or size_b > MAX_TEXT_DIFF_SIZE:
+            result["error"] = f"File too large for text diff ({max(size_a, size_b)} bytes)"
+            return result
+
+        lines_a: list[str] = []
+        lines_b: list[str] = []
+
+        if os.path.exists(path_a):
+            with open(path_a, "r", errors="replace") as f:
+                lines_a = f.readlines()
+
+        if os.path.exists(path_b):
+            with open(path_b, "r", errors="replace") as f:
+                lines_b = f.readlines()
+
+        diff_lines = list(difflib.unified_diff(
+            lines_a, lines_b,
+            fromfile=f"a{rel_path}",
+            tofile=f"b{rel_path}",
+            lineterm="",
+        ))
+
+        # Count additions and removals (skip header lines)
+        for line in diff_lines[2:]:
+            if line.startswith("+") and not line.startswith("+++"):
+                result["lines_added"] += 1
+            elif line.startswith("-") and not line.startswith("---"):
+                result["lines_removed"] += 1
+
+        # Truncate if diff is very large
+        if len(diff_lines) > 500:
+            diff_lines = diff_lines[:500]
+            diff_lines.append("\n... diff truncated (500 lines shown) ...")
+            result["truncated"] = True
+
+        result["diff"] = "\n".join(diff_lines)
+
+    except Exception as e:
+        result["error"] = str(e)
+
+    return result
+
+
 def _extract_functions(binary_path: str) -> dict[str, int] | None:
     """Extract function names and sizes from an ELF binary.
 

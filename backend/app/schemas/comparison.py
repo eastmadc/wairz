@@ -56,3 +56,18 @@ class BinaryDiffResponse(BaseModel):
     functions_modified: list[FunctionDiffEntryResponse] = []
     info_a: dict = {}
     info_b: dict = {}
+
+
+class TextDiffRequest(BaseModel):
+    firmware_a_id: uuid.UUID
+    firmware_b_id: uuid.UUID
+    file_path: str
+
+
+class TextDiffResponse(BaseModel):
+    path: str
+    diff: str
+    lines_added: int = 0
+    lines_removed: int = 0
+    truncated: bool = False
+    error: str | None = None
