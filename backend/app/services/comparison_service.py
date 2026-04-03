@@ -170,15 +170,24 @@ def diff_binary(binary_a_path: str, binary_b_path: str, binary_rel_path: str) ->
 
     result = BinaryDiff(binary_path=binary_rel_path)
 
+    # Always extract basic info (file size, arch, etc.)
+    result.info_a = _extract_binary_info(binary_a_path)
+    result.info_b = _extract_binary_info(binary_b_path)
+
+    # Compute file hashes for comparison
+    sha_a = _file_sha256(binary_a_path)
+    sha_b = _file_sha256(binary_b_path)
+    result.info_a["sha256"] = sha_a
+    result.info_b["sha256"] = sha_b
+    result.info_a["identical"] = sha_a == sha_b
+
     funcs_a = _extract_functions(binary_a_path)
     funcs_b = _extract_functions(binary_b_path)
 
     if funcs_a is None or funcs_b is None:
+        result.info_a["stripped"] = funcs_a is None or len(funcs_a) == 0
+        result.info_b["stripped"] = funcs_b is None or len(funcs_b) == 0
         return result
-
-    # Extract basic info
-    result.info_a = _extract_binary_info(binary_a_path)
-    result.info_b = _extract_binary_info(binary_b_path)
 
     names_a = set(funcs_a.keys())
     names_b = set(funcs_b.keys())

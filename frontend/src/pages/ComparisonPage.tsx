@@ -427,10 +427,32 @@ export default function ComparisonPage() {
                     {binDiff.functions_added.length === 0 &&
                      binDiff.functions_removed.length === 0 &&
                      binDiff.functions_modified.length === 0 && (
-                      <p className="text-sm text-muted-foreground">
-                        No function-level differences detected. The binary may be stripped
-                        (no symbol table), or changes are limited to data sections.
-                      </p>
+                      <div className="space-y-2">
+                        {Boolean(binDiff.info_a?.stripped || binDiff.info_b?.stripped) && (
+                          <p className="text-sm text-yellow-600">
+                            Binary is stripped (no symbol table) — function-level analysis unavailable.
+                          </p>
+                        )}
+                        {binDiff.info_a?.identical === true ? (
+                          <p className="text-sm text-muted-foreground">
+                            Binaries are identical (same SHA256 hash).
+                          </p>
+                        ) : binDiff.info_a?.identical === false ? (
+                          <div className="text-sm space-y-1">
+                            <p className="text-orange-500 font-medium">
+                              Binaries differ (different content) but no symbol-level diff is available.
+                            </p>
+                            <div className="text-xs text-muted-foreground font-mono space-y-0.5">
+                              <p>A: {String(binDiff.info_a?.sha256 || '').slice(0, 16)}... ({formatFileSize(Number(binDiff.info_a?.file_size) || 0)})</p>
+                              <p>B: {String(binDiff.info_b?.sha256 || '').slice(0, 16)}... ({formatFileSize(Number(binDiff.info_b?.file_size) || 0)})</p>
+                            </div>
+                          </div>
+                        ) : (
+                          <p className="text-sm text-muted-foreground">
+                            No function-level differences detected. Changes may be limited to data sections.
+                          </p>
+                        )}
+                      </div>
                     )}
                   </div>
                 )}
