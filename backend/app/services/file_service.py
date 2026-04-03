@@ -209,6 +209,16 @@ class FileService:
             sub = "/" + parts[1] if len(parts) > 1 else "/"
             return validate_path(base_path, sub)
 
+        # Try rootfs first for paths that look like they belong there
+        # (e.g. /etc/main.conf from a security finding or SBOM component).
+        # This allows rootfs-relative paths to work without the /rootfs/ prefix.
+        try:
+            resolved = validate_path(self.extracted_root, path)
+            if os.path.exists(resolved):
+                return resolved
+        except Exception:
+            pass
+
         # Everything else → extraction_dir/...
         return validate_path(self.extraction_dir, path)
 

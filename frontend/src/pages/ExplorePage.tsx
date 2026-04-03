@@ -27,16 +27,21 @@ export default function ExplorePage() {
     }
   }, [projectId, loadDocuments, resetExplorer])
 
-  // Handle ?path= query parameter: expand tree and select file
+  // Handle ?path= and ?line= query parameters: expand tree, select file, scroll to line
+  const setPendingLine = useExplorerStore((s) => s.setPendingLine)
   useEffect(() => {
     const pathParam = searchParams.get('path')
+    const lineParam = searchParams.get('line')
     if (!projectId) return
     if (pathParam) {
       navigateToPath(projectId, pathParam)
+      if (lineParam) {
+        setPendingLine(parseInt(lineParam, 10) || null)
+      }
       // Clear query params so they don't re-trigger on re-renders
       setSearchParams({}, { replace: true })
     }
-  }, [projectId, searchParams, setSearchParams, navigateToPath])
+  }, [projectId, searchParams, setSearchParams, navigateToPath, setPendingLine])
 
   // Vertical resize drag handler for terminal panel
   const handleDragStart = useCallback((e: React.MouseEvent) => {

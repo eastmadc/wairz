@@ -57,6 +57,116 @@ _FS_IMAGE_EXTENSIONS = frozenset({
 
 _ROOT_DIR_RE = _re.compile(r"^[a-z0-9]+-root(-\d+)?$")
 
+# Unblob chunk suffixes that indicate successfully processed content
+_EXTRACT_DIR_SUFFIXES = ("_extract",)
+
+
+def cleanup_unblob_artifacts(extraction_dir: str) -> int:
+    """Remove unblob's .unknown chunk files and empty extraction dirs.
+
+    Unblob splits firmware images into named chunks. Successfully identified
+    chunks get an ``_extract`` sibling directory with their contents.
+    ``.unknown`` chunks are segments unblob couldn't identify — typically
+    partition table headers, bootloader padding, or raw data.  These add
+    noise to the file explorer without analytical value.
+
+    Returns the number of files removed.
+    """
+    removed = 0
+    try:
+        entries = list(os.scandir(extraction_dir))
+    except OSError:
+        return 0
+
+    for entry in entries:
+        if not entry.is_file(follow_symlinks=False):
+            continue
+        # Remove .unknown files (unidentified chunks)
+        if entry.name.endswith(".unknown"):
+            try:
+                os.unlink(entry.path)
+                removed += 1
+            except OSError:
+                pass
+            continue
+        # Remove raw chunk files that have a corresponding _extract dir
+        # e.g. "53742118-282966566.squashfs_v4_le" when
+        #      "53742118-282966566.squashfs_v4_le_extract/" exists
+        extract_dir = entry.path + "_extract"
+        if os.path.isdir(extract_dir):
+            try:
+                os.unlink(entry.path)
+                removed += 1
+            except OSError:
+                pass
+
+    return removed
+
+
+def check_extraction_limits(
+    extraction_dir: str, firmware_size: int, settings=None
+) -> str | None:
+    """Walk the extraction directory and enforce zip-bomb prevention limits.
+
+    Returns an error message string if any limit is exceeded, or None if OK.
+    """
+    if settings is None:
+        from app.config import get_settings
+        settings = get_settings()
+
+    max_bytes = settings.max_extraction_size_mb * 1024 * 1024
+    max_files = settings.max_extraction_files
+    max_ratio = settings.max_compression_ratio
+
+    total_size = 0
+    file_count = 0
+
+    def _walk(path: str) -> str | None:
+        nonlocal total_size, file_count
+        try:
+            entries = os.scandir(path)
+        except OSError:
+            return None
+        for entry in entries:
+            try:
+                if entry.is_file(follow_symlinks=False):
+                    file_count += 1
+                    total_size += entry.stat(follow_symlinks=False).st_size
+                elif entry.is_dir(follow_symlinks=False):
+                    result = _walk(entry.path)
+                    if result is not None:
+                        return result
+            except OSError:
+                continue
+
+            if file_count > max_files:
+                return (
+                    f"Extraction bomb detected: file count ({file_count}) "
+                    f"exceeds limit ({max_files})"
+                )
+            if total_size > max_bytes:
+                return (
+                    f"Extraction bomb detected: total size "
+                    f"({total_size // (1024*1024)}MB) exceeds limit "
+                    f"({settings.max_extraction_size_mb}MB)"
+                )
+        return None
+
+    error = _walk(extraction_dir)
+    if error:
+        return error
+
+    # Check compression ratio
+    if firmware_size > 0 and total_size > 0:
+        ratio = total_size / firmware_size
+        if ratio > max_ratio:
+            return (
+                f"Extraction bomb detected: compression ratio ({ratio:.1f}:1) "
+                f"exceeds limit ({max_ratio}:1)"
+            )
+
+    return None
+
 
 async def run_binwalk_extraction(firmware_path: str, output_dir: str, timeout: int = 600) -> str:
     """Run binwalk -e to extract firmware contents. Returns stdout+stderr."""

@@ -1,6 +1,6 @@
 # Campaign: Device Acquisition v2
 
-Status: active
+Status: blocked (Phase 10 — manual hardware test)
 Created: 2026-04-02
 Direction: Add MTKClient support, progress percentages, batch dump orchestration, EDL dump import, and reliability improvements to the device acquisition pipeline
 Seed: (research fleet 2026-04-02)
@@ -345,3 +345,11 @@ Mock mode verified: 2 devices (ADB + BROM), partition sizes, chipset detection a
 printgpt parser handles human-readable sizes, hex LBAs, noisy output, and chipset ID lines.
 Retry logic: up to 2 retries with 5s/10s backoff, no retry for permission errors.
 User has real MediaTek hardware available for Phase 10 testing.
+
+<!-- session-end: 2026-04-02T23:01:28.550Z -->
+
+<!-- session-end: 2026-04-02T23:01:28.728Z -->
+
+<!-- session-end: 2026-04-03T00:08:20.467Z -->
+
+<!-- session-end: 2026-04-03T00:08:58.684Z -->

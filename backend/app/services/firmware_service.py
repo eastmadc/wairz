@@ -177,6 +177,30 @@ def _extract_archive(archive_path: str, output_dir: str) -> None:
                 target = os.path.realpath(os.path.join(output_dir, info.filename))
                 if not target.startswith(os.path.realpath(output_dir) + os.sep) and target != os.path.realpath(output_dir):
                     raise ValueError(f"Path traversal detected in archive: {info.filename}")
+            # Zip bomb prevention: check declared sizes before extracting
+            settings = get_settings()
+            total_uncompressed = sum(i.file_size for i in zf.infolist())
+            entry_count = len(zf.infolist())
+            archive_size = os.path.getsize(archive_path)
+            max_bytes = settings.max_extraction_size_mb * 1024 * 1024
+            if total_uncompressed > max_bytes:
+                raise ValueError(
+                    f"Zip bomb detected: declared uncompressed size "
+                    f"({total_uncompressed // (1024*1024)}MB) exceeds limit "
+                    f"({settings.max_extraction_size_mb}MB)"
+                )
+            if entry_count > settings.max_extraction_files:
+                raise ValueError(
+                    f"Zip bomb detected: entry count ({entry_count}) "
+                    f"exceeds limit ({settings.max_extraction_files})"
+                )
+            if archive_size > 0 and total_uncompressed > 0:
+                ratio = total_uncompressed / archive_size
+                if ratio > settings.max_compression_ratio:
+                    raise ValueError(
+                        f"Zip bomb detected: compression ratio ({ratio:.1f}:1) "
+                        f"exceeds limit ({settings.max_compression_ratio}:1)"
+                    )
             zf.extractall(output_dir)
     else:
         raise ValueError(

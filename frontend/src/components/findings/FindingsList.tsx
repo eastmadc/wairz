@@ -12,6 +12,7 @@ import {
   User,
   Search,
   Bug,
+  Shield,
 } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -39,6 +40,7 @@ const SOURCE_CONFIG: Record<FindingSource, { icon: React.ElementType; label: str
   sbom_scan: { icon: Package, label: 'SBOM Scan', className: 'border-teal-500/50 text-teal-600 dark:text-teal-400' },
   fuzzing: { icon: Bug, label: 'Fuzzing', className: 'border-orange-500/50 text-orange-600 dark:text-orange-400' },
   security_review: { icon: Search, label: 'Review', className: 'border-blue-500/50 text-blue-600 dark:text-blue-400' },
+  security_audit: { icon: Shield, label: 'Security Audit', className: 'border-red-500/50 text-red-600 dark:text-red-400' },
 }
 
 interface FindingsListProps {
@@ -140,7 +142,7 @@ export default function FindingsList({
         })}
 
         <span className="ml-2 text-xs text-muted-foreground">Source:</span>
-        {(['manual', 'ai_discovered', 'sbom_scan', 'security_review', 'fuzzing'] as FindingSource[]).map((src) => {
+        {(['manual', 'ai_discovered', 'sbom_scan', 'security_review', 'security_audit', 'fuzzing'] as FindingSource[]).map((src) => {
           const config = SOURCE_CONFIG[src]
           const active = sourceFilter === src
           const SourceIcon = config.icon

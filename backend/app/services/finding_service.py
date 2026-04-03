@@ -39,6 +39,7 @@ class FindingService:
         project_id: uuid.UUID,
         severity: str | None = None,
         status: str | None = None,
+        source: str | None = None,
         limit: int | None = None,
         offset: int | None = None,
     ) -> list[Finding]:
@@ -47,6 +48,8 @@ class FindingService:
             stmt = stmt.where(Finding.severity == severity)
         if status:
             stmt = stmt.where(Finding.status == status)
+        if source:
+            stmt = stmt.where(Finding.source == source)
         stmt = stmt.order_by(Finding.created_at.desc())
         if limit is not None:
             stmt = stmt.limit(limit)

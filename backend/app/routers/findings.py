@@ -44,6 +44,7 @@ async def list_findings(
     project_id: uuid.UUID,
     severity: str | None = Query(None),
     status: str | None = Query(None),
+    source: str | None = Query(None),
     limit: int = Query(100, ge=1, le=1000, description="Maximum results to return"),
     offset: int = Query(0, ge=0, description="Number of results to skip"),
     db: AsyncSession = Depends(get_db),
@@ -51,7 +52,8 @@ async def list_findings(
     await _get_project_or_404(project_id, db)
     svc = FindingService(db)
     return await svc.list_by_project(
-        project_id, severity=severity, status=status, limit=limit, offset=offset
+        project_id, severity=severity, status=status, source=source,
+        limit=limit, offset=offset,
     )
 
 

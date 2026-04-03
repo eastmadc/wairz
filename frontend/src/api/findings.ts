@@ -1,9 +1,26 @@
 import apiClient from './client'
 import type { Finding, FindingCreate, FindingUpdate } from '@/types'
 
+export interface SecurityAuditResult {
+  status: string
+  checks_run: number
+  findings_created: number
+  total_findings: number
+  errors: string[]
+}
+
+export async function runSecurityAudit(
+  projectId: string,
+): Promise<SecurityAuditResult> {
+  const { data } = await apiClient.post<SecurityAuditResult>(
+    `/projects/${projectId}/security/audit`,
+  )
+  return data
+}
+
 export async function listFindings(
   projectId: string,
-  params?: { severity?: string; status?: string },
+  params?: { severity?: string; status?: string; source?: string },
 ): Promise<Finding[]> {
   const { data } = await apiClient.get<Finding[]>(
     `/projects/${projectId}/findings`,
