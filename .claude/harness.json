@@ -39,6 +39,24 @@
         "pattern": "strings:",
         "filePattern": "**/*.yar",
         "message": "Learned from session 5: Every YARA string must appear in the condition. Unreferenced strings cause compilation errors."
+      },
+      {
+        "name": "auto-review-no-raw-join-in-sandbox",
+        "pattern": "os\\.path\\.join\\(.*root.*,",
+        "filePattern": "backend/app/ai/tools/*.py",
+        "message": "Learned from review S13: Use validate_path() instead of os.path.join for paths under firmware root. Raw join follows symlinks without sandbox checks."
+      },
+      {
+        "name": "auto-review-no-shell-interpolation",
+        "pattern": "f\".*\\{.*\\}.*sh -c|sh -c.*f\".*\\{",
+        "filePattern": "backend/app/services/*.py",
+        "message": "Learned from review S2/S4: Use shlex.quote() for all variables interpolated into shell commands. Prefer create_subprocess_exec (list form) over sh -c."
+      },
+      {
+        "name": "auto-review-no-commit-in-tool-handler",
+        "pattern": "context\\.db\\.commit\\(\\)",
+        "filePattern": "backend/app/ai/tools/*.py",
+        "message": "Learned from review K1: Use context.db.flush() in tool handlers. The outer MCP dispatch handles commit \u2014 committing here prevents rollback on partial failures."
       }
     ]
   },
@@ -101,6 +119,6 @@
     "sessions": 0,
     "campaigns": 0,
     "override": null,
-    "sessions_completed": 26
+    "sessions_completed": 27
   }
 }
