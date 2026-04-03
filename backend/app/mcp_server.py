@@ -232,21 +232,27 @@ def _build_tool_registry() -> ToolRegistry:
 
 async def _load_project(
     session: AsyncSession, project_id: uuid.UUID
-) -> tuple[Project, Firmware]:
-    """Load and validate the project and its firmware."""
+) -> tuple[Project, Firmware | None]:
+    """Load project and optionally its firmware.
+
+    Returns (project, firmware) where firmware may be None if no firmware
+    has been uploaded or unpacked yet. The MCP server should still start
+    and expose tools — they will return descriptive errors when invoked
+    without firmware.
+    """
     project = await session.get(Project, project_id)
     if not project:
         raise ValueError(f"Project {project_id} not found.")
 
-    stmt = select(Firmware).where(Firmware.project_id == project_id)
-    firmware = (await session.execute(stmt)).scalar_one_or_none()
-    if not firmware:
-        raise ValueError(f"No firmware found for project {project_id}.")
-
-    if not firmware.extracted_path:
-        raise ValueError(
-            f"Firmware for project {project_id} has not been unpacked (no extracted_path)."
+    stmt = (
+        select(Firmware)
+        .where(
+            Firmware.project_id == project_id,
+            Firmware.extracted_path.isnot(None),
         )
+        .order_by(Firmware.created_at.desc())
+    )
+    firmware = (await session.execute(stmt)).scalars().first()
 
     return project, firmware
 
@@ -263,15 +269,25 @@ async def _load_project_state(
         state.project_id = project.id
         state.project_name = project.name
         state.project_desc = project.description or ""
-        state.firmware_id = firmware.id
-        state.firmware_filename = firmware.original_filename or "unknown"
-        state.architecture = firmware.architecture
-        state.endianness = firmware.endianness
-        state.extracted_path = firmware.extracted_path
-        state.extraction_dir = firmware.extraction_dir
+
+        if firmware:
+            state.firmware_id = firmware.id
+            state.firmware_filename = firmware.original_filename or "unknown"
+            state.architecture = firmware.architecture
+            state.endianness = firmware.endianness
+            state.extracted_path = firmware.extracted_path or ""
+            state.extraction_dir = firmware.extraction_dir
+        else:
+            # No firmware yet — server starts but tools will return errors
+            state.firmware_id = uuid.UUID(int=0)
+            state.firmware_filename = "(none — upload firmware via the Wairz UI)"
+            state.architecture = None
+            state.endianness = None
+            state.extracted_path = ""
+            state.extraction_dir = None
 
     # Apply path translation
-    if host_storage_root:
+    if host_storage_root and state.extracted_path:
         state.extracted_path = _translate_path(state.extracted_path, host_storage_root)
         if state.extraction_dir:
             state.extraction_dir = _translate_path(state.extraction_dir, host_storage_root)
@@ -307,7 +323,7 @@ async def run_server(project_id: uuid.UUID) -> None:
         logger.error(str(exc))
         sys.exit(1)
 
-    if not os.path.isdir(state.extracted_path):
+    if state.extracted_path and not os.path.isdir(state.extracted_path):
         logger.error(
             "Extracted firmware path does not exist: %s",
             state.extracted_path,
@@ -321,14 +337,21 @@ async def run_server(project_id: uuid.UUID) -> None:
         )
         sys.exit(1)
 
-    logger.info(
-        "Loaded project '%s' — firmware: %s (%s, %s)",
-        state.project_name,
-        state.firmware_filename,
-        state.architecture or "unknown arch",
-        state.endianness or "unknown endian",
-    )
-    logger.info("Firmware root: %s", state.extracted_path)
+    if state.extracted_path:
+        logger.info(
+            "Loaded project '%s' — firmware: %s (%s, %s)",
+            state.project_name,
+            state.firmware_filename,
+            state.architecture or "unknown arch",
+            state.endianness or "unknown endian",
+        )
+        logger.info("Firmware root: %s", state.extracted_path)
+    else:
+        logger.info(
+            "Loaded project '%s' — no firmware uploaded yet. "
+            "Tools will return errors until firmware is uploaded and unpacked.",
+            state.project_name,
+        )
 
     # Build tool registry
     registry = _build_tool_registry()
@@ -390,7 +413,7 @@ async def run_server(project_id: uuid.UUID) -> None:
         except ValueError as exc:
             return f"Error: {exc}"
 
-        if not os.path.isdir(state.extracted_path):
+        if state.extracted_path and not os.path.isdir(state.extracted_path):
             # Revert to old project
             try:
                 await _load_project_state(
@@ -495,11 +518,32 @@ async def run_server(project_id: uuid.UUID) -> None:
             )
         return tools
 
+    # Tools that work without firmware
+    _NO_FIRMWARE_TOOLS = {
+        "get_project_info", "switch_project", "list_projects",
+        "add_finding", "list_findings", "update_finding",
+        "read_project_instructions", "list_project_documents",
+        "read_project_document", "save_code_cleanup",
+    }
+
     # --- Tool dispatch ---
     @server.call_tool()
     async def call_tool(
         name: str, arguments: dict
     ) -> list[TextContent]:
+        # Guard: return descriptive error when firmware is not available
+        if not state.extracted_path and name not in _NO_FIRMWARE_TOOLS:
+            return [TextContent(
+                type="text",
+                text=(
+                    f"Error: No firmware uploaded or unpacked for project "
+                    f"'{state.project_name}' ({state.project_id}).\n\n"
+                    f"Upload and unpack firmware via the Wairz web UI before "
+                    f"using analysis tools. You can also use switch_project "
+                    f"to connect to a project that has firmware."
+                ),
+            )]
+
         async with session_factory() as session:
             context = ToolContext(
                 project_id=state.project_id,
