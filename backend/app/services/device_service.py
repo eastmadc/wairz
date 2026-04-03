@@ -24,14 +24,16 @@ from app.workers.unpack import unpack_firmware
 
 logger = logging.getLogger(__name__)
 
+# Module-level dump state — persists across requests, safe for single-worker async.
+# A singleton service instance is NOT needed; any DeviceService can read/write this.
+_dump_state: dict | None = None
+
 
 class DeviceService:
     """Manages device acquisition and communicates with the host-side bridge."""
 
     def __init__(self, db: AsyncSession) -> None:
         self._db = db
-        # In-memory dump state (single dump at a time)
-        self._dump_state: dict | None = None
 
     # ── Public API ──
 
@@ -106,7 +108,8 @@ class DeviceService:
             )
 
         # Initialize dump state
-        self._dump_state = {
+        global _dump_state
+        _dump_state = {
             "status": "dumping",
             "device_id": device_id,
             "dump_id": dump_id,
@@ -123,17 +126,17 @@ class DeviceService:
             self._run_dump(device_id, partitions, dump_dir)
         )
 
-        return self._dump_state
+        return _dump_state
 
     async def get_dump_status(self) -> dict:
         """Get the status of the current dump."""
-        if not self._dump_state:
+        if not _dump_state:
             return {"status": "idle", "device_id": None, "partitions": []}
-        return self._dump_state
+        return _dump_state
 
     async def cancel_dump(self) -> dict:
         """Cancel the current dump."""
-        if not self._dump_state:
+        if not _dump_state:
             return {"status": "idle", "message": "No dump in progress"}
 
         try:
@@ -141,8 +144,8 @@ class DeviceService:
         except ConnectionError:
             pass
 
-        self._dump_state["status"] = "cancelled"
-        return self._dump_state
+        _dump_state["status"] = "cancelled"
+        return _dump_state
 
     async def import_dump(
         self,
@@ -151,13 +154,13 @@ class DeviceService:
         version_label: str | None = None,
     ) -> Firmware:
         """Import a completed dump as firmware into the project."""
-        if not self._dump_state:
+        if not _dump_state:
             raise ValueError("No dump to import")
 
-        if self._dump_state["status"] not in ("complete", "partial"):
-            raise ValueError(f"Dump is {self._dump_state['status']}, cannot import")
+        if _dump_state["status"] not in ("complete", "partial"):
+            raise ValueError(f"Dump is {_dump_state['status']}, cannot import")
 
-        dump_dir = self._dump_state["dump_dir"]
+        dump_dir = _dump_state["dump_dir"]
 
         # Find all completed partition images
         img_files = sorted(Path(dump_dir).glob("*.img"))
@@ -174,7 +177,7 @@ class DeviceService:
         # Add acquisition metadata
         device_metadata["acquisition_method"] = "adb_root"
         device_metadata["partition_list"] = [
-            p["partition"] for p in self._dump_state["partitions"]
+            p["partition"] for p in _dump_state["partitions"]
             if p["status"] == "complete"
         ]
         device_metadata["source_partitions"] = {
@@ -224,7 +227,7 @@ class DeviceService:
         failed = 0
 
         for i, partition in enumerate(partitions):
-            self._dump_state["partitions"][i]["status"] = "active"
+            _dump_state["partitions"][i]["status"] = "active"
 
             try:
                 result = await self._bridge_request_streaming(
@@ -240,7 +243,7 @@ class DeviceService:
                 )
 
                 if result.get("status") == "complete":
-                    p = self._dump_state["partitions"][i]
+                    p = _dump_state["partitions"][i]
                     p["status"] = "complete"
                     p["bytes_written"] = result.get("size", 0)
                     p["size"] = result.get("size", 0)
@@ -249,27 +252,27 @@ class DeviceService:
                         p["total_bytes"] = result["total_bytes"]
                     completed += 1
                 else:
-                    self._dump_state["partitions"][i]["status"] = "failed"
-                    self._dump_state["partitions"][i]["error"] = result.get("error", "Unknown")
+                    _dump_state["partitions"][i]["status"] = "failed"
+                    _dump_state["partitions"][i]["error"] = result.get("error", "Unknown")
                     failed += 1
 
             except Exception as e:
-                self._dump_state["partitions"][i]["status"] = "failed"
-                self._dump_state["partitions"][i]["error"] = str(e)
+                _dump_state["partitions"][i]["status"] = "failed"
+                _dump_state["partitions"][i]["error"] = str(e)
                 failed += 1
                 logger.warning("Dump of %s failed: %s", partition, e, exc_info=True)
 
         if failed == 0:
-            self._dump_state["status"] = "complete"
+            _dump_state["status"] = "complete"
         elif completed > 0:
-            self._dump_state["status"] = "partial"
+            _dump_state["status"] = "partial"
         else:
-            self._dump_state["status"] = "failed"
+            _dump_state["status"] = "failed"
 
     def _update_partition_progress(self, index: int, event: dict) -> None:
         """Update progress for a partition from a bridge progress event."""
         if event.get("event") == "progress":
-            p = self._dump_state["partitions"][index]
+            p = _dump_state["partitions"][index]
             p["bytes_written"] = event.get("bytes_written", 0)
             if "total_bytes" in event:
                 p["total_bytes"] = event["total_bytes"]

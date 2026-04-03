@@ -1,6 +1,5 @@
 """Binary analysis AI tools using Ghidra and pyelftools."""
 
-import difflib
 import hashlib
 import json
 import logging
@@ -505,25 +504,16 @@ async def _handle_resolve_import(input: dict, context: ToolContext) -> str:
     )
 
 
-async def _handle_check_all_binary_protections(
-    input: dict, context: ToolContext,
-) -> str:
-    """Scan all ELF binaries and report their security protections."""
-    input_path = input.get("path", "/")
-    search_path = context.resolve_path(input_path)
-    real_root = context.real_root_for(input_path)
-
+def _scan_all_binary_protections(search_path: str, real_root: str) -> list[dict]:
+    """Synchronous scan of all ELF binaries for security protections."""
     ELF_MAGIC = b"\x7fELF"
     results: list[dict] = []
 
     for dirpath, _dirs, files in safe_walk(search_path):
         for name in files:
             abs_path = os.path.join(dirpath, name)
-
-            # Skip symlinks to avoid duplicates
             if os.path.islink(abs_path):
                 continue
-
             try:
                 with open(abs_path, "rb") as f:
                     magic = f.read(4)
@@ -531,19 +521,13 @@ async def _handle_check_all_binary_protections(
                     continue
             except (OSError, PermissionError):
                 continue
-
-            # Skip kernel modules — not user-space binaries
             if name.endswith(".ko") or ".ko." in name:
                 continue
-
             rel_path = "/" + os.path.relpath(abs_path, real_root)
-
             try:
                 size = os.path.getsize(abs_path)
             except OSError:
                 size = 0
-
-            # Determine type (executable vs shared library)
             elf_type = "unknown"
             try:
                 with open(abs_path, "rb") as f:
@@ -551,16 +535,12 @@ async def _handle_check_all_binary_protections(
                     if elf.header.e_type == "ET_EXEC":
                         elf_type = "exe"
                     elif elf.header.e_type == "ET_DYN":
-                        # Could be shared library or PIE executable
                         elf_type = "lib" if ".so" in name else "exe"
             except Exception:
                 pass
-
             protections = check_binary_protections(abs_path)
             if "error" in protections:
                 continue
-
-            # Compute protection score
             score = 0.0
             if protections.get("nx") is True:
                 score += 1
@@ -575,7 +555,6 @@ async def _handle_check_all_binary_protections(
                 score += 1
             elif relro == "partial":
                 score += 0.5
-
             results.append({
                 "path": rel_path,
                 "type": elf_type,
@@ -587,6 +566,24 @@ async def _handle_check_all_binary_protections(
                 "fortify": protections.get("fortify", False),
                 "score": score,
             })
+
+    return results
+
+
+async def _handle_check_all_binary_protections(
+    input: dict, context: ToolContext,
+) -> str:
+    """Scan all ELF binaries and report their security protections."""
+    import asyncio
+
+    input_path = input.get("path", "/")
+    search_path = context.resolve_path(input_path)
+    real_root = context.real_root_for(input_path)
+
+    loop = asyncio.get_running_loop()
+    results = await loop.run_in_executor(
+        None, _scan_all_binary_protections, search_path, real_root
+    )
 
     if not results:
         return "No ELF binaries found."

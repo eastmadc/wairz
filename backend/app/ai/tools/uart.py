@@ -252,7 +252,7 @@ async def _handle_uart_connect(input: dict, context: ToolContext) -> str:
             parity=input.get("parity", "N"),
             stop_bits=input.get("stop_bits", 1),
         )
-        await context.db.commit()
+        await context.db.flush()
     except ConnectionError as exc:
         return f"Error: {exc}"
     except ValueError as exc:
@@ -364,7 +364,7 @@ async def _handle_uart_disconnect(input: dict, context: ToolContext) -> str:
     svc = UARTService(context.db)
     try:
         session = await svc.disconnect(project_id=context.project_id)
-        await context.db.commit()
+        await context.db.flush()
     except ConnectionError as exc:
         return f"Error: {exc}"
     except ValueError as exc:

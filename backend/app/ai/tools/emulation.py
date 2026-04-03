@@ -675,7 +675,7 @@ async def _handle_start_emulation(input: dict, context: ToolContext) -> str:
             pre_init_script=pre_init_script,
             stub_profile=stub_profile,
         )
-        await context.db.commit()
+        await context.db.flush()
     except ValueError as exc:
         return f"Error starting emulation: {exc}"
     except Exception as exc:
@@ -832,7 +832,7 @@ async def _handle_stop_emulation(input: dict, context: ToolContext) -> str:
     try:
         from uuid import UUID
         session = await svc.stop_session(UUID(session_id))
-        await context.db.commit()
+        await context.db.flush()
     except ValueError as exc:
         return f"Error: {exc}"
     except Exception as exc:
@@ -2174,7 +2174,7 @@ async def _handle_save_preset(input: dict, context: ToolContext) -> str:
             pre_init_script=input.get("pre_init_script"),
             stub_profile=input.get("stub_profile", "none"),
         )
-        await context.db.commit()
+        await context.db.flush()
     except Exception as exc:
         return f"Error saving preset: {exc}"
 

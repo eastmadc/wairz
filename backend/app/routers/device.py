@@ -23,18 +23,9 @@ router = APIRouter(
     tags=["device-acquisition"],
 )
 
-# Singleton service instance for dump state persistence across requests.
-# The DB session is injected per-request via the dependency.
-_service_instance: DeviceService | None = None
-
-
 def get_device_service(db: AsyncSession = Depends(get_db)) -> DeviceService:
-    global _service_instance
-    if _service_instance is None:
-        _service_instance = DeviceService(db)
-    else:
-        _service_instance._db = db
-    return _service_instance
+    """Create a new service per request. Dump state is module-level in the service."""
+    return DeviceService(db)
 
 
 @router.get("/status", response_model=DeviceBridgeStatus)

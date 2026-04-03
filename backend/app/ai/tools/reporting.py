@@ -133,7 +133,7 @@ async def _handle_add_finding(input: dict, context: ToolContext) -> str:
         source=input.get("source", "ai_discovered"),
     )
     finding = await svc.create(context.project_id, data)
-    await context.db.commit()
+    await context.db.flush()
     return (
         f"Finding recorded: {finding.title} [{finding.severity}] "
         f"(ID: {finding.id})"
@@ -182,5 +182,5 @@ async def _handle_update_finding(input: dict, context: ToolContext) -> str:
 
     data = FindingUpdate(**update_fields)
     updated = await svc.update(finding_id, data)
-    await context.db.commit()
+    await context.db.flush()
     return f"Finding updated: {updated.title} [{updated.severity}] — status: {updated.status}"

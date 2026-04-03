@@ -5,7 +5,7 @@ import uuid
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
@@ -99,15 +99,12 @@ async def run_audit(
         raise HTTPException(400, "No extracted firmware available — unpack first")
 
     # Clear previous security_audit findings to allow re-scanning
-    result = await db.execute(
-        select(Finding).where(
+    await db.execute(
+        delete(Finding).where(
             Finding.project_id == project_id,
             Finding.source == "security_audit",
         )
     )
-    old_findings = result.scalars().all()
-    for f in old_findings:
-        await db.delete(f)
     await db.flush()
 
     # Scan all extracted firmware versions
@@ -179,15 +176,12 @@ async def run_yara_scan(
         raise HTTPException(400, "No extracted firmware available — unpack first")
 
     # Clear previous yara_scan findings to allow re-scanning
-    result = await db.execute(
-        select(Finding).where(
+    await db.execute(
+        delete(Finding).where(
             Finding.project_id == project_id,
             Finding.source == "yara_scan",
         )
     )
-    old_findings = result.scalars().all()
-    for f in old_findings:
-        await db.delete(f)
     await db.flush()
 
     # Scan all extracted firmware versions

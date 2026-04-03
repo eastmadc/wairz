@@ -482,14 +482,20 @@ async def _handle_find_hardcoded_credentials(
 
     # Check /etc/shadow and /etc_ro/shadow for password security
     for shadow_rel in ["etc/shadow", "etc_ro/shadow"]:
-        shadow_path = os.path.join(real_root, shadow_rel)
+        try:
+            shadow_path = validate_path(real_root, shadow_rel)
+        except ValueError:
+            continue
         if os.path.isfile(shadow_path):
             issues = _analyze_shadow_file(shadow_path, f"/{shadow_rel}", results)
             auth_issues.extend(issues)
 
     # Check /etc/passwd and /etc_ro/passwd for account issues
     for passwd_rel in ["etc/passwd", "etc_ro/passwd"]:
-        passwd_path = os.path.join(real_root, passwd_rel)
+        try:
+            passwd_path = validate_path(real_root, passwd_rel)
+        except ValueError:
+            continue
         if os.path.isfile(passwd_path):
             issues = _analyze_passwd_file(passwd_path, f"/{passwd_rel}", results)
             auth_issues.extend(issues)

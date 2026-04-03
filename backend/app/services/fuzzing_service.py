@@ -443,7 +443,7 @@ class FuzzingService:
 
             # Build AFL++ command
             timeout_ms = config.get("timeout_per_exec", 1000)
-            binary_in_firmware = campaign.binary_path.lstrip("/")
+            binary_in_firmware = shlex.quote(campaign.binary_path.lstrip("/"))
 
             # Extra environment variables for the target
             extra_env = config.get("environment") or {}
@@ -748,8 +748,8 @@ class FuzzingService:
         except docker.errors.NotFound:
             raise ValueError("Campaign container not found — campaign may have been stopped")
 
-        binary_in_firmware = campaign.binary_path.lstrip("/")
-        crash_path = f"/opt/fuzzing/output/default/crashes/{crash.crash_filename}"
+        binary_in_firmware = shlex.quote(campaign.binary_path.lstrip("/"))
+        crash_path = shlex.quote(f"/opt/fuzzing/output/default/crashes/{crash.crash_filename}")
 
         triage_output = ""
 

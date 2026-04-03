@@ -17,10 +17,28 @@ import asyncio
 import json
 import logging
 import os
+import re
 import shutil
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+
+# Strict regex for partition names — only alphanumeric, dash, underscore.
+# Prevents command injection via shell metacharacters in ADB commands.
+_PARTITION_NAME_RE = re.compile(r'^[a-zA-Z0-9_-]+$')
+
+# Allowed base directories for dump output. Prevents arbitrary file writes
+# from unauthenticated TCP clients.
+_ALLOWED_OUTPUT_BASES = ("/tmp/",)
+
+
+def _validate_output_dir(output_dir: str) -> str | None:
+    """Return an error message if output_dir is outside allowed bases."""
+    resolved = os.path.realpath(output_dir)
+    if not any(resolved.startswith(base) or resolved == base.rstrip("/")
+               for base in _ALLOWED_OUTPUT_BASES):
+        return f"output_dir must be under {_ALLOWED_OUTPUT_BASES[0]}"
+    return None
 
 logger = logging.getLogger("wairz-device-bridge")
 
@@ -446,6 +464,11 @@ class DeviceManager:
         self, device_id: str, partitions: list[str]
     ) -> dict[str, int | None]:
         """Query partition sizes via blockdev --getsize64 on the device."""
+        # Validate all partition names before shell interpolation
+        for p in partitions:
+            if not _PARTITION_NAME_RE.match(p):
+                logger.warning("Rejected invalid partition name: %r", p)
+                return {}
         # Build a single shell command that queries all partitions at once
         cmds = " && ".join(
             f'echo "{p}:$(blockdev --getsize64 /dev/block/by-name/{p} 2>/dev/null || echo -1)"'
@@ -546,6 +569,8 @@ class DeviceManager:
         total_bytes: int | None = None,
     ) -> dict:
         """Dump a real partition via adb exec-out dd."""
+        if not _PARTITION_NAME_RE.match(partition):
+            return {"ok": False, "error": f"Invalid partition name: {partition!r}"}
         proc = await asyncio.create_subprocess_exec(
             "adb", "-s", device_id, "exec-out",
             "dd", f"if=/dev/block/by-name/{partition}", f"bs={DUMP_BLOCK_SIZE}",
@@ -1049,10 +1074,13 @@ class BridgeServer:
             return {"ok": False, "error": "partition is required"}
         if not output_dir:
             return {"ok": False, "error": "output_dir is required"}
+        dir_err = _validate_output_dir(output_dir)
+        if dir_err:
+            return {"ok": False, "error": dir_err}
 
-        # Validate partition name (prevent path traversal)
-        if "/" in partition or ".." in partition:
-            return {"ok": False, "error": "Invalid partition name"}
+        # Validate partition name (prevent path traversal and command injection)
+        if not _PARTITION_NAME_RE.match(partition):
+            return {"ok": False, "error": "Invalid partition name: only alphanumeric, dash, underscore allowed"}
 
         if self._device_mgr.is_dumping:
             return {"ok": False, "error": "A dump is already in progress"}
@@ -1086,9 +1114,12 @@ class BridgeServer:
             return {"ok": False, "error": "partitions list is required"}
         if not output_dir:
             return {"ok": False, "error": "output_dir is required"}
+        dir_err = _validate_output_dir(output_dir)
+        if dir_err:
+            return {"ok": False, "error": dir_err}
 
         for p in partitions:
-            if "/" in p or ".." in p:
+            if not _PARTITION_NAME_RE.match(p):
                 return {"ok": False, "error": f"Invalid partition name: {p}"}
 
         if self._device_mgr.is_dumping:
@@ -1131,9 +1162,12 @@ class BridgeServer:
             return {"ok": False, "error": "partitions list is required"}
         if not output_dir:
             return {"ok": False, "error": "output_dir is required"}
+        dir_err = _validate_output_dir(output_dir)
+        if dir_err:
+            return {"ok": False, "error": dir_err}
 
         for p in partitions:
-            if "/" in p or ".." in p:
+            if not _PARTITION_NAME_RE.match(p):
                 return {"ok": False, "error": f"Invalid partition name: {p}"}
 
         if self._device_mgr.is_dumping:
