@@ -20,6 +20,11 @@ class Finding(Base):
         nullable=False,
         index=True,
     )
+    firmware_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("firmware.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     conversation_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("conversations.id", ondelete="SET NULL"),
         nullable=True,

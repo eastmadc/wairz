@@ -18,6 +18,7 @@ class FindingService:
     ) -> Finding:
         finding = Finding(
             project_id=project_id,
+            firmware_id=data.firmware_id,
             conversation_id=data.conversation_id,
             title=data.title,
             severity=data.severity.value,
@@ -40,6 +41,7 @@ class FindingService:
         severity: str | None = None,
         status: str | None = None,
         source: str | None = None,
+        firmware_id: uuid.UUID | None = None,
         limit: int | None = None,
         offset: int | None = None,
     ) -> list[Finding]:
@@ -50,6 +52,8 @@ class FindingService:
             stmt = stmt.where(Finding.status == status)
         if source:
             stmt = stmt.where(Finding.source == source)
+        if firmware_id:
+            stmt = stmt.where(Finding.firmware_id == firmware_id)
         stmt = stmt.order_by(Finding.created_at.desc())
         if limit is not None:
             stmt = stmt.limit(limit)
