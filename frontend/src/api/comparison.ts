@@ -1,5 +1,5 @@
 import apiClient from './client'
-import type { BinaryDiff, FirmwareDiff } from '@/types'
+import type { BinaryDiff, FirmwareDiff, TextDiff } from '@/types'
 
 export async function diffFirmware(
   projectId: string,
@@ -24,6 +24,20 @@ export async function diffBinary(
     `/projects/${projectId}/compare/binary`,
     { firmware_a_id: firmwareAId, firmware_b_id: firmwareBId, binary_path: binaryPath },
     { timeout: 300_000 },
+  )
+  return data
+}
+
+export async function diffTextFile(
+  projectId: string,
+  firmwareAId: string,
+  firmwareBId: string,
+  filePath: string,
+): Promise<TextDiff> {
+  const { data } = await apiClient.post<TextDiff>(
+    `/projects/${projectId}/compare/text`,
+    { firmware_a_id: firmwareAId, firmware_b_id: firmwareBId, file_path: filePath },
+    { timeout: 60_000 },
   )
   return data
 }

@@ -12,8 +12,10 @@ from app.schemas.comparison import (
     BinaryDiffResponse,
     FirmwareDiffRequest,
     FirmwareDiffResponse,
+    TextDiffRequest,
+    TextDiffResponse,
 )
-from app.services.comparison_service import diff_binary, diff_filesystems
+from app.services.comparison_service import diff_binary, diff_filesystems, diff_text_file
 from app.services.firmware_service import FirmwareService
 from app.utils.sandbox import validate_path
 
@@ -98,6 +100,45 @@ async def compare_binary(
         info_a=result.info_a,
         info_b=result.info_b,
     )
+
+
+@router.post("/text", response_model=TextDiffResponse)
+async def compare_text_file(
+    project_id: uuid.UUID,
+    body: TextDiffRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Compare a specific text file between two firmware versions.
+
+    Returns a unified diff suitable for display.
+    """
+    fw_a = await _get_firmware(body.firmware_a_id, project_id, db)
+    fw_b = await _get_firmware(body.firmware_b_id, project_id, db)
+
+    # Resolve paths — for added/removed files one side may not exist
+    try:
+        path_a = validate_path(fw_a.extracted_path, body.file_path)
+    except Exception:
+        path_a = ""  # File doesn't exist in A (added file)
+
+    try:
+        path_b = validate_path(fw_b.extracted_path, body.file_path)
+    except Exception:
+        path_b = ""  # File doesn't exist in B (removed file)
+
+    if not path_a and not path_b:
+        return TextDiffResponse(
+            path=body.file_path,
+            diff="",
+            error="File not found in either firmware version",
+        )
+
+    loop = asyncio.get_running_loop()
+    result = await loop.run_in_executor(
+        None, diff_text_file, path_a, path_b, body.file_path,
+    )
+
+    return TextDiffResponse(**result)
 
 
 def _entry_to_dict(entry) -> dict:

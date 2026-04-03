@@ -13,11 +13,11 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { listFirmware } from '@/api/firmware'
-import { diffFirmware, diffBinary } from '@/api/comparison'
+import { diffFirmware, diffBinary, diffTextFile } from '@/api/comparison'
 import { formatFileSize } from '@/utils/format'
-import type { FirmwareDetail, FirmwareDiff, BinaryDiff, FileDiffEntry } from '@/types'
+import type { FirmwareDetail, FirmwareDiff, BinaryDiff, TextDiff, FileDiffEntry } from '@/types'
 
-type Tab = 'files' | 'binaries' | 'binary-detail'
+type Tab = 'files' | 'binaries' | 'binary-detail' | 'text-diff'
 
 export default function ComparisonPage() {
   const { projectId } = useParams<{ projectId: string }>()
@@ -29,6 +29,8 @@ export default function ComparisonPage() {
   const [fsDiff, setFsDiff] = useState<FirmwareDiff | null>(null)
   const [binDiff, setBinDiff] = useState<BinaryDiff | null>(null)
   const [binLoading, setBinLoading] = useState(false)
+  const [textDiff, setTextDiff] = useState<TextDiff | null>(null)
+  const [textLoading, setTextLoading] = useState(false)
   const [tab, setTab] = useState<Tab>('files')
   const [error, setError] = useState<string | null>(null)
   const [statusFilter, setStatusFilter] = useState<string>('all')
@@ -76,6 +78,21 @@ export default function ComparisonPage() {
       // ignore
     } finally {
       setBinLoading(false)
+    }
+  }
+
+  const handleTextDiff = async (path: string) => {
+    if (!projectId || !fwAId || !fwBId) return
+    setTextLoading(true)
+    setTextDiff(null)
+    setTab('text-diff')
+    try {
+      const result = await diffTextFile(projectId, fwAId, fwBId, path)
+      setTextDiff(result)
+    } catch {
+      // ignore
+    } finally {
+      setTextLoading(false)
     }
   }
 
@@ -268,7 +285,16 @@ export default function ComparisonPage() {
                           : null
                         return (
                           <tr key={i} className="border-b border-border/30 hover:bg-muted/50">
-                            <td className="py-1.5 pr-3 font-mono truncate max-w-[400px]">{entry.path}</td>
+                            <td className="py-1.5 pr-3 font-mono truncate max-w-[400px]">
+                              <button
+                                type="button"
+                                className="text-left hover:underline hover:text-primary truncate block max-w-full"
+                                onClick={() => handleTextDiff(entry.path)}
+                                title="View text diff"
+                              >
+                                {entry.path}
+                              </button>
+                            </td>
                             <td className="py-1.5 pr-3">
                               <StatusBadge status={entry.status} />
                             </td>
@@ -346,6 +372,66 @@ export default function ComparisonPage() {
           )}
 
           {/* Binary detail tab */}
+          {tab === 'text-diff' && (
+            <Card>
+              <CardHeader className="pb-3">
+                <CardTitle className="text-base flex items-center gap-2">
+                  <FileEdit className="h-4 w-4" />
+                  Text Diff: {textDiff?.path || 'Loading...'}
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                {textLoading && (
+                  <div className="flex items-center gap-2 py-4 text-muted-foreground">
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Computing diff...
+                  </div>
+                )}
+                {textDiff && !textLoading && (
+                  <div className="space-y-3">
+                    {textDiff.error ? (
+                      <p className="text-sm text-destructive">{textDiff.error}</p>
+                    ) : textDiff.diff ? (
+                      <>
+                        <div className="flex gap-3 text-sm">
+                          <Badge variant="outline" className="text-green-600">
+                            +{textDiff.lines_added} added
+                          </Badge>
+                          <Badge variant="outline" className="text-red-600">
+                            -{textDiff.lines_removed} removed
+                          </Badge>
+                          {textDiff.truncated && (
+                            <Badge variant="outline" className="text-yellow-600">
+                              truncated
+                            </Badge>
+                          )}
+                        </div>
+                        <pre className="max-h-[600px] overflow-auto rounded border bg-muted/30 p-3 text-xs font-mono leading-relaxed">
+                          {textDiff.diff.split('\n').map((line, i) => {
+                            let className = ''
+                            if (line.startsWith('+++') || line.startsWith('---')) className = 'text-muted-foreground font-bold'
+                            else if (line.startsWith('@@')) className = 'text-blue-500'
+                            else if (line.startsWith('+')) className = 'text-green-600 bg-green-500/10'
+                            else if (line.startsWith('-')) className = 'text-red-600 bg-red-500/10'
+                            return (
+                              <div key={i} className={className}>
+                                {line}
+                              </div>
+                            )
+                          })}
+                        </pre>
+                      </>
+                    ) : (
+                      <p className="text-sm text-muted-foreground">
+                        No text differences found, or file is not a text file.
+                      </p>
+                    )}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          )}
+
           {tab === 'binary-detail' && (
             <Card>
               <CardHeader className="pb-3">

@@ -569,3 +569,12 @@ export interface BinaryDiff {
   info_a: Record<string, unknown>
   info_b: Record<string, unknown>
 }
+
+export interface TextDiff {
+  path: string
+  diff: string
+  lines_added: number
+  lines_removed: number
+  truncated: boolean
+  error: string | null
+}
