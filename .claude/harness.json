@@ -27,6 +27,18 @@
         "pattern": "class.*Response.*BaseModel",
         "filePattern": "backend/app/schemas/*.py",
         "message": "Learned from session 4: Verify Pydantic response schemas include all ORM model fields. Missing extracted_path hid the action buttons."
+      },
+      {
+        "name": "auto-session5-no-scalar-one-or-none-on-fk",
+        "pattern": "scalar_one_or_none\\(\\)",
+        "filePattern": "backend/app/routers/*.py",
+        "message": "Learned from session 5: scalar_one_or_none() crashes with MultipleResultsFound on one-to-many relations. Use .order_by().limit(1) or .all() instead."
+      },
+      {
+        "name": "auto-session5-yara-no-unreferenced-strings",
+        "pattern": "strings:",
+        "filePattern": "**/*.yar",
+        "message": "Learned from session 5: Every YARA string must appear in the condition. Unreferenced strings cause compilation errors."
       }
     ]
   },
@@ -89,6 +101,6 @@
     "sessions": 0,
     "campaigns": 0,
     "override": null,
-    "sessions_completed": 23
+    "sessions_completed": 26
   }
 }

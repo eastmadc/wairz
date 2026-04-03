@@ -5,3 +5,6 @@
 {"schema":2,"timestamp":"2026-04-01T22:43:48.187Z","campaign_slug":"android-firmware-support","session_id":"82d1e411-a0b1-424f-ae9f-4c9547d96491","agent_count":0,"duration_minutes":10,"estimated_cost":2,"override_cost":null}
 {"schema":2,"timestamp":"2026-04-01T22:50:13.812Z","campaign_slug":"android-firmware-support","session_id":"2e559936-23d5-425c-a039-53ddc471440b","agent_count":0,"duration_minutes":10,"estimated_cost":2,"override_cost":null}
 {"schema":2,"timestamp":"2026-04-01T22:55:16.385Z","campaign_slug":"android-firmware-support","session_id":"b3aea53b-b8ef-43b5-97cc-c8efa7306415","agent_count":0,"duration_minutes":10,"estimated_cost":2,"override_cost":null}
+{"schema":2,"timestamp":"2026-04-03T05:21:25.191Z","campaign_slug":null,"session_id":"5cd41d6b-ef5a-40ec-8df0-02461d884cd4","agent_count":0,"duration_minutes":10,"estimated_cost":2,"override_cost":null}
+{"schema":2,"timestamp":"2026-04-03T05:38:49.759Z","campaign_slug":null,"session_id":"5cd41d6b-ef5a-40ec-8df0-02461d884cd4","agent_count":0,"duration_minutes":10,"estimated_cost":2,"override_cost":null}
+{"schema":2,"timestamp":"2026-04-03T05:58:21.474Z","campaign_slug":null,"session_id":"95c8659c-d736-4bc5-adf7-1b9157a446aa","agent_count":0,"duration_minutes":10,"estimated_cost":2,"override_cost":null}

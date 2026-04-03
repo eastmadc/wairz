@@ -18,3 +18,13 @@
 {"schema":1,"timestamp":"2026-04-01T22:48:12.813Z","hook":"protect-files","action":"blocked","detail":"Read /home/kali/.claude/plugins/marketplaces/ouroboros/README.md (outside project root)"}
 {"schema":1,"timestamp":"2026-04-01T22:48:13.043Z","hook":"protect-files","action":"blocked","detail":"Read /home/kali/.claude/plugins/marketplaces/ouroboros/docs/architecture.md (outside project root)"}
 {"schema":1,"timestamp":"2026-04-01T22:53:25.824Z","hook":"protect-files","action":"blocked","detail":"Read /home/kali/.claude/mcp.json (outside project root)"}
+{"schema":1,"timestamp":"2026-04-03T05:24:43.135Z","hook":"protect-files","action":"blocked","detail":"Edit .claude/harness.json (pattern: .claude/harness.json)"}
+{"schema":1,"timestamp":"2026-04-03T05:41:44.068Z","hook":"external-action-gate","action":"blocked","detail":"grep .env (secrets): stat -c '%g' /var/run/docker.sock && grep DOCKER_GID /home/kali/code/wairz/.env 2>/dev/null; echo \"---\"; grep -n \"DOCKER_GID\\|docker\\|groupadd\" /home/kali/code/wairz/backend/Dockerfile | head -20"}
+{"schema":1,"timestamp":"2026-04-03T05:42:04.329Z","hook":"protect-files","action":"blocked","detail":"Read .env (.env secrets)"}
+{"schema":1,"timestamp":"2026-04-03T05:42:07.678Z","hook":"protect-files","action":"blocked","detail":"Read .env.example (.env secrets)"}
+{"schema":1,"timestamp":"2026-04-03T05:42:58.549Z","hook":"external-action-gate","action":"blocked","detail":"grep .env (secrets): grep -n 'DOCKER_GID\\|# Docker' /home/kali/code/wairz/.env.example 2>/dev/null"}
+{"schema":1,"timestamp":"2026-04-03T05:43:04.083Z","hook":"protect-files","action":"blocked","detail":"Read .env.example (.env secrets)"}
+{"schema":1,"timestamp":"2026-04-03T05:56:56.014Z","hook":"protect-files","action":"blocked","detail":"Edit .claude/harness.json (pattern: .claude/harness.json)"}
+{"schema":1,"timestamp":"2026-04-03T06:07:23.823Z","hook":"external-action-gate","action":"blocked","detail":"grep .env (secrets): grep DOCKER_GID /home/kali/code/wairz/.env 2>/dev/null || echo \"NOT_SET\""}
+{"schema":1,"timestamp":"2026-04-03T06:08:14.744Z","hook":"protect-files","action":"blocked","detail":"Read .env.example (.env secrets)"}
+{"schema":1,"timestamp":"2026-04-03T06:08:24.465Z","hook":"protect-files","action":"blocked","detail":"Read .env.example (.env secrets)"}
