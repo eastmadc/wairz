@@ -279,7 +279,7 @@ export default function ComparisonPage() {
                       </tr>
                     </thead>
                     <tbody>
-                      {filteredEntries.slice(0, 200).map((entry, i) => {
+                      {filteredEntries.slice(0, 500).map((entry, i) => {
                         const delta = entry.size_a != null && entry.size_b != null && entry.size_a > 0
                           ? ((entry.size_b - entry.size_a) / entry.size_a * 100)
                           : null
@@ -318,7 +318,7 @@ export default function ComparisonPage() {
                   </table>
                   {filteredEntries.length > 200 && (
                     <p className="text-xs text-muted-foreground mt-2">
-                      Showing first 200 of {filteredEntries.length} entries
+                      Showing first 500 of {filteredEntries.length} entries
                     </p>
                   )}
                 </div>
