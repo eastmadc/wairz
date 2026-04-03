@@ -136,9 +136,21 @@ async def _run_unpack_background(
     storage_path: str,
 ) -> None:
     """Run firmware unpacking in the background with its own DB session."""
+    async def _update_progress(stage: str, progress: int) -> None:
+        """Update firmware progress fields in the database."""
+        async with async_session_factory() as db:
+            fw_result = await db.execute(
+                select(Firmware).where(Firmware.id == firmware_id)
+            )
+            firmware = fw_result.scalar_one_or_none()
+            if firmware:
+                firmware.unpack_stage = stage
+                firmware.unpack_progress = progress
+                await db.commit()
+
     try:
         output_base = os.path.dirname(storage_path)
-        result = await unpack_firmware(storage_path, output_base)
+        result = await unpack_firmware(storage_path, output_base, _update_progress)
 
         async with async_session_factory() as db:
             try:
@@ -163,9 +175,13 @@ async def _run_unpack_background(
                     firmware.os_info = result.os_info
                     firmware.kernel_path = result.kernel_path
                     firmware.unpack_log = result.unpack_log
+                    firmware.unpack_stage = None
+                    firmware.unpack_progress = None
                     project.status = "ready"
                 else:
                     firmware.unpack_log = result.unpack_log
+                    firmware.unpack_stage = None
+                    firmware.unpack_progress = None
                     project.status = "error"
 
                 await db.commit()

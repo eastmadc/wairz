@@ -112,33 +112,30 @@ def diff_filesystems(root_a: str, root_b: str) -> FirmwareDiff:
         total_files_b=len(tree_b),
     )
 
-    total_entries = 0
-
+    # Truncate per category so one large category doesn't starve the others
     # Added files (in B but not in A)
     for path in sorted(paths_b - paths_a):
-        if total_entries >= MAX_DIFF_ENTRIES:
+        if len(result.added) >= MAX_DIFF_ENTRIES:
             result.truncated = True
             break
         sha_b, size_b, perms_b = tree_b[path]
         result.added.append(FileDiffEntry(
             path=path, status="added", size_b=size_b, perms_b=perms_b,
         ))
-        total_entries += 1
 
     # Removed files (in A but not in B)
     for path in sorted(paths_a - paths_b):
-        if total_entries >= MAX_DIFF_ENTRIES:
+        if len(result.removed) >= MAX_DIFF_ENTRIES:
             result.truncated = True
             break
         sha_a, size_a, perms_a = tree_a[path]
         result.removed.append(FileDiffEntry(
             path=path, status="removed", size_a=size_a, perms_a=perms_a,
         ))
-        total_entries += 1
 
     # Common files — check for modifications
     for path in sorted(paths_a & paths_b):
-        if total_entries >= MAX_DIFF_ENTRIES:
+        if len(result.modified) >= MAX_DIFF_ENTRIES and len(result.permissions_changed) >= MAX_DIFF_ENTRIES:
             result.truncated = True
             break
         sha_a, size_a, perms_a = tree_a[path]
@@ -147,20 +144,18 @@ def diff_filesystems(root_a: str, root_b: str) -> FirmwareDiff:
         content_changed = (sha_a != sha_b) and sha_a is not None and sha_b is not None
         perm_changed = perms_a != perms_b
 
-        if content_changed:
+        if content_changed and len(result.modified) < MAX_DIFF_ENTRIES:
             result.modified.append(FileDiffEntry(
                 path=path, status="modified",
                 size_a=size_a, size_b=size_b,
                 perms_a=perms_a, perms_b=perms_b,
             ))
-            total_entries += 1
-        elif perm_changed:
+        elif perm_changed and len(result.permissions_changed) < MAX_DIFF_ENTRIES:
             result.permissions_changed.append(FileDiffEntry(
                 path=path, status="permissions_changed",
                 size_a=size_a, size_b=size_b,
                 perms_a=perms_a, perms_b=perms_b,
             ))
-            total_entries += 1
 
     return result
 

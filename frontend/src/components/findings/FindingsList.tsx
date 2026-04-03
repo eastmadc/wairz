@@ -41,6 +41,7 @@ const SOURCE_CONFIG: Record<FindingSource, { icon: React.ElementType; label: str
   fuzzing: { icon: Bug, label: 'Fuzzing', className: 'border-orange-500/50 text-orange-600 dark:text-orange-400' },
   security_review: { icon: Search, label: 'Review', className: 'border-blue-500/50 text-blue-600 dark:text-blue-400' },
   security_audit: { icon: Shield, label: 'Security Audit', className: 'border-red-500/50 text-red-600 dark:text-red-400' },
+  yara_scan: { icon: Shield, label: 'YARA Scan', className: 'border-amber-500/50 text-amber-600 dark:text-amber-400' },
 }
 
 interface FindingsListProps {
@@ -142,7 +143,7 @@ export default function FindingsList({
         })}
 
         <span className="ml-2 text-xs text-muted-foreground">Source:</span>
-        {(['manual', 'ai_discovered', 'sbom_scan', 'security_review', 'security_audit', 'fuzzing'] as FindingSource[]).map((src) => {
+        {(['manual', 'ai_discovered', 'sbom_scan', 'security_review', 'security_audit', 'yara_scan', 'fuzzing'] as FindingSource[]).map((src) => {
           const config = SOURCE_CONFIG[src]
           const active = sourceFilter === src
           const SourceIcon = config.icon
