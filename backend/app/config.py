@@ -49,6 +49,8 @@ class Settings(BaseSettings):
     max_extraction_size_mb: int = 10240
     max_extraction_files: int = 500000
     max_compression_ratio: int = 200
+    dependency_track_url: str = ""
+    dependency_track_api_key: str = ""
     log_level: str = "INFO"
 
 

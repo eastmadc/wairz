@@ -251,6 +251,7 @@ class TestRegistration:
             "get_stack_layout",
             "get_global_layout",
             "cross_binary_dataflow",
+            "detect_capabilities",
         }
 
     def test_tool_schemas_valid(self, registry):

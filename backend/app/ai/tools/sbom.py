@@ -151,6 +151,52 @@ def register_sbom_tools(registry: ToolRegistry) -> None:
     )
 
     registry.register(
+        name="export_sbom",
+        description=(
+            "Export the SBOM in a standard format. Supports 'cyclonedx-json' "
+            "(CycloneDX 1.5), 'spdx-json' (SPDX 2.3), and 'cyclonedx-vex-json' "
+            "(CycloneDX 1.5 VEX with vulnerability analysis). The VEX format "
+            "includes all vulnerabilities with their triage state, justifications, "
+            "and adjusted severity. Requires generate_sbom to have been run first."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "format": {
+                    "type": "string",
+                    "enum": ["cyclonedx-json", "spdx-json", "cyclonedx-vex-json"],
+                    "description": "Export format (default: cyclonedx-json)",
+                },
+            },
+        },
+        handler=_handle_export_sbom,
+    )
+
+    registry.register(
+        name="push_to_dependency_track",
+        description=(
+            "Push the CycloneDX SBOM to an external Dependency-Track instance "
+            "for continuous vulnerability monitoring. Requires DEPENDENCY_TRACK_URL "
+            "and DEPENDENCY_TRACK_API_KEY to be configured. Auto-creates the "
+            "project in Dependency-Track if it doesn't exist."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "project_name": {
+                    "type": "string",
+                    "description": "Project name in Dependency-Track (default: firmware filename)",
+                },
+                "project_version": {
+                    "type": "string",
+                    "description": "Project version in Dependency-Track (default: '1.0')",
+                },
+            },
+        },
+        handler=_handle_push_to_dependency_track,
+    )
+
+    registry.register(
         name="assess_vulnerabilities",
         description=(
             "Batch-assess vulnerabilities: adjust severity, set resolution "
@@ -210,6 +256,48 @@ def register_sbom_tools(registry: ToolRegistry) -> None:
             "required": ["assessments"],
         },
         handler=_handle_assess_vulnerabilities,
+    )
+
+    registry.register(
+        name="set_vulnerability_status",
+        description=(
+            "Set the VEX analysis status of a single vulnerability. This is "
+            "a VEX-focused alias for assess_vulnerabilities that uses standard "
+            "VEX status values: 'not_affected', 'affected', 'fixed', "
+            "'under_investigation'. Maps to internal resolution statuses. "
+            "Optionally provide a CycloneDX justification for not_affected "
+            "(e.g. code_not_reachable, requires_configuration)."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "vulnerability_id": {
+                    "type": "string",
+                    "description": "UUID of the vulnerability",
+                },
+                "status": {
+                    "type": "string",
+                    "enum": [
+                        "not_affected",
+                        "affected",
+                        "fixed",
+                        "under_investigation",
+                    ],
+                    "description": "VEX analysis status",
+                },
+                "justification": {
+                    "type": "string",
+                    "description": (
+                        "Reason for the status. For not_affected, use a CycloneDX "
+                        "justification value like code_not_reachable, "
+                        "requires_configuration, protected_by_mitigating_control, etc. "
+                        "For other statuses, free-text explanation."
+                    ),
+                },
+            },
+            "required": ["vulnerability_id", "status", "justification"],
+        },
+        handler=_handle_set_vulnerability_status,
     )
 
 
@@ -634,6 +722,126 @@ async def _handle_list_vulnerabilities_for_assessment(
     return "\n".join(lines)
 
 
+async def _handle_export_sbom(input: dict, context: ToolContext) -> str:
+    """Export the SBOM in CycloneDX, SPDX, or CycloneDX VEX format."""
+    export_format = input.get("format", "cyclonedx-json")
+
+    stmt = select(SbomComponent).where(
+        SbomComponent.firmware_id == context.firmware_id
+    )
+    result = await context.db.execute(stmt)
+    components = result.scalars().all()
+
+    if not components:
+        return "No SBOM generated yet. Run generate_sbom first."
+
+    import json
+    fw_stub = type("FW", (), {"id": context.firmware_id, "original_filename": "firmware"})()
+
+    if export_format == "spdx-json":
+        from app.routers.sbom import _build_spdx_response
+
+        resp = _build_spdx_response(components, fw_stub)
+        doc = json.loads(resp.body.decode())
+        return json.dumps(doc, indent=2)[:30000]
+
+    if export_format == "cyclonedx-vex-json":
+        from app.routers.sbom import _build_vex_response
+
+        # Load vulnerabilities joined with components
+        vuln_stmt = (
+            select(SbomVulnerability, SbomComponent)
+            .join(SbomComponent, SbomVulnerability.component_id == SbomComponent.id)
+            .where(SbomVulnerability.firmware_id == context.firmware_id)
+            .order_by(SbomVulnerability.cvss_score.desc().nullslast())
+        )
+        vuln_result = await context.db.execute(vuln_stmt)
+        vuln_rows = vuln_result.all()
+
+        resp = _build_vex_response(components, vuln_rows, fw_stub)
+        doc = json.loads(resp.body.decode())
+        return json.dumps(doc, indent=2)[:30000]
+
+    # Default: CycloneDX SBOM
+    from datetime import datetime, timezone
+    bom = {
+        "bomFormat": "CycloneDX",
+        "specVersion": "1.5",
+        "version": 1,
+        "components": [],
+    }
+    for comp in components:
+        cdx: dict = {"type": comp.type, "name": comp.name}
+        if comp.version:
+            cdx["version"] = comp.version
+        if comp.purl:
+            cdx["purl"] = comp.purl
+        if comp.cpe:
+            cdx["cpe"] = comp.cpe
+        bom["components"].append(cdx)
+
+    return json.dumps(bom, indent=2)[:30000]
+
+
+async def _handle_push_to_dependency_track(
+    input: dict, context: ToolContext
+) -> str:
+    """Push CycloneDX SBOM to Dependency-Track."""
+    from app.services.dependency_track_service import DependencyTrackService
+
+    svc = DependencyTrackService()
+    if not svc.is_configured:
+        return (
+            "Dependency-Track not configured. Set DEPENDENCY_TRACK_URL and "
+            "DEPENDENCY_TRACK_API_KEY environment variables."
+        )
+
+    # Check SBOM exists
+    comp_count = await context.db.scalar(
+        select(func.count(SbomComponent.id)).where(
+            SbomComponent.firmware_id == context.firmware_id
+        )
+    )
+    if not comp_count:
+        return "No SBOM generated yet. Run generate_sbom first."
+
+    # Build CycloneDX JSON
+    stmt = select(SbomComponent).where(
+        SbomComponent.firmware_id == context.firmware_id
+    )
+    result = await context.db.execute(stmt)
+    components = result.scalars().all()
+
+    bom = {
+        "bomFormat": "CycloneDX",
+        "specVersion": "1.5",
+        "version": 1,
+        "components": [
+            {
+                "type": comp.type,
+                "name": comp.name,
+                **({"version": comp.version} if comp.version else {}),
+                **({"purl": comp.purl} if comp.purl else {}),
+                **({"cpe": comp.cpe} if comp.cpe else {}),
+            }
+            for comp in components
+        ],
+    }
+
+    project_name = input.get("project_name") or "wairz-firmware"
+    project_version = input.get("project_version", "1.0")
+
+    try:
+        dt_result = await svc.push_sbom(
+            sbom_json=bom,
+            project_name=project_name,
+            project_version=project_version,
+        )
+        return f"SBOM pushed to Dependency-Track successfully. Response: {dt_result}"
+    except Exception as e:
+        return f"Failed to push to Dependency-Track: {e}"
+
+
 async def _handle_assess_vulnerabilities(
     input: dict, context: ToolContext
 ) -> str:
@@ -731,3 +939,68 @@ async def _handle_assess_vulnerabilities(
     header += ":\n"
 
     return header + "\n".join(lines)
+
+
+async def _handle_set_vulnerability_status(
+    input: dict, context: ToolContext
+) -> str:
+    """Set VEX analysis status on a single vulnerability."""
+    import uuid as _uuid
+
+    vid_str = input.get("vulnerability_id", "")
+    vex_status = input.get("status", "")
+    justification = input.get("justification", "")
+
+    try:
+        vid = _uuid.UUID(vid_str)
+    except (ValueError, TypeError):
+        return f"Invalid vulnerability_id: {vid_str}"
+
+    # Map VEX status to internal resolution_status
+    vex_to_internal = {
+        "not_affected": "false_positive",
+        "affected": "open",
+        "fixed": "resolved",
+        "under_investigation": "open",
+    }
+    internal_status = vex_to_internal.get(vex_status)
+    if not internal_status:
+        return f"Invalid VEX status: {vex_status}. Use: not_affected, affected, fixed, under_investigation."
+
+    stmt = select(SbomVulnerability).where(
+        SbomVulnerability.id == vid,
+        SbomVulnerability.firmware_id == context.firmware_id,
+    )
+    result = await context.db.execute(stmt)
+    vuln = result.scalars().first()
+
+    if not vuln:
+        return f"Vulnerability {vid_str} not found in this firmware."
+
+    old_status = vuln.resolution_status
+    vuln.resolution_status = internal_status
+    vuln.resolution_justification = justification
+
+    if internal_status in ("resolved", "false_positive"):
+        vuln.resolved_by = "ai"
+        vuln.resolved_at = datetime.utcnow()
+    elif internal_status == "open":
+        # "affected" and "under_investigation" both map to open
+        # but keep justification for context
+        if vex_status == "under_investigation":
+            vuln.resolved_by = None
+            vuln.resolved_at = None
+        else:
+            # "affected" — mark as assessed but open
+            vuln.adjusted_severity = vuln.adjusted_severity or vuln.severity
+            vuln.resolved_by = None
+            vuln.resolved_at = None
+
+    await context.db.flush()
+
+    return (
+        f"Vulnerability {vuln.cve_id} status updated:\n"
+        f"  VEX state: {vex_status}\n"
+        f"  Internal status: {old_status} -> {internal_status}\n"
+        f"  Justification: {justification}"
+    )

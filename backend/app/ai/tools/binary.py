@@ -1,10 +1,12 @@
 """Binary analysis AI tools using Ghidra and pyelftools."""
 
+import asyncio
 import hashlib
 import json
 import logging
 import os
 import re
+import shutil
 
 from elftools.elf.elffile import ELFFile
 from elftools.elf.sections import SymbolTableSection
@@ -1308,6 +1310,165 @@ async def _handle_cross_binary_dataflow(input: dict, context: ToolContext) -> st
     return "\n".join(lines)
 
 
+async def _handle_detect_capabilities(
+    input: dict, context: ToolContext
+) -> str:
+    """Detect binary capabilities using FLARE capa."""
+    path = context.resolve_path(input.get("binary_path") or input.get("path", "/"))
+
+    if not os.path.isfile(path):
+        return f"Error: file not found: {input['path']}"
+
+    # Check capa availability
+    capa_bin = shutil.which("capa")
+    if not capa_bin:
+        return (
+            "Error: capa is not installed or not on PATH. "
+            "Install it with: pip install flare-capa  (or download from "
+            "https://github.com/mandiant/capa/releases)"
+        )
+
+    # Detect architecture to warn about MIPS limitations
+    arch_warning = ""
+    try:
+        with open(path, "rb") as f:
+            elf = ELFFile(f)
+            machine = elf.header.e_machine
+            if machine in ("EM_MIPS", "EM_MIPS_RS3_LE"):
+                arch_warning = (
+                    "\n\nWARNING: This binary targets MIPS architecture. "
+                    "Capa has limited MIPS support — results may be incomplete "
+                    "or inaccurate. ARM, AArch64, and x86/x64 binaries yield "
+                    "the best results."
+                )
+    except Exception:
+        # Not a valid ELF or unreadable — let capa handle the error
+        pass
+
+    # Run capa with JSON output
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            capa_bin, path, "-j",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        try:
+            stdout_bytes, stderr_bytes = await asyncio.wait_for(
+                proc.communicate(), timeout=120
+            )
+        except asyncio.TimeoutError:
+            proc.kill()
+            await proc.communicate()
+            return (
+                "Error: capa timed out after 120 seconds. "
+                "This binary may be too large for analysis. "
+                "Try a smaller binary or a specific shared library instead."
+            )
+    except Exception as exc:
+        return f"Error running capa: {exc}"
+
+    stdout = stdout_bytes.decode("utf-8", errors="replace")
+    stderr = stderr_bytes.decode("utf-8", errors="replace")
+
+    if proc.returncode != 0:
+        # Check for common error conditions
+        stderr_lower = stderr.lower()
+        if "unsupported" in stderr_lower or "not a supported" in stderr_lower:
+            return (
+                f"Capa does not support this binary format or architecture.\n"
+                f"Details: {stderr.strip()}"
+            )
+        if "no capabilities" in stderr_lower:
+            return f"No capabilities detected in this binary.{arch_warning}"
+        return f"Capa failed (exit code {proc.returncode}):\n{stderr.strip()}"
+
+    # Parse JSON output
+    try:
+        data = json.loads(stdout)
+    except json.JSONDecodeError:
+        return (
+            "Error: could not parse capa JSON output. "
+            f"stderr: {stderr.strip()[:500]}"
+        )
+
+    # Extract rules grouped by namespace
+    rules = data.get("rules", {})
+    if not rules:
+        return f"No capabilities detected in this binary.{arch_warning}"
+
+    # Group capabilities by namespace
+    by_namespace: dict[str, list[str]] = {}
+    attack_techniques: list[str] = []
+    mbc_behaviors: list[str] = []
+
+    for rule_name, rule_data in rules.items():
+        meta = rule_data.get("meta", {})
+
+        # Determine namespace/category
+        namespace = meta.get("namespace", "uncategorized")
+        # Use top-level namespace for grouping
+        top_ns = namespace.split("/")[0] if namespace else "uncategorized"
+        by_namespace.setdefault(top_ns, []).append(rule_name)
+
+        # Collect ATT&CK mappings
+        for attack in meta.get("attack", []):
+            technique = attack.get("technique", "")
+            tactic = attack.get("tactic", "")
+            tid = attack.get("id", "")
+            if technique:
+                entry = f"{technique} ({tid})" if tid else technique
+                if tactic:
+                    entry = f"[{tactic}] {entry}"
+                if entry not in attack_techniques:
+                    attack_techniques.append(entry)
+
+        # Collect MBC behaviors
+        for mbc in meta.get("mbc", []):
+            behavior = mbc.get("behavior", "")
+            objective = mbc.get("objective", "")
+            mid = mbc.get("id", "")
+            if behavior:
+                entry = f"{behavior} ({mid})" if mid else behavior
+                if objective:
+                    entry = f"[{objective}] {entry}"
+                if entry not in mbc_behaviors:
+                    mbc_behaviors.append(entry)
+
+    total = sum(len(caps) for caps in by_namespace.values())
+
+    # Format output
+    lines = [
+        f"CAPA Capability Detection: {total} capabilities found",
+        f"Binary: {input['path']}",
+        "",
+    ]
+
+    # Capabilities by namespace
+    lines.append("=== Capabilities by Category ===")
+    for ns in sorted(by_namespace.keys()):
+        caps = sorted(by_namespace[ns])
+        lines.append(f"\n{ns} ({len(caps)}):")
+        for cap in caps:
+            lines.append(f"  - {cap}")
+
+    # ATT&CK mappings
+    if attack_techniques:
+        lines.append("\n=== MITRE ATT&CK Techniques ===")
+        for tech in sorted(attack_techniques):
+            lines.append(f"  - {tech}")
+
+    # MBC behaviors
+    if mbc_behaviors:
+        lines.append("\n=== Malware Behavior Catalog ===")
+        for beh in sorted(mbc_behaviors):
+            lines.append(f"  - {beh}")
+
+    if arch_warning:
+        lines.append(arch_warning)
+
+    return "\n".join(lines)
+
+
 def register_binary_tools(registry: ToolRegistry) -> None:
     """Register all binary analysis tools with the given registry."""
 
@@ -1825,4 +1986,33 @@ def register_binary_tools(registry: ToolRegistry) -> None:
             },
         },
         handler=_handle_cross_binary_dataflow,
+    )
+
+    # --- capa capability detection ---
+
+    registry.register(
+        name="detect_capabilities",
+        description=(
+            "Detect capabilities of an ELF binary using FLARE capa. "
+            "Identifies what a binary can DO (e.g., communicate over HTTP, "
+            "manipulate files, use cryptography, parse PE headers) by matching "
+            "against hundreds of behavioral rules. Results are grouped by "
+            "category with MITRE ATT&CK technique mappings where applicable. "
+            "Supports ELF binaries on ARM, AArch64, and x86/x64. MIPS support "
+            "is limited. Analysis may take 30-120 seconds for large binaries."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "binary_path": {
+                    "type": "string",
+                    "description": (
+                        "Path to the ELF binary in the firmware filesystem "
+                        "(e.g., '/usr/bin/httpd', '/bin/busybox')"
+                    ),
+                },
+            },
+            "required": ["binary_path"],
+        },
+        handler=_handle_detect_capabilities,
     )

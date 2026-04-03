@@ -7,7 +7,8 @@ from fastapi.responses import JSONResponse
 from starlette.requests import Request
 
 from app.config import get_settings
-from app.routers import analysis, comparison, component_map, device, documents, emulation, export_import, files, findings, firmware, fuzzing, kernels, projects, sbom, security_audit, terminal, uart
+from app.routers import analysis, comparison, compliance, component_map, device, documents, emulation, events, export_import, files, findings, firmware, fuzzing, kernels, projects, sbom, security_audit, terminal, uart
+from app.services.event_service import event_service
 from app.utils.sandbox import PathTraversalError
 
 
@@ -16,7 +17,22 @@ async def lifespan(app: FastAPI):
     settings = get_settings()
     os.makedirs(settings.storage_root, exist_ok=True)
     os.makedirs(settings.emulation_kernel_dir, exist_ok=True)
+
+    # Connect Redis event bus
+    try:
+        await event_service.connect()
+        app.state.event_service = event_service
+    except Exception:
+        import logging
+        logging.getLogger(__name__).warning(
+            "Redis unavailable — SSE event bus disabled. "
+            "Polling fallback will continue to work."
+        )
+
     yield
+
+    # Shutdown Redis
+    await event_service.disconnect()
 
 
 app = FastAPI(
@@ -56,6 +72,8 @@ app.include_router(export_import.router)
 app.include_router(uart.router)
 app.include_router(device.router)
 app.include_router(security_audit.router)
+app.include_router(compliance.router)
+app.include_router(events.router)
 
 
 @app.exception_handler(PathTraversalError)
