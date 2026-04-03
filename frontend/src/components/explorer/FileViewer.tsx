@@ -731,6 +731,9 @@ function TextTabs({
   fileInfo: import('@/types').FileInfo | null
   infoLoading: boolean
 }) {
+  const pendingLine = useExplorerStore((s) => s.pendingLine)
+  const clearPendingLine = useExplorerStore((s) => s.clearPendingLine)
+
   return (
     <Tabs defaultValue="content" className="flex flex-1 flex-col overflow-hidden">
       <TabsList className="mx-4 mt-2 w-fit">
@@ -754,6 +757,23 @@ function TextTabs({
               beforeMount={(monaco) => {
                 registerAssemblyLanguage(monaco)
                 registerShellLanguage(monaco)
+              }}
+              onMount={(editor) => {
+                if (pendingLine && pendingLine > 0) {
+                  setTimeout(() => {
+                    editor.revealLineInCenter(pendingLine)
+                    editor.setPosition({ lineNumber: pendingLine, column: 1 })
+                    editor.deltaDecorations([], [{
+                      range: { startLineNumber: pendingLine, startColumn: 1, endLineNumber: pendingLine, endColumn: 1 },
+                      options: {
+                        isWholeLine: true,
+                        className: 'bg-yellow-500/20',
+                        glyphMarginClassName: 'bg-yellow-500',
+                      },
+                    }])
+                    clearPendingLine()
+                  }, 100)
+                }
               }}
               options={{
                 readOnly: true,

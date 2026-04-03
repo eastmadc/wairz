@@ -46,6 +46,9 @@ class Settings(BaseSettings):
     vulnerability_backend: str = "grype"  # "grype" or "nvd"
     grype_db_cache_dir: str = "/data/grype-db"
     grype_timeout: int = 120
+    max_extraction_size_mb: int = 10240
+    max_extraction_files: int = 500000
+    max_compression_ratio: int = 200
     log_level: str = "INFO"
 
 

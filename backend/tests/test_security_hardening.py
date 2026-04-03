@@ -75,6 +75,54 @@ class TestApiKeyPatterns:
         matches = [(pat, cat) for pat, cat, _ in _API_KEY_PATTERNS if pat.search(token)]
         assert any(cat == "slack_bot_token" for _, cat in matches)
 
+    def test_otpauth_uri(self):
+        """OTP provisioning URI should match."""
+        uri = "otpauth://totp/Service:user@example.com?secret=JBSWY3DPEHPK3PXP&issuer=Service"
+        matches = [(pat, cat) for pat, cat, _ in _API_KEY_PATTERNS if pat.search(uri)]
+        assert any(cat == "otp_auth_uri" for _, cat in matches)
+
+    def test_hotp_uri(self):
+        """HOTP provisioning URI should match."""
+        uri = "otpauth://hotp/Secure%20App:alice@google.com?secret=JBSWY3DPEHPK3PXP&issuer=Secure%20App&counter=0"
+        matches = [(pat, cat) for pat, cat, _ in _API_KEY_PATTERNS if pat.search(uri)]
+        assert any(cat == "otp_auth_uri" for _, cat in matches)
+
+    def test_database_connection_string(self):
+        """Database connection strings with embedded credentials should match."""
+        conn = "postgres://admin:s3cretPass@db.example.com:5432/mydb"
+        matches = [(pat, cat) for pat, cat, _ in _API_KEY_PATTERNS if pat.search(conn)]
+        assert any(cat == "database_connection_string" for _, cat in matches)
+
+    def test_mongodb_connection_string(self):
+        """MongoDB connection string should match."""
+        conn = "mongodb+srv://user:password@cluster0.abc123.mongodb.net/mydb"
+        matches = [(pat, cat) for pat, cat, _ in _API_KEY_PATTERNS if pat.search(conn)]
+        assert any(cat == "database_connection_string" for _, cat in matches)
+
+    def test_sendgrid_api_key(self):
+        """SendGrid API key should match."""
+        key = "SG." + "A" * 22 + "." + "B" * 43
+        matches = [(pat, cat) for pat, cat, _ in _API_KEY_PATTERNS if pat.search(key)]
+        assert any(cat == "sendgrid_api_key" for _, cat in matches)
+
+    def test_gitlab_pat(self):
+        """GitLab personal access token should match."""
+        token = "glpat-" + "A" * 20
+        matches = [(pat, cat) for pat, cat, _ in _API_KEY_PATTERNS if pat.search(token)]
+        assert any(cat == "gitlab_pat" for _, cat in matches)
+
+    def test_npm_token(self):
+        """npm access token should match."""
+        token = "npm_" + "A" * 36
+        matches = [(pat, cat) for pat, cat, _ in _API_KEY_PATTERNS if pat.search(token)]
+        assert any(cat == "npm_access_token" for _, cat in matches)
+
+    def test_digitalocean_pat(self):
+        """DigitalOcean personal access token should match."""
+        token = "dop_v1_" + "a" * 64
+        matches = [(pat, cat) for pat, cat, _ in _API_KEY_PATTERNS if pat.search(token)]
+        assert any(cat == "digitalocean_pat" for _, cat in matches)
+
 
 class TestSysctlParser:
     """Test sysctl.conf parsing and parameter extraction."""

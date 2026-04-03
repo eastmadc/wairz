@@ -13,6 +13,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     p7zip-full \
     cabextract \
     lzop \
+    lz4 \
+    zstd \
+    lziprecover \
+    unar \
+    partclone \
     srecord \
     file \
     libmagic1 \
@@ -21,6 +26,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     zlib1g-dev \
     liblzma-dev \
     liblzo2-dev \
+    liblz4-dev \
+    libzstd-dev \
     wget \
     curl \
     unzip \
@@ -46,16 +53,17 @@ RUN pip3 install --no-cache-dir --break-system-packages \
 RUN pip3 install --no-cache-dir --break-system-packages unblob \
     || echo "WARN: unblob install failed — fallback extraction won't work"
 
-# Install sasquatch for non-standard SquashFS (vendor-modified)
-# Try the devttys0 fork first; patch out -Werror to handle newer compiler warnings
-RUN git clone https://github.com/devttys0/sasquatch.git /tmp/sasquatch \
-    && cd /tmp/sasquatch \
-    && sed -i 's/-Werror//g' squashfs-tools/Makefile patches/*.patch 2>/dev/null \
-    && sed -i 's/-Wall -Werror/-Wall/g' squashfs-tools/Makefile 2>/dev/null; \
-    cd /tmp/sasquatch && ./build.sh 2>/dev/null \
-    && cp /usr/local/bin/sasquatch /usr/local/bin/sasquatch 2>/dev/null; \
-    rm -rf /tmp/sasquatch; \
-    which sasquatch || echo "WARN: sasquatch build failed — non-standard SquashFS won't extract"
+# Install sasquatch for non-standard SquashFS (vendor-modified firmware).
+# Uses the onekey-sec fork (maintained by the unblob team) which handles
+# vendor-modified SquashFS variants from Rockchip, Broadcom, etc.
+# Also provides sasquatch-v4be for big-endian SquashFS v4 images.
+RUN git clone https://github.com/onekey-sec/sasquatch.git /tmp/sasquatch \
+    && cd /tmp/sasquatch/squashfs-tools \
+    && make -j$(nproc) \
+    && make install \
+    && ln -sf /usr/local/bin/sasquatch /usr/local/bin/sasquatch-v4be \
+    && rm -rf /tmp/sasquatch \
+    && sasquatch -version 2>&1 | head -1
 
 # Install OpenJDK 21 for Ghidra (JDK 17 not available in Trixie)
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -117,6 +125,26 @@ RUN ARCH=$(uname -m) && \
     curl -sSfL "https://github.com/anchore/syft/releases/download/v${SYFT_VERSION}/syft_${SYFT_VERSION}_linux_${GOARCH}.tar.gz" \
         | tar xz -C /usr/local/bin syft && \
     chmod +x /usr/local/bin/syft
+
+# Install TruffleHog for deep secrets scanning (optional, enhances security audit)
+ARG TRUFFLEHOG_VERSION=3.94.2
+RUN ARCH=$(uname -m) && \
+    if [ "$ARCH" = "x86_64" ]; then GOARCH=amd64; \
+    elif [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then GOARCH=arm64; \
+    else echo "Unsupported arch: $ARCH" && exit 1; fi && \
+    curl -sSfL "https://github.com/trufflesecurity/trufflehog/releases/download/v${TRUFFLEHOG_VERSION}/trufflehog_${TRUFFLEHOG_VERSION}_linux_${GOARCH}.tar.gz" \
+        | tar xz -C /usr/local/bin trufflehog && \
+    chmod +x /usr/local/bin/trufflehog || echo "WARN: trufflehog install failed"
+
+# Install Nosey Parker for high-performance secrets scanning (optional, enhances security audit)
+ARG NOSEYPARKER_VERSION=0.24.0
+RUN ARCH=$(uname -m) && \
+    if [ "$ARCH" = "x86_64" ]; then NPARCH=x86_64; \
+    elif [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then NPARCH=aarch64; \
+    else echo "Unsupported arch: $ARCH" && exit 1; fi && \
+    curl -sSfL "https://github.com/praetorian-inc/noseyparker/releases/download/v${NOSEYPARKER_VERSION}/noseyparker-v${NOSEYPARKER_VERSION}-${NPARCH}-unknown-linux-gnu.tar.gz" \
+        | tar xz -C /usr/local ./bin/noseyparker && \
+    chmod +x /usr/local/bin/noseyparker || echo "WARN: noseyparker install failed"
 
 # Install Android firmware extraction tools (multi-arch)
 RUN apt-get update && apt-get install -y --no-install-recommends \

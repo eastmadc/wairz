@@ -17,6 +17,7 @@ import {
   User,
   Search,
   Bug,
+  Shield,
 } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -46,6 +47,7 @@ const SOURCE_CONFIG: Record<FindingSource, { icon: React.ElementType; label: str
   sbom_scan: { icon: Package, label: 'Vulnerability Scan', className: 'border-teal-500/50 text-teal-600 dark:text-teal-400' },
   fuzzing: { icon: Bug, label: 'Fuzzing', className: 'border-orange-500/50 text-orange-600 dark:text-orange-400' },
   security_review: { icon: Search, label: 'Security Review', className: 'border-blue-500/50 text-blue-600 dark:text-blue-400' },
+  security_audit: { icon: Shield, label: 'Security Audit', className: 'border-red-500/50 text-red-600 dark:text-red-400' },
 }
 
 interface FindingDetailProps {
@@ -84,7 +86,8 @@ export default function FindingDetail({ finding, onUpdate, onDelete }: FindingDe
 
   const handleNavigateToFile = () => {
     if (finding.file_path && projectId) {
-      navigate(`/projects/${projectId}/explore?path=${encodeURIComponent(finding.file_path)}`)
+      const lineParam = finding.line_number != null ? `&line=${finding.line_number}` : ''
+      navigate(`/projects/${projectId}/explore?path=${encodeURIComponent(finding.file_path)}${lineParam}`)
     }
   }
 

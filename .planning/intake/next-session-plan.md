@@ -1,8 +1,31 @@
 # Next Session Plan
 
 > Created: 2026-04-01
-> Updated: 2026-04-02 (session 3 — quality sprint + research fleet + v2 campaign planning)
+> Updated: 2026-04-03 (session 4 — zip bomb prevention + campaign housekeeping)
 > Resume with: /do continue
+
+## Session 4 Completed
+
+### Campaign Housekeeping
+- Closed Security Hardening campaign (phases 2-3 done, phase 4 tests done, YARA deferred)
+- Marked Device Acquisition v2 as blocked (phases 1-9 done, phase 10 needs manual hardware test)
+- Verified P2 Flow Robustness: concurrent unpack race (SELECT FOR UPDATE) and disk space check (shutil.disk_usage) were already implemented in prior sessions
+
+### Zip Bomb Prevention (P2 remaining item)
+- Added 3 config settings: max_extraction_size_mb (10GB), max_extraction_files (500K), max_compression_ratio (200:1)
+- Added `check_extraction_limits()` in unpack_common.py — post-extraction validator using recursive os.scandir
+- Added `check_tar_bomb()` in unpack_linux.py — pre-extraction tar member inspection
+- Added pre-extraction ZIP bomb check in firmware_service.py `_extract_archive()`
+- Integrated guards at all 5 extraction points in unpack.py (Android OTA, partition dump tar, rootfs tar, binwalk, unblob)
+- Wrote 18 tests (all passing): 8 for check_extraction_limits, 6 for check_tar_bomb, 4 for ZIP extraction
+
+### SquashFS Extraction Fix (bug found during SBOM comparison investigation)
+- **Root cause:** Dockerfile used devttys0/sasquatch fork which failed silently on ARM64 (-Werror build flags)
+- **Fix:** Switched to onekey-sec/sasquatch fork (maintained by unblob team), added liblz4-dev + libzstd-dev build deps
+- Added 5 missing unblob extractor deps: lz4, zstd, lziprecover, unar, partclone
+- All 15/15 unblob external dependencies now satisfied (was 10/15)
+- Verified fix: re-extracted test11 firmware → SquashFS rootfs now properly extracted (11,840 files vs 287)
+- Re-generated SBOM: test11 now has 319 components (was 9) and 2,415 vulns (was 19) — matches test4 reference
 
 ## Session 3 Completed
 
@@ -23,30 +46,33 @@
 - Qualcomm EDL: recommend import-only (75-85% of devices block unsigned firehose)
 - Full campaign plan written: `.planning/campaigns/device-acquisition-v2.md` (10 phases, 4-6 sessions)
 
-## Session 4 Priorities
+## Session 5 Priorities
 
-### P1: Device Acquisition v2 — Phases 1-2
-Progress percentages (bridge + frontend) and MTKClient device detection:
-- Pre-dump partition size query via blockdev
-- Progress events with total_bytes, progress_percent, throughput_mbps
-- Frontend progress bars replacing bytes-only display
-- BROM device detection via lsusb (VID 0E8D)
-- See `.planning/campaigns/device-acquisition-v2.md` for full plan
+### P1: YARA Malware Scanning (Security Hardening Phase 1)
+- Needs yara-python dependency in backend + Dockerfile change
+- 30+ built-in rules for firmware backdoors/malware
+- `scan_with_yara` MCP tool
 
-### P2: Flow Robustness — Remaining HIGH fixes
-- Concurrent unpack race condition (SELECT FOR UPDATE locking)
-- Disk space check before extraction (shutil.disk_usage)
-- Zip bomb prevention (file count + compression ratio limits)
-- Progress reporting for long extractions (30+ min fallback chain)
-
-### P3: Frontend Polish
-- VulnerabilitiesTab 15+ props → extract to Zustand store
+### P2: Frontend Polish
+- VulnerabilitiesTab already extracted to Zustand (session 3) — verify in browser
 - Test file search UI in browser
 - Test Load More button on vuln page
 
-### P4: Quality Loops
-- emulation_service.py: extract 115-line embedded shell script
-- emulation_service.py: add exc_info to 8 bare exception handlers
+### P3: Progress reporting for long extractions
+- Binwalk/unblob fallback chain can take 30+ min
+- Frontend shows no progress during extraction — just "unpacking"
+
+### P4: Squash clean-history branch
+- Many commits need squashing into logical groups
+- Push to fork
+
+### P5: Android A/B OTA testing
+- payload-dumper-go installed but untested with real A/B OTA
+- Needs Pixel OTA download
+
+### P6: Device Acquisition v2 — Phase 10
+- Manual hardware test with real MediaTek device
+- Blocked until hardware available
 
 ### P5: Remaining Android Campaign
 - A/B OTA testing (needs Pixel firmware download)

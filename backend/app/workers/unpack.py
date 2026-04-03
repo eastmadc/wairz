@@ -15,13 +15,16 @@ import os
 # Re-export public API for backward compatibility
 from app.workers.unpack_common import (  # noqa: F401
     UnpackResult,
+    check_extraction_limits,
     classify_firmware,
+    cleanup_unblob_artifacts,
     find_filesystem_root,
     run_binwalk_extraction,
     run_unblob_extraction,
     _find_binwalk_output_dir,
 )
 from app.workers.unpack_linux import (  # noqa: F401
+    check_tar_bomb,
     detect_architecture,
     detect_architecture_from_elf,
     detect_kernel,
@@ -133,6 +136,12 @@ async def unpack_firmware(firmware_path: str, output_base_dir: str) -> UnpackRes
                 result.success = True
                 return result
             result.unpack_log += await _extract_android_ota(firmware_path, extraction_dir)
+            bomb_error = check_extraction_limits(extraction_dir, fw_size)
+            if bomb_error:
+                result.error = bomb_error
+                result.unpack_log += f"\n{bomb_error}\n"
+                shutil.rmtree(extraction_dir, ignore_errors=True)
+                return result
             _analyze_filesystem(result, extraction_dir)
             if result.success:
                 return result
@@ -144,9 +153,27 @@ async def unpack_firmware(firmware_path: str, output_base_dir: str) -> UnpackRes
     elif fw_type == "partition_dump_tar":
         # Raw partition image dump (EDL, MTKClient, or device bridge)
         try:
+            from app.config import get_settings as _get_settings
+            _settings = _get_settings()
+            tar_bomb_error = check_tar_bomb(
+                firmware_path,
+                _settings.max_extraction_size_mb * 1024 * 1024,
+                _settings.max_extraction_files,
+                _settings.max_compression_ratio,
+            )
+            if tar_bomb_error:
+                result.error = tar_bomb_error
+                result.unpack_log += f"\n{tar_bomb_error}\n"
+                return result
             with _tarfile.open(firmware_path) as tf:
                 tf.extractall(extraction_dir, filter=_firmware_tar_filter)
             result.unpack_log += f"Extracted partition dump tar: {os.path.basename(firmware_path)}\n"
+            bomb_error = check_extraction_limits(extraction_dir, fw_size)
+            if bomb_error:
+                result.error = bomb_error
+                result.unpack_log += f"\n{bomb_error}\n"
+                shutil.rmtree(extraction_dir, ignore_errors=True)
+                return result
             # Process extracted .img files through Android pipeline
             result.unpack_log += await _extract_android_ota(extraction_dir, extraction_dir)
             _analyze_filesystem(result, extraction_dir)
@@ -159,9 +186,27 @@ async def unpack_firmware(firmware_path: str, output_base_dir: str) -> UnpackRes
 
     elif fw_type == "linux_rootfs_tar":
         try:
+            from app.config import get_settings as _get_settings
+            _settings = _get_settings()
+            tar_bomb_error = check_tar_bomb(
+                firmware_path,
+                _settings.max_extraction_size_mb * 1024 * 1024,
+                _settings.max_extraction_files,
+                _settings.max_compression_ratio,
+            )
+            if tar_bomb_error:
+                result.error = tar_bomb_error
+                result.unpack_log += f"\n{tar_bomb_error}\n"
+                return result
             with _tarfile.open(firmware_path) as tf:
                 tf.extractall(extraction_dir, filter=_firmware_tar_filter)
             result.unpack_log += f"Extracted tar rootfs: {os.path.basename(firmware_path)}\n"
+            bomb_error = check_extraction_limits(extraction_dir, fw_size)
+            if bomb_error:
+                result.error = bomb_error
+                result.unpack_log += f"\n{bomb_error}\n"
+                shutil.rmtree(extraction_dir, ignore_errors=True)
+                return result
             _analyze_filesystem(result, extraction_dir)
             if result.success:
                 return result
@@ -184,6 +229,21 @@ async def unpack_firmware(firmware_path: str, output_base_dir: str) -> UnpackRes
             result.unpack_log += log
 
             # Check if this extractor produced a usable filesystem
+            bomb_error = check_extraction_limits(extraction_dir, fw_size)
+            if bomb_error:
+                result.error = bomb_error
+                result.unpack_log += f"\n{bomb_error}\n"
+                shutil.rmtree(extraction_dir, ignore_errors=True)
+                return result
+            # Clean up unblob/binwalk artifacts (.unknown chunks, raw images
+            # that have been extracted) to reduce file explorer noise
+            removed = cleanup_unblob_artifacts(extraction_dir)
+            # Also clean nested extraction dirs (unblob nests under img_extract/)
+            for entry in os.scandir(extraction_dir):
+                if entry.is_dir(follow_symlinks=False) and entry.name.endswith("_extract"):
+                    removed += cleanup_unblob_artifacts(entry.path)
+            if removed:
+                result.unpack_log += f"Cleaned up {removed} intermediate artifact(s).\n"
             _analyze_filesystem(result, extraction_dir)
             if result.success:
                 result.unpack_log += f"\n{name} extraction succeeded.\n"

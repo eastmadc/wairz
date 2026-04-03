@@ -19,9 +19,11 @@ import {
   Pencil,
   Check,
   X,
+  Shield,
 } from 'lucide-react'
 import { useProjectStore } from '@/stores/projectStore'
 import { listFirmware, deleteFirmware, updateFirmware, uploadRootfs } from '@/api/firmware'
+import { runSecurityAudit, type SecurityAuditResult } from '@/api/findings'
 import type { FirmwareDetail } from '@/types'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -62,6 +64,8 @@ export default function ProjectDetailPage() {
   const [versionLabelDraft, setVersionLabelDraft] = useState('')
   const [uploadingRootfs, setUploadingRootfs] = useState<string | null>(null)
   const [rootfsError, setRootfsError] = useState<string | null>(null)
+  const [auditing, setAuditing] = useState(false)
+  const [auditResult, setAuditResult] = useState<SecurityAuditResult | null>(null)
   const versionInputRef = useRef<HTMLInputElement>(null)
   const rootfsInputRef = useRef<HTMLInputElement>(null)
 
@@ -457,6 +461,26 @@ export default function ProjectDetailPage() {
                 Findings
               </Link>
             </Button>
+            <Button
+              variant="outline"
+              disabled={auditing}
+              onClick={async () => {
+                if (!project) return
+                setAuditing(true)
+                setAuditResult(null)
+                try {
+                  const result = await runSecurityAudit(project.id)
+                  setAuditResult(result)
+                } catch {
+                  setAuditResult({ status: 'error', checks_run: 0, findings_created: 0, total_findings: 0, errors: ['Scan failed'] })
+                } finally {
+                  setAuditing(false)
+                }
+              }}
+            >
+              {auditing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Shield className="mr-2 h-4 w-4" />}
+              {auditing ? 'Auditing...' : 'Security Audit'}
+            </Button>
             {unpackedCount >= 2 && (
               <Button variant="outline" asChild>
                 <Link to={`/projects/${project.id}/compare`}>
@@ -466,6 +490,31 @@ export default function ProjectDetailPage() {
               </Button>
             )}
           </div>
+
+          {auditResult && !auditing && (
+            <Card>
+              <CardContent className="py-3 px-4">
+                <div className="flex items-center gap-3">
+                  <Shield className="h-4 w-4 text-muted-foreground" />
+                  <span className="text-sm">
+                    Security audit complete: <strong>{auditResult.findings_created}</strong> finding{auditResult.findings_created !== 1 ? 's' : ''} from {auditResult.checks_run} checks
+                  </span>
+                  {auditResult.findings_created > 0 && (
+                    <Button variant="link" size="sm" className="h-auto p-0" asChild>
+                      <Link to={`/projects/${project.id}/findings?source=security_audit`}>
+                        View in Findings
+                      </Link>
+                    </Button>
+                  )}
+                  {auditResult.errors.length > 0 && (
+                    <span className="text-xs text-destructive">
+                      {auditResult.errors.length} error(s)
+                    </span>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+          )}
 
           <McpConnectionCard projectId={project.id} />
         </>

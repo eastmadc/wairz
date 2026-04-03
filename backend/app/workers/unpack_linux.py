@@ -183,6 +183,55 @@ def detect_kernel(extraction_dir: str, fs_root: str | None) -> str | None:
     return candidates[0][0]
 
 
+def check_tar_bomb(
+    tar_path: str, max_size_bytes: int, max_files: int, max_ratio: int
+) -> str | None:
+    """Inspect a tar archive for zip-bomb indicators without extracting.
+
+    Returns an error message string if any limit is exceeded, or None if OK.
+    """
+    import tarfile as _tarfile
+
+    try:
+        archive_size = os.path.getsize(tar_path)
+    except OSError:
+        return None
+
+    total_size = 0
+    file_count = 0
+
+    try:
+        with _tarfile.open(tar_path) as tf:
+            for member in tf:
+                file_count += 1
+                if member.isreg():
+                    total_size += member.size
+
+                if file_count > max_files:
+                    return (
+                        f"Tar bomb detected: file count ({file_count}) "
+                        f"exceeds limit ({max_files})"
+                    )
+                if total_size > max_size_bytes:
+                    return (
+                        f"Tar bomb detected: declared size "
+                        f"({total_size // (1024*1024)}MB) exceeds limit "
+                        f"({max_size_bytes // (1024*1024)}MB)"
+                    )
+    except Exception:
+        return None  # Can't inspect — let extraction proceed
+
+    if archive_size > 0 and total_size > 0:
+        ratio = total_size / archive_size
+        if ratio > max_ratio:
+            return (
+                f"Tar bomb detected: compression ratio ({ratio:.1f}:1) "
+                f"exceeds limit ({max_ratio}:1)"
+            )
+
+    return None
+
+
 def _firmware_tar_filter(member, dest_path):
     """Custom tar extraction filter for firmware rootfs archives."""
     import tarfile as _tarfile

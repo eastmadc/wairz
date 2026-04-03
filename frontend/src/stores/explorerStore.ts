@@ -63,6 +63,8 @@ interface ExplorerState {
   treeError: string | null
   /** Set after navigateToPath completes so FileTree can expand and scroll */
   pendingNavPath: string | null
+  /** Line number to scroll to after file loads (from ?line= param) */
+  pendingLine: number | null
   documents: ProjectDocument[]
   documentsLoading: boolean
   selectedDocumentId: string | null
@@ -76,6 +78,8 @@ interface ExplorerActions {
   selectFile: (projectId: string, node: TreeNode) => Promise<void>
   navigateToPath: (projectId: string, targetPath: string) => Promise<void>
   clearPendingNavPath: () => void
+  setPendingLine: (line: number | null) => void
+  clearPendingLine: () => void
   loadDocuments: (projectId: string) => Promise<void>
   selectDocument: (projectId: string, document: ProjectDocument) => Promise<void>
   setDocumentContent: (content: string) => void
@@ -94,6 +98,7 @@ const initialState: ExplorerState = {
   infoLoading: false,
   treeError: null,
   pendingNavPath: null,
+  pendingLine: null,
   documents: [],
   documentsLoading: false,
   selectedDocumentId: null,
@@ -232,39 +237,60 @@ export const useExplorerStore = create<ExplorerState & ExplorerActions>(
         await get().loadRootDirectory(projectId)
       }
 
-      // Expand each parent directory sequentially
-      let currentPath = ''
-      for (let i = 0; i < segments.length - 1; i++) {
-        currentPath += '/' + segments[i]
-        // Check if this directory needs loading (has placeholder children)
-        const findNode = (nodes: TreeNode[]): TreeNode | null => {
-          for (const n of nodes) {
-            if (n.id === currentPath) return n
-            if (n.children) {
-              const found = findNode(n.children)
-              if (found) return found
-            }
-          }
-          return null
-        }
-        const dirNode = findNode(get().treeData)
-        if (dirNode?.children?.length === 1 && isPlaceholder(dirNode.children[0])) {
-          await get().loadDirectory(projectId, currentPath)
-        }
-      }
-
-      // Now find and select the target node
-      const findTarget = (nodes: TreeNode[]): TreeNode | null => {
+      // Helper: find a node by path in the tree
+      const findNodeByPath = (nodes: TreeNode[], path: string): TreeNode | null => {
         for (const n of nodes) {
-          if (n.id === targetPath) return n
+          if (n.id === path) return n
           if (n.children) {
-            const found = findTarget(n.children)
+            const found = findNodeByPath(n.children, path)
             if (found) return found
           }
         }
         return null
       }
-      const targetNode = findTarget(get().treeData)
+
+      // Helper: expand all parent directories for a given path
+      const expandParents = async (segs: string[]) => {
+        let cur = ''
+        for (let i = 0; i < segs.length - 1; i++) {
+          cur += '/' + segs[i]
+          const dirNode = findNodeByPath(get().treeData, cur)
+          if (dirNode?.children?.length === 1 && isPlaceholder(dirNode.children[0])) {
+            await get().loadDirectory(projectId, cur)
+          }
+        }
+      }
+
+      // Expand each parent directory sequentially
+      await expandParents(segments)
+
+      let targetNode = findNodeByPath(get().treeData, targetPath)
+
+      // If not found, the path may be rootfs-relative (e.g. /etc/main.conf from a
+      // security finding) while the tree uses a virtual root prefix (e.g. /rootfs/).
+      // Check if any root-level directory contains the first segment as a child.
+      if (!targetNode) {
+        const firstSeg = segments[0]
+        for (const rootNode of get().treeData) {
+          if (rootNode.fileType !== 'directory') continue
+          const altPath = `${rootNode.id}${targetPath}`
+          // Expand the root node if needed
+          if (rootNode.children?.length === 1 && isPlaceholder(rootNode.children[0])) {
+            await get().loadDirectory(projectId, rootNode.id)
+          }
+          // Check if this root contains our first segment
+          const childMatch = findNodeByPath(get().treeData, `${rootNode.id}/${firstSeg}`)
+          if (childMatch) {
+            await expandParents(altPath.split('/').filter(Boolean))
+            targetNode = findNodeByPath(get().treeData, altPath)
+            if (targetNode) {
+              targetPath = altPath
+              break
+            }
+          }
+        }
+      }
+
       if (targetNode && targetNode.fileType !== 'directory') {
         await get().selectFile(projectId, targetNode)
       }
@@ -274,6 +300,8 @@ export const useExplorerStore = create<ExplorerState & ExplorerActions>(
     },
 
     clearPendingNavPath: () => set({ pendingNavPath: null }),
+    setPendingLine: (line) => set({ pendingLine: line }),
+    clearPendingLine: () => set({ pendingLine: null }),
 
     loadDocuments: async (projectId) => {
       set({ documentsLoading: true })

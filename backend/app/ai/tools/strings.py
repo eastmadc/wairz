@@ -59,46 +59,11 @@ _PEM_HEADER_RE = re.compile(
     r"-----BEGIN\s+(RSA |EC |DSA |OPENSSH )?(PRIVATE KEY|CERTIFICATE|PUBLIC KEY)-----"
 )
 
-# Credential patterns for find_hardcoded_credentials
-_CREDENTIAL_PATTERNS = [
-    re.compile(r"password\s*[=:]\s*(\S+)", re.IGNORECASE),
-    re.compile(r"passwd\s*[=:]\s*(\S+)", re.IGNORECASE),
-    re.compile(r"secret\s*[=:]\s*(\S+)", re.IGNORECASE),
-    re.compile(r"api_key\s*[=:]\s*(\S+)", re.IGNORECASE),
-    re.compile(r"token\s*[=:]\s*(\S+)", re.IGNORECASE),
-    re.compile(r"credential\s*[=:]\s*(\S+)", re.IGNORECASE),
-]
-
-# Cloud/service API key patterns — high-confidence, low false-positive
-_API_KEY_PATTERNS: list[tuple[re.Pattern, str, str]] = [
-    # (regex, category, severity)
-    # AWS
-    (re.compile(r"(?<![A-Z0-9])(AKIA[0-9A-Z]{16})(?![A-Z0-9])"), "aws_access_key", "critical"),
-    (re.compile(r"(?:aws_secret_access_key|secret_access_key)\s*[=:]\s*([A-Za-z0-9/+=]{40})"), "aws_secret_key", "critical"),
-    # Azure
-    (re.compile(r"DefaultEndpointsProtocol=https?;AccountName=[^;]+;AccountKey=[A-Za-z0-9+/=]+"), "azure_connection_string", "critical"),
-    (re.compile(r"sv=\d{4}-\d{2}-\d{2}.*sig=[A-Za-z0-9%+/=]{43,}"), "azure_sas_token", "high"),
-    # GCP
-    (re.compile(r"AIza[0-9A-Za-z_-]{35}"), "gcp_api_key", "high"),
-    (re.compile(r'"type"\s*:\s*"service_account"'), "gcp_service_account", "critical"),
-    # GitHub
-    (re.compile(r"ghp_[A-Za-z0-9]{36}"), "github_pat", "critical"),
-    (re.compile(r"gho_[A-Za-z0-9]{36}"), "github_oauth", "critical"),
-    (re.compile(r"ghs_[A-Za-z0-9]{36}"), "github_app_token", "high"),
-    (re.compile(r"github_pat_[A-Za-z0-9]{22}_[A-Za-z0-9]{59}"), "github_fine_grained_pat", "critical"),
-    # Stripe
-    (re.compile(r"sk_live_[A-Za-z0-9]{24,}"), "stripe_secret_key", "critical"),
-    (re.compile(r"pk_live_[A-Za-z0-9]{24,}"), "stripe_publishable_key", "medium"),
-    (re.compile(r"[sp]k_test_[A-Za-z0-9]{24,}"), "stripe_test_key", "low"),
-    # JWT
-    (re.compile(r"eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]+"), "jwt_token", "high"),
-    # Slack
-    (re.compile(r"xoxb-[0-9]{10,}-[0-9]{10,}-[A-Za-z0-9]{24}"), "slack_bot_token", "critical"),
-    (re.compile(r"xoxp-[0-9]{10,}-[0-9]{10,}-[0-9]{10,}-[a-f0-9]{32}"), "slack_user_token", "critical"),
-    (re.compile(r"hooks\.slack\.com/services/T[A-Z0-9]{8,}/B[A-Z0-9]{8,}/[A-Za-z0-9]{24}"), "slack_webhook", "high"),
-    # Twilio
-    (re.compile(r"AC[a-f0-9]{32}"), "twilio_account_sid", "medium"),
-]
+# Credential and API key patterns — shared with security audit service
+from app.utils.credential_patterns import (
+    API_KEY_PATTERNS as _API_KEY_PATTERNS,
+    CREDENTIAL_PATTERNS as _CREDENTIAL_PATTERNS,
+)
 
 
 # ---------------------------------------------------------------------------

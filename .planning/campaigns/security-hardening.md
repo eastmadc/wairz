@@ -1,6 +1,6 @@
 # Campaign: Security Hardening
 
-Status: active
+Status: completed (YARA deferred)
 Created: 2026-04-02
 Direction: Add YARA malware detection, expanded credential patterns (AWS/Azure/GCP/GitHub), kernel sysctl hardening checks, and firewall policy analysis
 Estimated sessions: 2-3
@@ -19,7 +19,7 @@ Missing: malware/backdoor detection (YARA), cloud API key patterns, kernel harde
 | 1 | build | YARA scanning tool + built-in rules | none | `scan_with_yara` MCP tool works, 30+ built-in rules for firmware backdoors/malware, yara-python installed | deferred (needs yara-python dep + Dockerfile change) |
 | 2 | build | Expanded credential detection patterns | none | 18 new API key patterns (AWS, Azure, GCP, GitHub, Stripe, Slack, JWT, Twilio) in find_hardcoded_credentials | done |
 | 3 | build | Kernel sysctl hardening checker | none | `check_kernel_hardening` MCP tool, 18 sysctl parameters checked, router-aware severity adjustment | done |
-| 4 | verify | Tests + integration | 1-3 | Unit tests for all new patterns, YARA rules compile, sysctl parser works | planned |
+| 4 | verify | Tests + integration | 1-3 | Unit tests for all new patterns, YARA rules compile, sysctl parser works | done (24 tests, YARA compile skipped — Phase 1 deferred) |
 
 ## Decision Log
 
