@@ -2,16 +2,23 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { useParams, useSearchParams } from 'react-router-dom'
 import { FolderTree, PanelLeftClose, PanelLeftOpen, TerminalSquare } from 'lucide-react'
 import { useExplorerStore } from '@/stores/explorerStore'
+import { useProjectStore } from '@/stores/projectStore'
+import { listFirmware } from '@/api/firmware'
+import type { FirmwareDetail } from '@/types'
 import FileTree from '@/components/explorer/FileTree'
 import FileViewer from '@/components/explorer/FileViewer'
 import TerminalPanel from '@/components/explorer/TerminalPanel'
+import FirmwareSelector from '@/components/projects/FirmwareSelector'
 
 export default function ExplorePage() {
   const { projectId } = useParams<{ projectId: string }>()
   const [searchParams, setSearchParams] = useSearchParams()
   const resetExplorer = useExplorerStore((s) => s.reset)
+  const loadRootDirectory = useExplorerStore((s) => s.loadRootDirectory)
   const loadDocuments = useExplorerStore((s) => s.loadDocuments)
   const navigateToPath = useExplorerStore((s) => s.navigateToPath)
+  const selectedFirmwareId = useProjectStore((s) => s.selectedFirmwareId)
+  const [firmwareList, setFirmwareList] = useState<FirmwareDetail[]>([])
   const [treeOpen, setTreeOpen] = useState(true)
   const [terminalOpen, setTerminalOpen] = useState(false)
   const [terminalHeight, setTerminalHeight] = useState(250)
@@ -21,11 +28,19 @@ export default function ExplorePage() {
   useEffect(() => {
     if (projectId) {
       loadDocuments(projectId)
+      listFirmware(projectId).then(setFirmwareList)
     }
     return () => {
       resetExplorer()
     }
   }, [projectId, loadDocuments, resetExplorer])
+
+  // Reload file tree when firmware version changes
+  useEffect(() => {
+    if (projectId && selectedFirmwareId) {
+      loadRootDirectory(projectId)
+    }
+  }, [projectId, selectedFirmwareId, loadRootDirectory])
 
   // Handle ?path= and ?line= query parameters: expand tree, select file, scroll to line
   const setPendingLine = useExplorerStore((s) => s.setPendingLine)
@@ -77,16 +92,23 @@ export default function ExplorePage() {
       {/* Left panel: file tree */}
       {treeOpen && (
         <div className="flex w-72 shrink-0 flex-col border-r border-border">
-          <div className="flex items-center gap-2 border-b border-border px-4 py-2">
-            <FolderTree className="h-4 w-4 text-muted-foreground" />
-            <span className="text-sm font-medium">Files</span>
-            <button
-              onClick={() => setTreeOpen(false)}
-              className="ml-auto rounded p-0.5 text-muted-foreground hover:bg-accent hover:text-accent-foreground"
-              title="Collapse panel"
-            >
-              <PanelLeftClose className="h-4 w-4" />
-            </button>
+          <div className="flex flex-col border-b border-border">
+            <div className="flex items-center gap-2 px-4 py-2">
+              <FolderTree className="h-4 w-4 text-muted-foreground" />
+              <span className="text-sm font-medium">Files</span>
+              <button
+                onClick={() => setTreeOpen(false)}
+                className="ml-auto rounded p-0.5 text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+                title="Collapse panel"
+              >
+                <PanelLeftClose className="h-4 w-4" />
+              </button>
+            </div>
+            {projectId && firmwareList.filter((fw) => fw.extracted_path).length > 1 && (
+              <div className="px-4 pb-2">
+                <FirmwareSelector projectId={projectId} firmwareList={firmwareList} />
+              </div>
+            )}
           </div>
           <FileTree />
         </div>

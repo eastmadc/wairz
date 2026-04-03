@@ -32,7 +32,10 @@ import {
   runVulnerabilityScan,
   getVulnerabilitySummary,
 } from '@/api/sbom'
+import { listFirmware } from '@/api/firmware'
 import { useVulnerabilityStore } from '@/stores/vulnerabilityStore'
+import { useProjectStore } from '@/stores/projectStore'
+import FirmwareSelector from '@/components/projects/FirmwareSelector'
 import type {
   SbomComponent,
   SbomVulnerability,
@@ -78,7 +81,7 @@ type Tab = 'components' | 'vulnerabilities'
 
 export default function SbomPage() {
   const { projectId } = useParams<{ projectId: string }>()
-
+  const { selectedFirmwareId } = useProjectStore()
 
   const [tab, setTab] = useState<Tab>('components')
   const [components, setComponents] = useState<SbomComponent[]>([])
@@ -90,29 +93,38 @@ export default function SbomPage() {
   const [typeFilter, setTypeFilter] = useState<string | null>(null)
   const [nameSearch, setNameSearch] = useState('')
   const [expandedComp, setExpandedComp] = useState<string | null>(null)
+  const [firmwareList, setFirmwareList] = useState<import('@/types').FirmwareDetail[]>([])
 
   const vulnStore = useVulnerabilityStore()
   const { vulnerabilities, resolutionFilter } = vulnStore
 
-  // Load data on mount
+  // Load firmware list for selector
+  useEffect(() => {
+    if (projectId) {
+      listFirmware(projectId).then(setFirmwareList)
+    }
+  }, [projectId])
+
+  // Load data on mount or firmware change
   const loadData = useCallback(async () => {
     if (!projectId) return
     setLoading(true)
     try {
+      const fwId = selectedFirmwareId || undefined
       const [comps, s] = await Promise.all([
-        getSbomComponents(projectId).catch(() => []),
-        getVulnerabilitySummary(projectId).catch(() => null),
+        getSbomComponents(projectId, { firmware_id: fwId }).catch(() => []),
+        getVulnerabilitySummary(projectId, fwId).catch(() => null),
       ])
       setComponents(comps)
       setSummary(s)
 
       if (s && s.total_vulnerabilities > 0) {
-        await useVulnerabilityStore.getState().loadVulnerabilities(projectId)
+        await useVulnerabilityStore.getState().loadVulnerabilities(projectId, fwId)
       }
     } finally {
       setLoading(false)
     }
-  }, [projectId])
+  }, [projectId, selectedFirmwareId])
 
   useEffect(() => {
     loadData()
@@ -125,57 +137,61 @@ export default function SbomPage() {
     if (prevFilter.current === resolutionFilter) return
     prevFilter.current = resolutionFilter
     if (!projectId || loading) return
-    useVulnerabilityStore.getState().loadVulnerabilities(projectId).then(async () => {
-      const s = await getVulnerabilitySummary(projectId).catch(() => null)
+    const fwId = selectedFirmwareId || undefined
+    useVulnerabilityStore.getState().loadVulnerabilities(projectId, fwId).then(async () => {
+      const s = await getVulnerabilitySummary(projectId, fwId).catch(() => null)
       setSummary(s)
     })
-  }, [resolutionFilter, projectId, loading])
+  }, [resolutionFilter, projectId, loading, selectedFirmwareId])
 
   // Generate SBOM
   const handleGenerate = useCallback(async (force = false) => {
     if (!projectId) return
     setGenerating(true)
+    const fwId = selectedFirmwareId || undefined
     try {
-      const result = await generateSbom(projectId, force)
+      const result = await generateSbom(projectId, force, fwId)
       setComponents(result.components)
-      const s = await getVulnerabilitySummary(projectId).catch(() => null)
+      const s = await getVulnerabilitySummary(projectId, fwId).catch(() => null)
       setSummary(s)
-      await useVulnerabilityStore.getState().loadVulnerabilities(projectId)
+      await useVulnerabilityStore.getState().loadVulnerabilities(projectId, fwId)
     } catch (err) {
       console.error('SBOM generation failed:', err)
     } finally {
       setGenerating(false)
     }
-  }, [projectId])
+  }, [projectId, selectedFirmwareId])
 
   // Run vulnerability scan
   const handleScan = useCallback(async (force = false) => {
     if (!projectId) return
     setScanning(true)
     setScanResult(null)
+    const fwId = selectedFirmwareId || undefined
     try {
-      const result = await runVulnerabilityScan(projectId, force)
+      const result = await runVulnerabilityScan(projectId, force, fwId)
       setScanResult(result)
       // Reload data
       const [comps, s] = await Promise.all([
-        getSbomComponents(projectId),
-        getVulnerabilitySummary(projectId),
+        getSbomComponents(projectId, { firmware_id: fwId }),
+        getVulnerabilitySummary(projectId, fwId),
       ])
       setComponents(comps)
       setSummary(s)
-      await useVulnerabilityStore.getState().loadVulnerabilities(projectId)
+      await useVulnerabilityStore.getState().loadVulnerabilities(projectId, fwId)
     } catch (err) {
       console.error('Vulnerability scan failed:', err)
     } finally {
       setScanning(false)
     }
-  }, [projectId])
+  }, [projectId, selectedFirmwareId])
 
   // Export SBOM
   const handleExport = useCallback(async () => {
     if (!projectId) return
+    const fwId = selectedFirmwareId || undefined
     try {
-      const blob = await exportSbom(projectId)
+      const blob = await exportSbom(projectId, 'cyclonedx-json', fwId)
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
@@ -214,6 +230,9 @@ export default function SbomPage() {
 
   return (
     <div className="mx-auto max-w-6xl space-y-6">
+      {/* Firmware Selector */}
+      {projectId && <FirmwareSelector projectId={projectId} firmwareList={firmwareList} className="mb-2" />}
+
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">

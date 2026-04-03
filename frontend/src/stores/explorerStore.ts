@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { listDirectory, readFile, getFileInfo } from '@/api/files'
+import { useProjectStore } from '@/stores/projectStore'
 import { listDocuments, readDocumentContent, createNote as apiCreateNote, updateDocumentContent } from '@/api/documents'
 import type { FileContent, FileInfo, ProjectDocument } from '@/types'
 
@@ -113,7 +114,8 @@ export const useExplorerStore = create<ExplorerState & ExplorerActions>(
     loadRootDirectory: async (projectId) => {
       set({ treeError: null })
       try {
-        const listing = await listDirectory(projectId, '')
+        const fwId = useProjectStore.getState().selectedFirmwareId || undefined
+        const listing = await listDirectory(projectId, '', fwId)
         const nodes = listing.entries.map((entry) => {
           const id = `/${entry.name}`
           const node: TreeNode = {
@@ -146,7 +148,8 @@ export const useExplorerStore = create<ExplorerState & ExplorerActions>(
 
     loadDirectory: async (projectId, path) => {
       try {
-        const listing = await listDirectory(projectId, path)
+        const fwId = useProjectStore.getState().selectedFirmwareId || undefined
+        const listing = await listDirectory(projectId, path, fwId)
         const children = listing.entries.map((entry) => {
           const id = `${path}/${entry.name}`
           const node: TreeNode = {
@@ -215,7 +218,8 @@ export const useExplorerStore = create<ExplorerState & ExplorerActions>(
 
       // Fetch text content
       try {
-        const content = await readFile(projectId, node.id)
+        const fwId = useProjectStore.getState().selectedFirmwareId || undefined
+        const content = await readFile(projectId, node.id, undefined, undefined, undefined, fwId)
         if (get().selectedPath === node.id) {
           set({ fileContent: content, contentLoading: false })
         }

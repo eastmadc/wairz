@@ -7,6 +7,7 @@ import { extractErrorMessage } from '@/utils/error'
 interface ProjectState {
   projects: Project[]
   currentProject: ProjectDetail | null
+  selectedFirmwareId: string | null
   loading: boolean
   creating: boolean
   uploading: boolean
@@ -22,6 +23,7 @@ interface ProjectActions {
   removeProject: (id: string) => Promise<void>
   uploadFirmware: (projectId: string, file: File, versionLabel?: string) => Promise<void>
   unpackFirmware: (projectId: string, firmwareId: string) => Promise<void>
+  setSelectedFirmware: (firmwareId: string | null) => void
   clearError: () => void
   clearCurrentProject: () => void
 }
@@ -29,6 +31,7 @@ interface ProjectActions {
 export const useProjectStore = create<ProjectState & ProjectActions>((set, get) => ({
   projects: [],
   currentProject: null,
+  selectedFirmwareId: null,
   loading: false,
   creating: false,
   uploading: false,
@@ -111,8 +114,9 @@ export const useProjectStore = create<ProjectState & ProjectActions>((set, get) 
     }
   },
 
+  setSelectedFirmware: (firmwareId) => set({ selectedFirmwareId: firmwareId }),
   clearError: () => set({ error: null }),
-  clearCurrentProject: () => set({ currentProject: null }),
+  clearCurrentProject: () => set({ currentProject: null, selectedFirmwareId: null }),
 }))
 
 function projectFromDetail(d: ProjectDetail): Project {
