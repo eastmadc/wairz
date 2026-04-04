@@ -5,18 +5,21 @@ vulnerability detection. VulHunt performs semantic analysis (dataflow,
 control flow, decompilation) and rule-based vulnerability detection on
 ELF and PE32+ binaries — particularly strong for UEFI firmware modules.
 
-VulHunt runs in a separate Docker container (ghcr.io/vulhunt-re/vulhunt).
-Communication is via `docker exec` CLI invocation with JSON output.
+VulHunt runs in a separate Docker container (ghcr.io/vulhunt-re/vulhunt)
+and exposes an MCP server over HTTP (Streamable HTTP transport). We
+communicate via JSON-RPC over HTTP POST to the /mcp endpoint.
 """
 
-import asyncio
 import json
 import logging
 import os
-import shutil
+from typing import Any
+
+import httpx
 
 from app.ai.tool_registry import ToolContext, ToolRegistry
 from app.config import get_settings
+from app.services.event_service import event_service
 
 logger = logging.getLogger(__name__)
 
@@ -60,8 +63,8 @@ def register_vulhunt_tools(registry: ToolRegistry) -> None:
             "properties": {
                 "max_binaries": {
                     "type": "integer",
-                    "description": "Maximum number of binaries to scan (default 50)",
-                    "default": 50,
+                    "description": "Maximum number of binaries to scan (default: all, 0 = no limit)",
+                    "default": 0,
                 },
                 "min_size": {
                     "type": "integer",
@@ -87,34 +90,107 @@ def register_vulhunt_tools(registry: ToolRegistry) -> None:
     )
 
 
-# ── Helpers ───────────────────────────────────────────────────────────
+# ── VulHunt MCP Client ──────────────────────────────────────────────
 
 
-async def _run_vulhunt(args: list[str], timeout: int = 300) -> tuple[int, str, str]:
-    """Run vulhunt-ce inside the Docker container."""
+class VulHuntClient:
+    """Async client for the VulHunt MCP server (Streamable HTTP transport)."""
+
+    def __init__(self, base_url: str = "http://vulhunt:8080"):
+        self.base_url = base_url
+        self.session_id: str | None = None
+        self._req_id = 0
+
+    def _next_id(self) -> int:
+        self._req_id += 1
+        return self._req_id
+
+    async def _call(
+        self, method: str, params: dict | None = None, timeout: float = 60
+    ) -> dict[str, Any]:
+        """Send a JSON-RPC request to the VulHunt MCP server."""
+        msg: dict[str, Any] = {
+            "jsonrpc": "2.0",
+            "method": method,
+            "id": self._next_id(),
+        }
+        if params is not None:
+            msg["params"] = params
+
+        headers = {
+            "Content-Type": "application/json",
+            "Accept": "application/json, text/event-stream",
+        }
+        if self.session_id:
+            headers["Mcp-Session-Id"] = self.session_id
+
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(
+                f"{self.base_url}/mcp",
+                content=json.dumps(msg),
+                headers=headers,
+                timeout=timeout,
+            )
+            resp.raise_for_status()
+
+            # Capture session ID
+            sid = resp.headers.get("mcp-session-id")
+            if sid:
+                self.session_id = sid
+
+            # Parse SSE response — find the data: line with our result
+            body = resp.text
+            for line in body.split("\n"):
+                if line.startswith("data: "):
+                    return json.loads(line[6:])
+
+            # Fallback: try parsing the whole body as JSON
+            return json.loads(body)
+
+    async def initialize(self) -> dict[str, Any]:
+        """Initialize the MCP session."""
+        result = await self._call("initialize", {
+            "protocolVersion": "2024-11-05",
+            "capabilities": {},
+            "clientInfo": {"name": "wairz-backend", "version": "1.0"},
+        })
+        return result.get("result", {})
+
+    async def call_tool(
+        self, name: str, arguments: dict, timeout: float = 300
+    ) -> dict[str, Any]:
+        """Call an MCP tool on the VulHunt server."""
+        result = await self._call("tools/call", {
+            "name": name,
+            "arguments": arguments,
+        }, timeout=timeout)
+        return result.get("result", {})
+
+    async def open_project(
+        self, path: str, kind: str = "DxeDriver"
+    ) -> dict[str, Any]:
+        """Open a binary as a VulHunt project."""
+        return await self.call_tool("open_project", {
+            "path": path,
+            "attributes": {"kind": kind},
+        })
+
+    async def query_project(self, script: str) -> dict[str, Any]:
+        """Run a Lua query against the open project."""
+        return await self.call_tool("query_project", {
+            "script": script,
+        })
+
+
+async def _get_vulhunt_client() -> VulHuntClient:
+    """Create and initialize a VulHunt MCP client."""
     settings = get_settings()
-    container = settings.vulhunt_container
+    client = VulHuntClient(base_url=settings.vulhunt_url)
+    await client.initialize()
+    return client
 
-    cmd = ["docker", "exec", "-i", container, "vulhunt-ce"] + args
-    proc = await asyncio.create_subprocess_exec(
-        *cmd,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-    try:
-        stdout, stderr = await asyncio.wait_for(
-            proc.communicate(), timeout=timeout
-        )
-    except asyncio.TimeoutError:
-        proc.kill()
-        await proc.wait()
-        return -1, "", f"VulHunt timed out after {timeout}s"
 
-    return (
-        proc.returncode or 0,
-        stdout.decode(errors="replace"),
-        stderr.decode(errors="replace"),
-    )
+# ── Binary detection helpers ─────────────────────────────────────────
 
 
 def _is_elf(path: str) -> bool:
@@ -144,12 +220,35 @@ def _is_pe(path: str) -> bool:
         return False
 
 
-def _find_binaries(root: str, max_count: int = 50, min_size: int = 4096) -> list[str]:
-    """Find ELF and PE32+ binaries in a directory tree."""
+# Map UEFIExtract directory name patterns to VulHunt component kinds
+_UEFI_KIND_MAP = {
+    "Smm": "SmmModule",
+    "SMM": "SmmModule",
+    "Pei": "PeiModule",
+    "PEI": "PeiModule",
+    "Dxe": "DxeDriver",
+    "DXE": "DxeDriver",
+    "Sec": "SecCore",
+    "SEC": "SecCore",
+}
+
+
+def _infer_uefi_kind(path: str) -> str:
+    """Infer UEFI module kind from the UEFIExtract directory path."""
+    parts = path.split("/")
+    for part in reversed(parts):
+        for pattern, kind in _UEFI_KIND_MAP.items():
+            if pattern in part:
+                return kind
+    return "DxeDriver"  # safe default — most UEFI modules are DXE
+
+
+def _find_binaries(root: str, max_count: int = 0, min_size: int = 4096) -> list[str]:
+    """Find ELF and PE32+ binaries in a directory tree. max_count=0 means no limit."""
     binaries: list[str] = []
     for dirpath, _dirs, files in os.walk(root):
         for fname in files:
-            if len(binaries) >= max_count:
+            if max_count > 0 and len(binaries) >= max_count:
                 return binaries
             fpath = os.path.join(dirpath, fname)
             try:
@@ -164,23 +263,63 @@ def _find_binaries(root: str, max_count: int = 50, min_size: int = 4096) -> list
     return binaries
 
 
-def _parse_vulhunt_json(output: str) -> list[dict]:
-    """Parse VulHunt JSON output into a list of findings."""
-    findings = []
-    # VulHunt can output JSONL (one JSON object per line) or a single JSON array
-    for line in output.strip().splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            obj = json.loads(line)
-            if isinstance(obj, list):
-                findings.extend(obj)
-            elif isinstance(obj, dict):
-                findings.append(obj)
-        except json.JSONDecodeError:
-            continue
-    return findings
+# ── Scanning via MCP ─────────────────────────────────────────────────
+
+# Lua script that queries VulHunt for vulnerability analysis results
+_VULN_QUERY_SCRIPT = """
+local results = {}
+local functions = project:functions()
+for _, func in ipairs(functions) do
+    local issues = func:issues()
+    if issues and #issues > 0 then
+        for _, issue in ipairs(issues) do
+            table.insert(results, {
+                severity = issue.severity or "unknown",
+                rule_id = issue.rule_id or issue.id or "unknown",
+                description = issue.description or issue.message or "",
+                location = {
+                    ["function"] = func:name(),
+                    address = string.format("0x%x", func:address()),
+                },
+            })
+        end
+    end
+end
+return results
+"""
+
+
+async def _scan_binary_via_mcp(
+    client: VulHuntClient, path: str, kind: str, timeout: float = 300
+) -> list[dict]:
+    """Open a binary in VulHunt and query for vulnerabilities."""
+    try:
+        result = await client.open_project(path, kind=kind)
+        # Check for errors in the tool response
+        content = result.get("content", [])
+        for item in content:
+            if item.get("type") == "text":
+                text = item.get("text", "")
+                if "error" in text.lower():
+                    logger.warning("VulHunt open_project error for %s: %s", path, text[:200])
+                    return []
+
+        # Query for vulnerabilities
+        query_result = await client.query_project(_VULN_QUERY_SCRIPT)
+        content = query_result.get("content", [])
+        for item in content:
+            if item.get("type") == "text":
+                text = item.get("text", "")
+                try:
+                    findings = json.loads(text)
+                    if isinstance(findings, list):
+                        return findings
+                except json.JSONDecodeError:
+                    pass
+        return []
+    except Exception as e:
+        logger.warning("VulHunt scan failed for %s: %s", path, e)
+        return []
 
 
 def _format_findings(findings: list[dict], binary_name: str) -> str:
@@ -219,23 +358,19 @@ def _format_findings(findings: list[dict], binary_name: str) -> str:
 async def _handle_vulhunt_check_available(
     input: dict, context: ToolContext
 ) -> str:
-    code, stdout, stderr = await _run_vulhunt(["--version"], timeout=30)
-    if code == -1:
+    try:
+        client = await _get_vulhunt_client()
+        info = await client.initialize()
+        server_info = info.get("serverInfo", {})
+        name = server_info.get("name", "VulHunt")
+        version = server_info.get("version", "unknown")
+        return f"VulHunt is available.\n{name} v{version}"
+    except Exception as e:
         return (
             "VulHunt container is not running or not available.\n"
             "Start it with: docker compose up -d vulhunt\n"
-            f"Error: {stderr}"
+            f"Error: {e}"
         )
-    if code != 0:
-        # Try alternative — docker exec might fail if container doesn't exist
-        return (
-            f"VulHunt returned exit code {code}.\n"
-            f"stdout: {stdout[:200]}\n"
-            f"stderr: {stderr[:200]}\n"
-            "The vulhunt container may not be running. "
-            "Start it with: docker compose up -d vulhunt"
-        )
-    return f"VulHunt is available.\n{stdout.strip()}"
 
 
 async def _handle_vulhunt_scan_binary(
@@ -245,7 +380,6 @@ async def _handle_vulhunt_scan_binary(
     if not path:
         return "Error: 'path' is required."
 
-    # Resolve to real filesystem path
     real_path = context.resolve_path(path)
     if not os.path.isfile(real_path):
         return f"File not found: {path}"
@@ -253,44 +387,25 @@ async def _handle_vulhunt_scan_binary(
     if not (_is_elf(real_path) or _is_pe(real_path)):
         return f"{path} is not an ELF or PE32+ binary."
 
-    # VulHunt runs in its own container with firmware_data mounted at /data/firmware
-    settings = get_settings()
-    scan_args = [
-        "scan", real_path,
-        "--output", "/dev/stdout",
-        "--data", "/opt/vulhunt/data",
-        "--rules", "/opt/vulhunt/rules",
-        "--stream",
-    ]
-    # Add loader hints for PE32+ (UEFI modules)
-    if _is_pe(real_path):
-        scan_args.extend(["--loader", "component", "--component-attribute", "kind=DxeDriver"])
+    try:
+        client = await _get_vulhunt_client()
+    except Exception as e:
+        return f"VulHunt is not available. Start with: docker compose up -d vulhunt\nError: {e}"
 
-    code, stdout, stderr = await _run_vulhunt(
-        scan_args,
-        timeout=settings.vulhunt_timeout,
+    kind = _infer_uefi_kind(real_path) if _is_pe(real_path) else "DxeDriver"
+    settings = get_settings()
+    findings = await _scan_binary_via_mcp(
+        client, real_path, kind=kind, timeout=settings.vulhunt_timeout
     )
 
-    if code == -1:
-        return f"VulHunt is not available. Start with: docker compose up -d vulhunt\nError: {stderr}"
-
-    findings = _parse_vulhunt_json(stdout)
     binary_name = os.path.basename(real_path)
-
-    if not findings and code != 0:
-        return (
-            f"VulHunt scan failed (exit code {code}).\n"
-            f"stderr: {stderr[:500]}\n"
-            f"stdout: {stdout[:500]}"
-        )
-
     return _format_findings(findings, binary_name)
 
 
 async def _handle_vulhunt_scan_firmware(
     input: dict, context: ToolContext
 ) -> str:
-    max_binaries = input.get("max_binaries", 50)
+    max_binaries = input.get("max_binaries", 0)
     min_size = input.get("min_size", 4096)
 
     root = context.extracted_path
@@ -303,7 +418,7 @@ async def _handle_vulhunt_scan_firmware(
     # Also check extraction_dir for UEFI .dump/ body.bin files
     if context.extraction_dir:
         for dirpath, _dirs, files in os.walk(context.extraction_dir):
-            if len(binaries) >= max_binaries:
+            if max_binaries > 0 and len(binaries) >= max_binaries:
                 break
             if "body.bin" in files:
                 body = os.path.join(dirpath, "body.bin")
@@ -318,42 +433,60 @@ async def _handle_vulhunt_scan_firmware(
     if not binaries:
         return "No ELF or PE32+ binaries found in the firmware."
 
-    # Check VulHunt availability first
-    code, _, stderr = await _run_vulhunt(["--version"], timeout=15)
-    if code != 0 and code != -1:
-        pass  # Version might not be a supported subcommand
-    if code == -1:
+    # Connect to VulHunt
+    try:
+        client = await _get_vulhunt_client()
+    except Exception as e:
         return (
             f"Found {len(binaries)} binaries but VulHunt is not available.\n"
-            "Start with: docker compose up -d vulhunt"
+            f"Start with: docker compose up -d vulhunt\nError: {e}"
         )
 
+    project_id = str(context.project_id)
+    total = len(binaries)
     settings = get_settings()
     results: list[str] = []
     total_findings = 0
+    scanned = 0
+
+    # Emit start event
+    try:
+        await event_service.publish_progress(
+            project_id, "vulhunt",
+            status="running",
+            progress=0.0,
+            message=f"Scanning {total} binaries...",
+            extra={"scanned": 0, "total": total, "findings": 0},
+        )
+    except Exception:
+        pass  # SSE is best-effort
 
     for binary_path in binaries:
         binary_name = os.path.relpath(binary_path, root)
-        scan_args = [
-            "scan", binary_path,
-            "--output", "/dev/stdout",
-            "--data", "/opt/vulhunt/data",
-            "--rules", "/opt/vulhunt/rules",
-            "--stream",
-        ]
-        if _is_pe(binary_path):
-            scan_args.extend(["--loader", "component", "--component-attribute", "kind=DxeDriver"])
-        code, stdout, stderr = await _run_vulhunt(
-            scan_args,
-            timeout=settings.vulhunt_timeout,
+        kind = _infer_uefi_kind(binary_path) if _is_pe(binary_path) else "DxeDriver"
+        findings = await _scan_binary_via_mcp(
+            client, binary_path, kind=kind, timeout=settings.vulhunt_timeout
         )
-        findings = _parse_vulhunt_json(stdout)
+        scanned += 1
         total_findings += len(findings)
         if findings:
             results.append(_format_findings(findings, binary_name))
 
+        # Emit progress every 5 binaries or on the last one
+        if scanned % 5 == 0 or scanned == total:
+            try:
+                await event_service.publish_progress(
+                    project_id, "vulhunt",
+                    status="running" if scanned < total else "completed",
+                    progress=scanned / total,
+                    message=f"Scanned {scanned}/{total} binaries — {total_findings} finding(s)",
+                    extra={"scanned": scanned, "total": total, "findings": total_findings},
+                )
+            except Exception:
+                pass
+
     header = (
-        f"VulHunt Firmware Scan: {len(binaries)} binaries scanned, "
+        f"VulHunt Firmware Scan: {scanned} binaries scanned, "
         f"{total_findings} finding(s)\n"
         f"{'=' * 60}"
     )
