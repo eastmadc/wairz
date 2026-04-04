@@ -40,6 +40,7 @@ export default function SecurityScanPage() {
   const [vulhuntResult, setVulhuntResult] = useState<{ output: string; success: boolean } | null>(null)
   const [vulhuntProgress, setVulhuntProgress] = useState<{
     scanned: number; total: number; findings: number; message: string
+    current_binary?: string; results_text?: string
   } | null>(null)
   const [findings, setFindings] = useState<Finding[]>([])
   const [loadingFindings, setLoadingFindings] = useState(false)
@@ -118,6 +119,8 @@ export default function SecurityScanPage() {
             total: data.total ?? 0,
             findings: data.findings ?? 0,
             message: data.message ?? '',
+            current_binary: data.current_binary,
+            results_text: data.results_text,
           })
         }
       } catch { /* ignore parse errors */ }
@@ -287,6 +290,21 @@ export default function SecurityScanPage() {
                     {vulhuntProgress.findings} vulnerability finding{vulhuntProgress.findings !== 1 ? 's' : ''} so far
                   </p>
                 )}
+                {vulhuntProgress.current_binary && (
+                  <p className="text-xs text-muted-foreground font-mono truncate">
+                    Scanning: {vulhuntProgress.current_binary}
+                  </p>
+                )}
+              </CardContent>
+            </Card>
+          )}
+
+          {vulhuntScanning && vulhuntProgress?.results_text && (
+            <Card>
+              <CardContent className="py-3 px-4">
+                <pre className="text-xs whitespace-pre-wrap font-mono max-h-64 overflow-y-auto">
+                  {vulhuntProgress.results_text}
+                </pre>
               </CardContent>
             </Card>
           )}

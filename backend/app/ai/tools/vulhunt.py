@@ -472,18 +472,22 @@ async def _handle_vulhunt_scan_firmware(
         if findings:
             results.append(_format_findings(findings, binary_name))
 
-        # Emit progress every 5 binaries or on the last one
-        if scanned % 5 == 0 or scanned == total:
-            try:
-                await event_service.publish_progress(
-                    project_id, "vulhunt",
-                    status="running" if scanned < total else "completed",
-                    progress=scanned / total,
-                    message=f"Scanned {scanned}/{total} binaries — {total_findings} finding(s)",
-                    extra={"scanned": scanned, "total": total, "findings": total_findings},
-                )
-            except Exception:
-                pass
+        try:
+            await event_service.publish_progress(
+                project_id, "vulhunt",
+                status="running" if scanned < total else "completed",
+                progress=scanned / total,
+                message=f"Scanned {scanned}/{total} binaries — {total_findings} finding(s)",
+                extra={
+                    "scanned": scanned,
+                    "total": total,
+                    "findings": total_findings,
+                    "current_binary": binary_name,
+                    "results_text": "\n\n".join(results) if results else "",
+                },
+            )
+        except Exception:
+            pass
 
     header = (
         f"VulHunt Firmware Scan: {scanned} binaries scanned, "
