@@ -1,0 +1,11 @@
+{
+  "status": "stopped",
+  "campaignSlug": "wairz-roadmap",
+  "budget": 40,
+  "costPerSession": 2,
+  "startedAt": "2026-04-04T14:00:00.000Z",
+  "stoppedAt": "2026-04-04T14:30:00.000Z",
+  "stopReason": "campaign-complete",
+  "chainTriggerId": null,
+  "watchdogTriggerId": null
+}
