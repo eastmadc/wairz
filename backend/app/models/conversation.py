@@ -19,6 +19,7 @@ class Conversation(Base):
     project_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("projects.id", ondelete="CASCADE"),
         nullable=False,
+        index=True,
     )
     title: Mapped[str | None] = mapped_column(String(255))
     messages: Mapped[list] = mapped_column(JSONB, server_default="[]")

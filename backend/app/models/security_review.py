@@ -19,6 +19,7 @@ class SecurityReview(Base):
     project_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("projects.id", ondelete="CASCADE"),
         nullable=False,
+        index=True,
     )
     status: Mapped[str] = mapped_column(
         String(20), default="pending", server_default="pending", nullable=False,
@@ -49,6 +50,7 @@ class ReviewAgent(Base):
     review_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("security_reviews.id", ondelete="CASCADE"),
         nullable=False,
+        index=True,
     )
     category: Mapped[str] = mapped_column(String(50), nullable=False)
     status: Mapped[str] = mapped_column(
@@ -58,6 +60,7 @@ class ReviewAgent(Base):
     conversation_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("conversations.id", ondelete="SET NULL"),
         nullable=True,
+        index=True,
     )
     scratchpad: Mapped[str | None] = mapped_column(Text, nullable=True)
     findings_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
