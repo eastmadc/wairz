@@ -56,6 +56,15 @@ class AssessmentService:
         skip = set(skip_phases or [])
         overall_start = time.monotonic()
 
+        # SSE event publishing — best-effort, never blocks assessment
+        from app.services.event_service import event_service
+        try:
+            await event_service.connect()
+        except Exception:
+            logger.debug("EventService connect failed, continuing without SSE")
+
+        project_id_str = str(self.project_id)
+
         phases = [
             ("credential_crypto", self._phase_credential_crypto),
             ("sbom_vulnerability", self._phase_sbom_vulnerability),
@@ -69,7 +78,9 @@ class AssessmentService:
         results: list[dict] = []
         total_findings = 0
 
-        for phase_name, phase_func in phases:
+        total_phases = sum(1 for n, _ in phases if n not in skip)
+
+        for phase_idx, (phase_name, phase_func) in enumerate(phases):
             if phase_name in skip:
                 results.append({
                     "phase": phase_name,
@@ -79,6 +90,15 @@ class AssessmentService:
                     "errors": [],
                 })
                 continue
+
+            try:
+                await event_service.publish_progress(
+                    project_id_str, "assessment", status="running",
+                    progress=phase_idx / total_phases if total_phases else 0,
+                    message=f"Running: {phase_name}",
+                )
+            except Exception:
+                pass
 
             phase_start = time.monotonic()
             try:
@@ -111,8 +131,25 @@ class AssessmentService:
                     "duration_s": round(time.monotonic() - phase_start, 1),
                     "errors": [str(e)],
                 })
+                try:
+                    await event_service.publish_progress(
+                        project_id_str, "assessment", status="running",
+                        progress=(phase_idx + 1) / total_phases if total_phases else 0,
+                        message=f"Phase {phase_name} failed: {e}",
+                    )
+                except Exception:
+                    pass
 
         await self.db.flush()
+
+        try:
+            await event_service.publish_progress(
+                project_id_str, "assessment", status="complete",
+                progress=1.0,
+                message=f"Assessment complete: {total_findings} findings",
+            )
+        except Exception:
+            pass
 
         return {
             "status": "completed",
