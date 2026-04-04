@@ -147,6 +147,20 @@ RUN ARCH=$(uname -m) && \
         | tar xz -C /usr/local ./bin/noseyparker && \
     chmod +x /usr/local/bin/noseyparker || echo "WARN: noseyparker install failed"
 
+# Install UEFIExtract for UEFI/BIOS firmware analysis (multi-arch)
+# UEFITool NE builds UEFIExtract and UEFIFind as CLI tools for UEFI parsing.
+# Note: cmake/qt6 are kept because purging them removes shared libs UEFIExtract needs.
+RUN apt-get update && apt-get install -y --no-install-recommends cmake qt6-base-dev && \
+    git clone --depth 1 https://github.com/LongSoft/UEFITool.git /tmp/UEFITool && \
+    cd /tmp/UEFITool && \
+    cmake -DCMAKE_BUILD_TYPE=Release . && \
+    make -j$(nproc) UEFIExtract UEFIFind && \
+    cp /tmp/UEFITool/UEFIExtract/uefiextract /usr/local/bin/UEFIExtract && \
+    cp /tmp/UEFITool/UEFIFind/uefifind /usr/local/bin/UEFIFind && \
+    chmod +x /usr/local/bin/UEFIExtract /usr/local/bin/UEFIFind && \
+    rm -rf /tmp/UEFITool && rm -rf /var/lib/apt/lists/* && \
+    UEFIExtract 2>&1 | head -1 || echo "UEFIExtract installed"
+
 # Install Android firmware extraction tools (multi-arch)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     android-sdk-libsparse-utils \

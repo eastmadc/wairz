@@ -1,12 +1,13 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useParams, useSearchParams } from 'react-router-dom'
-import { FolderTree, PanelLeftClose, PanelLeftOpen, TerminalSquare } from 'lucide-react'
+import { FolderTree, PanelLeftClose, PanelLeftOpen, TerminalSquare, Cpu } from 'lucide-react'
 import { useExplorerStore } from '@/stores/explorerStore'
 import { useProjectStore } from '@/stores/projectStore'
 import { listFirmware } from '@/api/firmware'
 import type { FirmwareDetail } from '@/types'
 import FileTree from '@/components/explorer/FileTree'
 import FileViewer from '@/components/explorer/FileViewer'
+import UefiModules from '@/components/explorer/UefiModules'
 import TerminalPanel from '@/components/explorer/TerminalPanel'
 import FirmwareSelector from '@/components/projects/FirmwareSelector'
 
@@ -20,6 +21,7 @@ export default function ExplorePage() {
   const selectedFirmwareId = useProjectStore((s) => s.selectedFirmwareId)
   const [firmwareList, setFirmwareList] = useState<FirmwareDetail[]>([])
   const [treeOpen, setTreeOpen] = useState(true)
+  const [viewMode, setViewMode] = useState<'files' | 'uefi'>('files')
   const [terminalOpen, setTerminalOpen] = useState(false)
   const [terminalHeight, setTerminalHeight] = useState(250)
   const draggingRef = useRef(false)
@@ -126,9 +128,39 @@ export default function ExplorePage() {
           </button>
         )}
 
-        {/* File viewer (takes remaining space) */}
+        {/* View mode tabs */}
+        <div className="flex items-center gap-1 border-b border-border px-2">
+          <button
+            onClick={() => setViewMode('files')}
+            className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium transition-colors ${
+              viewMode === 'files'
+                ? 'border-b-2 border-primary text-foreground'
+                : 'text-muted-foreground hover:text-foreground'
+            }`}
+          >
+            <FolderTree className="h-3.5 w-3.5" />
+            Files
+          </button>
+          <button
+            onClick={() => setViewMode('uefi')}
+            className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium transition-colors ${
+              viewMode === 'uefi'
+                ? 'border-b-2 border-primary text-foreground'
+                : 'text-muted-foreground hover:text-foreground'
+            }`}
+          >
+            <Cpu className="h-3.5 w-3.5" />
+            UEFI Modules
+          </button>
+        </div>
+
+        {/* Content area (takes remaining space) */}
         <div className="min-h-0 flex-1">
-          <FileViewer />
+          {viewMode === 'files' ? (
+            <FileViewer />
+          ) : projectId ? (
+            <UefiModules projectId={projectId} />
+          ) : null}
         </div>
 
         {/* Drag handle + terminal panel */}

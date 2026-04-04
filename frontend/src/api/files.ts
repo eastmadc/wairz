@@ -46,6 +46,61 @@ export async function readFile(
   return data
 }
 
+export function getFileDownloadUrl(projectId: string, path: string): string {
+  return `/api/v1/projects/${projectId}/files/download?path=${encodeURIComponent(path)}`
+}
+
+export interface UefiSection {
+  type: string
+  size: number
+  is_pe: boolean
+}
+
+export interface UefiModule {
+  guid: string
+  type: string
+  name: string
+  size: string
+  path: string
+  sections: UefiSection[]
+  has_pe32: boolean
+  pe32_path: string | null
+  text: string
+  checksum_valid: boolean
+}
+
+export interface UefiModulesResponse {
+  modules: UefiModule[]
+  total: number
+  is_uefi: boolean
+}
+
+export async function getUefiModules(
+  projectId: string,
+  firmwareId?: string,
+): Promise<UefiModulesResponse> {
+  const { data } = await apiClient.get<UefiModulesResponse>(
+    `/projects/${projectId}/files/uefi-modules`,
+    { params: { firmware_id: firmwareId } },
+  )
+  return data
+}
+
+export interface UefiScanResult {
+  status: string
+  modules_scanned: number
+  findings_created: number
+  summary: Record<string, number>
+  errors: string[]
+}
+
+export async function scanUefiModules(projectId: string): Promise<UefiScanResult> {
+  const { data } = await apiClient.post<UefiScanResult>(
+    `/projects/${projectId}/security/uefi-scan`,
+  )
+  return data
+}
+
 export async function getFileInfo(
   projectId: string,
   path: string,

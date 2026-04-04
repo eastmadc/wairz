@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
-import { Loader2, FileSearch, AlertTriangle, Search, Save, Copy, Check } from 'lucide-react'
+import { Loader2, FileSearch, AlertTriangle, Search, Save, Copy, Check, Download } from 'lucide-react'
 import Editor from '@monaco-editor/react'
 import { useParams } from 'react-router-dom'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
@@ -9,6 +9,8 @@ import { registerAssemblyLanguage } from '@/utils/monacoAssembly'
 import { registerShellLanguage } from '@/utils/monacoShell'
 import { formatFileSize } from '@/utils/format'
 import { listFunctions, listImports, disassembleFunction, decompileFunction, fetchCleanedCode } from '@/api/analysis'
+import { getFileDownloadUrl } from '@/api/files'
+import { getDocumentDownloadUrl } from '@/api/documents'
 import type { FunctionInfo, ImportInfo } from '@/types'
 import HexViewer from './HexViewer'
 import BinaryInfo from './BinaryInfo'
@@ -75,6 +77,17 @@ export default function FileViewer() {
                 <span>{doc.content_type}</span>
                 <span>{formatFileSize(doc.file_size)}</span>
               </>
+            )}
+            {projectId && selectedDocumentId && (
+              <a
+                href={getDocumentDownloadUrl(projectId, selectedDocumentId)}
+                download
+                className="flex items-center gap-1 rounded px-2 py-1 text-xs hover:bg-accent hover:text-accent-foreground"
+                title="Download document"
+              >
+                <Download className="h-3.5 w-3.5" />
+                Download
+              </a>
             )}
             {editable && (
               <button
@@ -167,6 +180,17 @@ export default function FileViewer() {
             </>
           )}
           {infoLoading && <Loader2 className="h-3 w-3 animate-spin" />}
+          {projectId && selectedPath && (
+            <a
+              href={getFileDownloadUrl(projectId, selectedPath)}
+              download
+              className="flex items-center gap-1 rounded px-2 py-1 text-xs hover:bg-accent hover:text-accent-foreground"
+              title="Download file"
+            >
+              <Download className="h-3.5 w-3.5" />
+              Download
+            </a>
+          )}
         </div>
       </div>
 

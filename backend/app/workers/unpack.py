@@ -21,6 +21,7 @@ from app.workers.unpack_common import (  # noqa: F401
     find_filesystem_root,
     run_binwalk_extraction,
     run_unblob_extraction,
+    run_uefi_extraction,
     _find_binwalk_output_dir,
 )
 from app.workers.unpack_linux import (  # noqa: F401
@@ -64,6 +65,79 @@ def _analyze_filesystem(result: UnpackResult, extraction_dir: str) -> None:
     result.os_info = detect_os_info(fs_root)
     result.kernel_path = detect_kernel(extraction_dir, fs_root)
     result.success = True
+
+
+def _analyze_uefi_extraction(result: UnpackResult, extraction_dir: str) -> None:
+    """Post-extraction analysis for UEFI firmware.
+
+    UEFI firmware doesn't have a Linux filesystem root. Instead, UEFIExtract
+    produces a .dump/ directory with the firmware hierarchy. We treat the
+    .dump/ directory as the "extracted path" and detect architecture from
+    PE32+ DXE driver binaries.
+    """
+    # Find the .dump directory created by UEFIExtract
+    dump_dir = None
+    for entry in os.scandir(extraction_dir):
+        if entry.is_dir() and entry.name.endswith(".dump"):
+            dump_dir = entry.path
+            break
+
+    if not dump_dir:
+        result.error = "UEFIExtract produced no output"
+        return
+
+    result.extracted_path = dump_dir
+    result.extraction_dir = extraction_dir
+
+    # Detect architecture from PE32+ DXE driver bodies
+    arch, endian = _detect_uefi_architecture(dump_dir)
+    result.architecture = arch
+    result.endianness = endian
+
+    # Count extracted components for OS info
+    component_count = 0
+    for _root, _dirs, files in os.walk(dump_dir):
+        component_count += len(files)
+    result.os_info = f"UEFI/BIOS firmware ({component_count} extracted components)"
+    result.success = True
+
+
+def _detect_uefi_architecture(dump_dir: str) -> tuple[str | None, str | None]:
+    """Detect architecture from PE32+ body.bin files in UEFIExtract output."""
+    # PE machine type constants
+    pe_machines = {
+        0x014C: ("x86", "little"),
+        0x8664: ("x86_64", "little"),
+        0xAA64: ("aarch64", "little"),
+        0x01C0: ("arm", "little"),
+        0x01C4: ("arm", "little"),  # ARMv7 Thumb
+    }
+
+    for root, _dirs, files in os.walk(dump_dir):
+        if "body.bin" not in files:
+            continue
+        body_path = os.path.join(root, "body.bin")
+        try:
+            with open(body_path, "rb") as f:
+                magic = f.read(2)
+                if magic != b"MZ":
+                    continue
+                # Read PE header offset at 0x3C
+                f.seek(0x3C)
+                pe_offset_bytes = f.read(4)
+                if len(pe_offset_bytes) < 4:
+                    continue
+                pe_offset = int.from_bytes(pe_offset_bytes, "little")
+                f.seek(pe_offset)
+                pe_sig = f.read(4)
+                if pe_sig != b"PE\x00\x00":
+                    continue
+                machine = int.from_bytes(f.read(2), "little")
+                if machine in pe_machines:
+                    return pe_machines[machine]
+        except OSError:
+            continue
+    return None, None
 
 
 async def unpack_firmware(
@@ -122,6 +196,36 @@ async def unpack_firmware(
     await _report(f"Classified as {fw_type}", 10)
 
     # === STAGE 1: Format-Specific Fast Paths ===
+
+    if fw_type == "uefi_firmware":
+        await _report("Extracting UEFI firmware", 15)
+        try:
+            # If it's a ZIP containing UEFI, extract inner file first
+            import zipfile as _zipfile
+            actual_firmware = firmware_path
+            if _zipfile.is_zipfile(firmware_path):
+                with _zipfile.ZipFile(firmware_path, "r") as zf:
+                    for name in zf.namelist():
+                        ext = os.path.splitext(name)[1].lower()
+                        if ext in (".cap", ".rom", ".fd", ".upd", ".bin"):
+                            inner_path = os.path.join(extraction_dir, os.path.basename(name))
+                            with open(inner_path, "wb") as out:
+                                out.write(zf.read(name))
+                            actual_firmware = inner_path
+                            result.unpack_log += f"Extracted {name} from ZIP container.\n"
+                            break
+
+            log = await run_uefi_extraction(actual_firmware, extraction_dir)
+            result.unpack_log += log
+            await _report("Analyzing UEFI structure", 70)
+            _analyze_uefi_extraction(result, extraction_dir)
+            if result.success:
+                await _report("Extraction complete", 100)
+                return result
+            result.unpack_log += "\nUEFI extraction produced no usable output.\n"
+        except Exception as e:
+            result.unpack_log += f"\nUEFI extraction failed: {e}\n"
+            logger.warning("UEFI fast path failed, falling through to generic extractors", exc_info=True)
 
     if fw_type == "elf_binary":
         import shutil
