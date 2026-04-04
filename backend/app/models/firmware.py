@@ -19,9 +19,10 @@ class Firmware(Base):
     project_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("projects.id", ondelete="CASCADE"),
         nullable=False,
+        index=True,
     )
     original_filename: Mapped[str | None] = mapped_column(String(255))
-    sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    sha256: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     file_size: Mapped[int | None] = mapped_column(BigInteger)
     storage_path: Mapped[str | None] = mapped_column(String(512))
     extracted_path: Mapped[str | None] = mapped_column(String(512))

@@ -24,6 +24,7 @@ class EmulationSession(Base):
     firmware_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("firmware.id", ondelete="CASCADE"),
         nullable=False,
+        index=True,
     )
     mode: Mapped[str] = mapped_column(String(20), nullable=False)
     status: Mapped[str] = mapped_column(

@@ -51,10 +51,12 @@ class SbomVulnerability(Base):
     component_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("sbom_components.id", ondelete="CASCADE"),
         nullable=False,
+        index=True,
     )
     firmware_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("firmware.id", ondelete="CASCADE"),
         nullable=False,
+        index=True,
     )
     cve_id: Mapped[str] = mapped_column(String(20), nullable=False)
     cvss_score: Mapped[float | None] = mapped_column(Numeric(3, 1))
@@ -65,6 +67,7 @@ class SbomVulnerability(Base):
     finding_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("findings.id", ondelete="SET NULL"),
         nullable=True,
+        index=True,
     )
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
 

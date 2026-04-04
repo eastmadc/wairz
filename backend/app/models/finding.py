@@ -28,6 +28,7 @@ class Finding(Base):
     conversation_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("conversations.id", ondelete="SET NULL"),
         nullable=True,
+        index=True,
     )
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     severity: Mapped[str] = mapped_column(String(20), nullable=False)
@@ -42,6 +43,7 @@ class Finding(Base):
     component_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("sbom_components.id", ondelete="SET NULL"),
         nullable=True,
+        index=True,
     )
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(server_default=func.now(), onupdate=func.now())

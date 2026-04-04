@@ -24,6 +24,7 @@ class FuzzingCampaign(Base):
     firmware_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("firmware.id", ondelete="CASCADE"),
         nullable=False,
+        index=True,
     )
     binary_path: Mapped[str] = mapped_column(String(512), nullable=False)
     status: Mapped[str] = mapped_column(
@@ -65,6 +66,7 @@ class FuzzingCrash(Base):
     triage_output: Mapped[str | None] = mapped_column(Text)
     finding_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("findings.id", ondelete="SET NULL"),
+        index=True,
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
