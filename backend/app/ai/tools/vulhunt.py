@@ -95,7 +95,7 @@ async def _run_vulhunt(args: list[str], timeout: int = 300) -> tuple[int, str, s
     settings = get_settings()
     container = settings.vulhunt_container
 
-    cmd = ["docker", "exec", container, "vulhunt-ce"] + args
+    cmd = ["docker", "exec", "-i", container, "vulhunt-ce"] + args
     proc = await asyncio.create_subprocess_exec(
         *cmd,
         stdout=asyncio.subprocess.PIPE,
@@ -254,10 +254,20 @@ async def _handle_vulhunt_scan_binary(
         return f"{path} is not an ELF or PE32+ binary."
 
     # VulHunt runs in its own container with firmware_data mounted at /data/firmware
-    # The real_path on the backend container maps to the same path via shared volume
     settings = get_settings()
+    scan_args = [
+        "scan", real_path,
+        "--output", "/dev/stdout",
+        "--data", "/opt/vulhunt/data",
+        "--rules", "/opt/vulhunt/rules",
+        "--stream",
+    ]
+    # Add loader hints for PE32+ (UEFI modules)
+    if _is_pe(real_path):
+        scan_args.extend(["--loader", "component", "--component-attribute", "kind=DxeDriver"])
+
     code, stdout, stderr = await _run_vulhunt(
-        ["scan", real_path, "--pretty", "--stream"],
+        scan_args,
         timeout=settings.vulhunt_timeout,
     )
 
@@ -324,8 +334,17 @@ async def _handle_vulhunt_scan_firmware(
 
     for binary_path in binaries:
         binary_name = os.path.relpath(binary_path, root)
+        scan_args = [
+            "scan", binary_path,
+            "--output", "/dev/stdout",
+            "--data", "/opt/vulhunt/data",
+            "--rules", "/opt/vulhunt/rules",
+            "--stream",
+        ]
+        if _is_pe(binary_path):
+            scan_args.extend(["--loader", "component", "--component-attribute", "kind=DxeDriver"])
         code, stdout, stderr = await _run_vulhunt(
-            ["scan", binary_path, "--stream"],
+            scan_args,
             timeout=settings.vulhunt_timeout,
         )
         findings = _parse_vulhunt_json(stdout)

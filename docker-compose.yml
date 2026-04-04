@@ -97,6 +97,7 @@ services:
 
   vulhunt:
     image: ghcr.io/vulhunt-re/vulhunt:latest
+    entrypoint: ["vulhunt-ce", "mcp", "--host", "0.0.0.0", "--port", "8080"]
     volumes:
       - firmware_data:/data/firmware:ro
     deploy:
