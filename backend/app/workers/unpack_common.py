@@ -212,6 +212,51 @@ async def run_unblob_extraction(firmware_path: str, output_dir: str, timeout: in
     return stdout.decode(errors="replace").replace("\x00", "")
 
 
+async def run_uefi_extraction(firmware_path: str, output_dir: str, timeout: int = 300) -> str:
+    """Run UEFIExtract to parse and extract UEFI/BIOS firmware.
+
+    UEFIExtract produces a hierarchical .dump/ directory with all firmware
+    volumes, DXE drivers, PEI modules, NVRAM, and other components extracted
+    and decompressed. Each component gets header.bin, body.bin, and info.txt.
+    """
+    from shutil import which
+
+    if not which("UEFIExtract"):
+        raise RuntimeError(
+            "UEFIExtract is not installed. "
+            "Install from https://github.com/LongSoft/UEFITool"
+        )
+
+    import shutil
+
+    # UEFIExtract creates output at <input>.dump/ next to the input file.
+    # Copy firmware to output_dir so the .dump/ lands there.
+    work_copy = os.path.join(output_dir, os.path.basename(firmware_path))
+    shutil.copy2(firmware_path, work_copy)
+
+    proc = await asyncio.create_subprocess_exec(
+        "UEFIExtract", work_copy, "all",
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.STDOUT,
+    )
+    try:
+        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+    except asyncio.TimeoutError:
+        proc.kill()
+        await proc.wait()
+        raise TimeoutError(f"UEFIExtract timed out after {timeout}s")
+
+    log = stdout.decode(errors="replace").replace("\x00", "")
+
+    # Remove the work copy (keep only the .dump/ directory)
+    try:
+        os.unlink(work_copy)
+    except OSError:
+        pass
+
+    return log
+
+
 def _read_magic(path: str, num_bytes: int = 4) -> bytes:
     """Read the first N bytes of a file for magic number detection."""
     try:
@@ -378,6 +423,18 @@ def classify_firmware(firmware_path: str) -> str:
                     return "android_ota"
                 if "payload.bin" in names or "system.img" in names:
                     return "android_ota"
+                # Check for UEFI capsule inside ZIP (e.g., Framework BIOS updates)
+                uefi_zip_markers = {".cap", ".rom", ".fd", ".bin"}
+                for name in names:
+                    ext = os.path.splitext(name)[1].lower()
+                    if ext in uefi_zip_markers:
+                        # Extract and check if inner file is UEFI
+                        try:
+                            inner = zf.read(name)
+                            if _is_uefi_content(inner):
+                                return "uefi_firmware"
+                        except Exception:
+                            pass
         except Exception:
             pass
 
@@ -390,6 +447,10 @@ def classify_firmware(firmware_path: str) -> str:
     # Android boot image
     if magic[:8] == b"ANDROID!":
         return "android_boot"
+
+    # UEFI/BIOS firmware detection (before tar/ELF checks)
+    if _is_uefi_firmware(firmware_path, magic):
+        return "uefi_firmware"
 
     if _is_partition_dump_tar(firmware_path):
         return "partition_dump_tar"
@@ -407,6 +468,65 @@ def classify_firmware(firmware_path: str) -> str:
         return "pe_binary"
 
     return "linux_blob"
+
+
+# EFI capsule GUID: BD86663B-08ED-4816-8FF0-D29BF6426720
+_EFI_CAPSULE_GUID = b"\x3b\x66\x86\xbd\xed\x08\x16\x48\x8f\xf0\xd2\x9b\xf6\x42\x67\x20"
+# Intel Flash Descriptor signature at offset 0x10
+_IFD_SIGNATURE = b"\x5a\xa5\xf0\x0f"
+# UEFI Firmware Volume magic: _FVH
+_FVH_MAGIC = b"_FVH"
+# AMI Aptio capsule marker
+_AMI_CAPSULE = b"\xB5\x25\x67\x8D"
+
+
+def _is_uefi_content(data: bytes) -> bool:
+    """Check if raw bytes contain UEFI firmware signatures."""
+    if len(data) < 32:
+        return False
+    # EFI capsule GUID at offset 0
+    if data[:16] == _EFI_CAPSULE_GUID:
+        return True
+    # Intel Flash Descriptor at offset 0x10
+    if len(data) > 0x14 and data[0x10:0x14] == _IFD_SIGNATURE:
+        return True
+    # Search first 4KB for _FVH (firmware volume header)
+    search_region = data[:4096]
+    if _FVH_MAGIC in search_region:
+        return True
+    return False
+
+
+def _is_uefi_firmware(firmware_path: str, magic: bytes) -> bool:
+    """Detect UEFI/BIOS firmware by magic bytes and structure."""
+    # EFI capsule GUID at offset 0
+    if len(magic) >= 16 and magic[:16] == _EFI_CAPSULE_GUID:
+        return True
+    # Intel Flash Descriptor at offset 0x10
+    try:
+        with open(firmware_path, "rb") as f:
+            f.seek(0x10)
+            ifd = f.read(4)
+            if ifd == _IFD_SIGNATURE:
+                return True
+            # Search first 64KB for firmware volume header (_FVH)
+            f.seek(0)
+            head = f.read(65536)
+            if _FVH_MAGIC in head:
+                return True
+    except OSError:
+        pass
+    # Check file extension as weak signal combined with size
+    ext = os.path.splitext(firmware_path)[1].lower()
+    if ext in (".rom", ".cap", ".fd", ".upd"):
+        try:
+            size = os.path.getsize(firmware_path)
+            # UEFI firmware is typically 4MB-32MB
+            if 2 * 1024 * 1024 <= size <= 64 * 1024 * 1024:
+                return True
+        except OSError:
+            pass
+    return False
 
 
 def _is_partition_dump_tar(firmware_path: str) -> bool:

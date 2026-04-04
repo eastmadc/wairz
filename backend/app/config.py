@@ -51,6 +51,8 @@ class Settings(BaseSettings):
     max_compression_ratio: int = 200
     dependency_track_url: str = ""
     dependency_track_api_key: str = ""
+    vulhunt_container: str = "wairz-vulhunt-1"
+    vulhunt_timeout: int = 300
     log_level: str = "INFO"
 
 
