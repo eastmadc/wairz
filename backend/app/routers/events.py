@@ -24,7 +24,7 @@ router = APIRouter(
 )
 
 # Event types that clients can subscribe to
-VALID_EVENT_TYPES = {"unpacking", "emulation", "fuzzing", "device", "assessment"}
+VALID_EVENT_TYPES = {"unpacking", "emulation", "fuzzing", "device", "assessment", "vulhunt"}
 
 # Keepalive interval in seconds
 KEEPALIVE_INTERVAL = 15

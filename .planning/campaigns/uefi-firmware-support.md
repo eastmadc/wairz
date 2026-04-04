@@ -19,7 +19,7 @@ and security assessment via VulHunt integration.
 |---|------|-------------|--------|
 | 1 | build | UEFI detection + UEFIExtract in Docker + extraction pipeline | complete |
 | 2 | build | UEFI MCP tools (5 tools) + REST endpoints | complete |
-| 3 | build | VulHunt Docker sidecar + UEFI security assessment | pending |
+| 3 | build | VulHunt Docker sidecar + UEFI security assessment | complete |
 | 4 | verify | Test with real UEFI firmware (D3633-S1.ROM, Framework BIOS) | pending |
 
 ## Phase End Conditions
@@ -52,9 +52,11 @@ and security assessment via VulHunt integration.
 | `identify_uefi_module` MCP tool | 2 | done | `tools/uefi.py` |
 | `read_uefi_module` MCP tool | 2 | done | `tools/uefi.py` |
 | Known GUID database (35+ EDK2 modules) | 2 | done | `tools/uefi.py` |
-| VulHunt docker-compose service | 3 | pending | `docker-compose.yml` |
-| `vulhunt_scan_binary` MCP tool | 3 | pending | `tools/vulhunt.py` |
-| `vulhunt_scan_firmware` MCP tool | 3 | pending | `tools/vulhunt.py` |
+| VulHunt docker-compose service | 3 | done | `docker-compose.yml` |
+| `vulhunt_scan_binary` MCP tool | 3 | done | `tools/vulhunt.py` |
+| `vulhunt_scan_firmware` MCP tool | 3 | done | `tools/vulhunt.py` |
+| `vulhunt_check_available` MCP tool | 3 | done | `tools/vulhunt.py` |
+| VulHunt JSONL parser fix (filter package metadata) | 3 | done | `tools/vulhunt.py` |
 
 ## Decision Log
 
@@ -68,13 +70,18 @@ and security assessment via VulHunt integration.
 
 ## Active Context
 
-- Phase 1 code complete, Docker build running (UEFIExtract compiling on ARM64)
-- Phase 2 code complete (5 MCP tools, GUID database)
-- Phase 3 not started (VulHunt integration)
+- Phase 1-3 code complete and committed
+- VulHunt container running (`vulhunt 1.0.0`), tools registered, scans execute
+- Tested VulHunt on real firmware (OpenWrt uhttpd, dropbear, busybox) — pipeline works end-to-end
+- VulHunt CE returns package metadata but no vulnerability findings for tested binaries (limited community ruleset)
+- Fixed parser bug: package metadata JSONL records no longer counted as findings
+- Phase 4 (real UEFI firmware verification) not yet started — needs D3633-S1.ROM or Framework BIOS
 
 ## Continuation State
 
-- Docker build in progress (background task bdhod7kc5)
-- All Python code syntax-verified
-- Need to rebuild + deploy to test with real UEFI firmware
-- checkpoint-phase-1: none (clean working tree at campaign start)
+- All phases 1-3 built, tested, running
+- 26 UEFI tests passing
+- Phase 4 blocked on UEFI firmware images for testing
+- Next: acquire test UEFI firmware and verify full extraction + module listing + VulHunt scan
+
+<!-- session-end: 2026-04-04T01:45:31.697Z -->

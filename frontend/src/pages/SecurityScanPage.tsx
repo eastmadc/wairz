@@ -11,12 +11,13 @@ import {
   type SecurityAuditResult,
   type YaraScanResult,
 } from '@/api/findings'
+import { runTool } from '@/api/tools'
 import { listFirmware } from '@/api/firmware'
 import { useProjectStore } from '@/stores/projectStore'
 import FirmwareSelector from '@/components/projects/FirmwareSelector'
 import type { Finding, FirmwareDetail, Severity } from '@/types'
 
-type Tab = 'audit' | 'yara'
+type Tab = 'audit' | 'yara' | 'vulhunt'
 
 const SEVERITY_COLORS: Record<Severity, string> = {
   critical: 'bg-red-600 text-white',
@@ -35,6 +36,11 @@ export default function SecurityScanPage() {
   const [auditResult, setAuditResult] = useState<SecurityAuditResult | null>(null)
   const [yaraScanning, setYaraScanning] = useState(false)
   const [yaraResult, setYaraResult] = useState<YaraScanResult | null>(null)
+  const [vulhuntScanning, setVulhuntScanning] = useState(false)
+  const [vulhuntResult, setVulhuntResult] = useState<{ output: string; success: boolean } | null>(null)
+  const [vulhuntProgress, setVulhuntProgress] = useState<{
+    scanned: number; total: number; findings: number; message: string
+  } | null>(null)
   const [findings, setFindings] = useState<Finding[]>([])
   const [loadingFindings, setLoadingFindings] = useState(false)
 
@@ -44,7 +50,7 @@ export default function SecurityScanPage() {
     }
   }, [projectId])
 
-  const source = tab === 'audit' ? 'security_audit' : 'yara_scan'
+  const source = tab === 'audit' ? 'security_audit' : tab === 'yara' ? 'yara_scan' : 'vulhunt_scan'
 
   const loadFindings = useCallback(async () => {
     if (!projectId) return
@@ -95,6 +101,44 @@ export default function SecurityScanPage() {
     }
   }
 
+  const handleVulhunt = async () => {
+    if (!projectId) return
+    setVulhuntScanning(true)
+    setVulhuntResult(null)
+    setVulhuntProgress(null)
+
+    // Subscribe to SSE for progress updates
+    const evtSource = new EventSource(`/api/v1/projects/${projectId}/events?types=vulhunt`)
+    evtSource.onmessage = (e) => {
+      try {
+        const data = JSON.parse(e.data)
+        if (data.type === 'vulhunt') {
+          setVulhuntProgress({
+            scanned: data.scanned ?? 0,
+            total: data.total ?? 0,
+            findings: data.findings ?? 0,
+            message: data.message ?? '',
+          })
+        }
+      } catch { /* ignore parse errors */ }
+    }
+
+    try {
+      const result = await runTool(
+        projectId,
+        'vulhunt_scan_firmware',
+        {},
+        selectedFirmwareId || undefined,
+      )
+      setVulhuntResult(result)
+    } catch {
+      setVulhuntResult({ output: 'VulHunt scan failed. Is the vulhunt container running?', success: false })
+    } finally {
+      evtSource.close()
+      setVulhuntScanning(false)
+    }
+  }
+
   // Group findings by severity
   const bySeverity = findings.reduce<Record<string, Finding[]>>((acc, f) => {
     acc[f.severity] = acc[f.severity] || []
@@ -142,6 +186,17 @@ export default function SecurityScanPage() {
           onClick={() => setTab('yara')}
         >
           YARA Scan
+        </button>
+        <button
+          type="button"
+          className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${
+            tab === 'vulhunt'
+              ? 'border-primary text-primary'
+              : 'border-transparent text-muted-foreground hover:text-foreground'
+          }`}
+          onClick={() => setTab('vulhunt')}
+        >
+          VulHunt
         </button>
       </div>
 
@@ -200,6 +255,54 @@ export default function SecurityScanPage() {
         </div>
       )}
 
+      {tab === 'vulhunt' && (
+        <div className="space-y-4">
+          <div className="flex items-center gap-3">
+            <Button onClick={handleVulhunt} disabled={vulhuntScanning}>
+              {vulhuntScanning ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}
+              {vulhuntScanning ? 'Scanning...' : 'Run VulHunt Scan'}
+            </Button>
+            <p className="text-xs text-muted-foreground">
+              Deep binary vulnerability analysis on all ELF and UEFI PE32+ modules — dataflow tracking, pattern matching
+            </p>
+          </div>
+
+          {vulhuntScanning && vulhuntProgress && vulhuntProgress.total > 0 && (
+            <Card>
+              <CardContent className="py-3 px-4 space-y-2">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-muted-foreground">{vulhuntProgress.message}</span>
+                  <span className="font-mono">
+                    {vulhuntProgress.scanned}/{vulhuntProgress.total}
+                  </span>
+                </div>
+                <div className="h-2 bg-muted rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-primary rounded-full transition-all duration-300"
+                    style={{ width: `${(vulhuntProgress.scanned / vulhuntProgress.total) * 100}%` }}
+                  />
+                </div>
+                {vulhuntProgress.findings > 0 && (
+                  <p className="text-xs text-orange-500">
+                    {vulhuntProgress.findings} vulnerability finding{vulhuntProgress.findings !== 1 ? 's' : ''} so far
+                  </p>
+                )}
+              </CardContent>
+            </Card>
+          )}
+
+          {vulhuntResult && (
+            <Card>
+              <CardContent className="py-3 px-4">
+                <pre className="text-xs whitespace-pre-wrap font-mono max-h-96 overflow-y-auto">
+                  {vulhuntResult.output}
+                </pre>
+              </CardContent>
+            </Card>
+          )}
+        </div>
+      )}
+
       {/* Findings list */}
       {loadingFindings ? (
         <div className="flex items-center gap-2 py-8 justify-center text-muted-foreground">
@@ -212,7 +315,9 @@ export default function SecurityScanPage() {
           <p className="text-sm">
             {tab === 'audit'
               ? 'No security audit findings. Click "Run Security Audit" to scan.'
-              : 'No YARA findings. Click "Run YARA Scan" to scan.'}
+              : tab === 'yara'
+              ? 'No YARA findings. Click "Run YARA Scan" to scan.'
+              : 'No VulHunt findings yet. Click "Run VulHunt Scan" to analyze binaries.'}
           </p>
         </div>
       ) : (
