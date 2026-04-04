@@ -227,16 +227,19 @@ async def unpack_firmware(
             result.unpack_log += f"\nUEFI extraction failed: {e}\n"
             logger.warning("UEFI fast path failed, falling through to generic extractors", exc_info=True)
 
-    if fw_type == "elf_binary":
+    if fw_type in ("elf_binary", "pe_binary"):
         import shutil
         dest = os.path.join(extraction_dir, os.path.basename(firmware_path))
         shutil.copy2(firmware_path, dest)
         result.extracted_path = extraction_dir
         result.extraction_dir = extraction_dir
-        result.unpack_log += "Single ELF binary — skipped filesystem extraction."
-        arch, endian = detect_architecture_from_elf(firmware_path)
-        result.architecture = arch
-        result.endianness = endian
+        if fw_type == "elf_binary":
+            result.unpack_log += "Single ELF binary — skipped filesystem extraction."
+            arch, endian = detect_architecture_from_elf(firmware_path)
+            result.architecture = arch
+            result.endianness = endian
+        else:
+            result.unpack_log += "Single PE binary — skipped filesystem extraction."
         result.success = True
         return result
 
@@ -387,7 +390,24 @@ async def unpack_firmware(
             result.unpack_log += f"\n{name} failed: {e}\n"
             logger.info("%s failed on %s: %s", name, os.path.basename(firmware_path), e)
 
-    # All extractors exhausted
+    # All extractors exhausted — fall back to standalone binary mode
+    # If the file is small enough, just copy it and let users analyze
+    # the binary directly (common for single malware samples, test binaries)
+    _STANDALONE_BINARY_MAX = 10 * 1024 * 1024  # 10 MB
+    if not result.success and fw_size <= _STANDALONE_BINARY_MAX:
+        import shutil
+        dest = os.path.join(extraction_dir, os.path.basename(firmware_path))
+        if not os.path.exists(dest):
+            shutil.copy2(firmware_path, dest)
+        result.extracted_path = extraction_dir
+        result.extraction_dir = extraction_dir
+        result.unpack_log += (
+            "\nAll extraction methods exhausted.\n"
+            "Treating as standalone binary file.\n"
+        )
+        result.success = True
+        return result
+
     if not result.success:
         result.error = "All extraction methods failed or produced no filesystem root"
         result.unpack_log += "\nAll extraction methods exhausted.\n"
