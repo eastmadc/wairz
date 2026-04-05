@@ -23,6 +23,33 @@ from app.workers.unpack import detect_kernel, unpack_firmware
 
 logger = logging.getLogger(__name__)
 
+# ---------------------------------------------------------------------------
+# arq pool (lazy-initialised, with fallback to asyncio.create_task)
+# ---------------------------------------------------------------------------
+_arq_pool = None
+_arq_unavailable = False
+
+
+async def _get_arq_pool():
+    """Return a shared arq connection pool, or None if arq is unavailable."""
+    global _arq_pool, _arq_unavailable
+    if _arq_unavailable:
+        return None
+    if _arq_pool is not None:
+        return _arq_pool
+    try:
+        from arq import create_pool
+        from app.workers.arq_worker import get_redis_settings
+        _arq_pool = await create_pool(get_redis_settings())
+        logger.info("arq pool connected — background jobs will use the worker queue")
+        return _arq_pool
+    except Exception:
+        _arq_unavailable = True
+        logger.warning(
+            "arq pool unavailable — falling back to asyncio.create_task for background jobs"
+        )
+        return None
+
 MAX_UPLOAD_BYTES = get_settings().max_upload_size_mb * 1024 * 1024
 
 
@@ -136,10 +163,20 @@ async def unpack(
     project.status = "unpacking"
     await db.flush()
 
-    # Launch background task (uses its own DB session)
-    asyncio.create_task(
-        _run_unpack_background(project_id, firmware_id, firmware.storage_path)
-    )
+    # Launch background task — prefer arq worker queue, fall back to in-process
+    pool = await _get_arq_pool()
+    if pool is not None:
+        await pool.enqueue_job(
+            "unpack_firmware_job",
+            project_id=str(project_id),
+            firmware_id=str(firmware_id),
+            storage_path=firmware.storage_path,
+        )
+        logger.info("Enqueued unpack_firmware_job for firmware %s via arq", firmware_id)
+    else:
+        asyncio.create_task(
+            _run_unpack_background(project_id, firmware_id, firmware.storage_path)
+        )
 
     return firmware
 
@@ -188,6 +225,7 @@ async def _run_unpack_background(
                     firmware.endianness = result.endianness
                     firmware.os_info = result.os_info
                     firmware.kernel_path = result.kernel_path
+                    firmware.binary_info = result.binary_info
                     firmware.unpack_log = result.unpack_log
                     firmware.unpack_stage = None
                     firmware.unpack_progress = None

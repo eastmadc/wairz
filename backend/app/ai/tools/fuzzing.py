@@ -342,6 +342,27 @@ async def _handle_analyze_target(input: dict, context: ToolContext) -> str:
         lines.append(f"    Canary: {'yes' if prot.get('canary') else 'NO'}")
         lines.append(f"    PIE: {'yes' if prot.get('pie') else 'NO'}")
 
+    # Add standalone binary info if applicable
+    if firmware.binary_info:
+        bi = firmware.binary_info
+        lines.append("")
+        lines.append("  Standalone binary mode:")
+        linking = "static" if bi.get("is_static") else "dynamic"
+        lines.append(f"    Linking: {linking}")
+        if not bi.get("is_static"):
+            from app.services.sysroot_service import get_sysroot_path, check_dependencies
+            sysroot = get_sysroot_path(firmware.architecture or "")
+            lines.append(f"    Sysroot: {sysroot or 'unavailable'}")
+            deps = bi.get("dependencies", [])
+            if deps:
+                dep_check = check_dependencies(firmware.architecture or "", deps)
+                if dep_check.get("missing"):
+                    lines.append(f"    Missing deps: {', '.join(dep_check['missing'])}")
+                else:
+                    lines.append("    All dependencies available in sysroot")
+        else:
+            lines.append("    No sysroot needed (static binary)")
+
     if score >= 60:
         lines.append("")
         lines.append("Recommendation: This binary is a good fuzzing target. "

@@ -249,6 +249,122 @@ async def _handle_xrefs_from(input: dict, context: ToolContext) -> str:
     return "\n".join(lines)
 
 
+async def _handle_analyze_binary_format(input: dict, context: ToolContext) -> str:
+    """Analyze binary format, architecture, linking type, and dependencies using LIEF."""
+    path = context.resolve_path(input["binary_path"])
+
+    if not os.path.isfile(path):
+        return f"Error: File not found: {input['binary_path']}"
+
+    import asyncio
+    from app.services.binary_analysis_service import analyze_binary
+
+    loop = asyncio.get_running_loop()
+    info = await loop.run_in_executor(None, analyze_binary, path)
+
+    fmt = info.get("format", "unknown").upper()
+    arch = info.get("architecture", "unknown")
+    endian = info.get("endianness", "unknown")
+    bits = info.get("bits", "unknown")
+    is_static = info.get("is_static", False)
+    is_pie = info.get("is_pie", False)
+    interpreter = info.get("interpreter")
+    deps = info.get("dependencies", [])
+    entry = info.get("entry_point")
+    file_size = info.get("file_size", 0)
+
+    lines = [
+        "Binary Format Analysis (LIEF):",
+        "",
+        f"  Format:       {fmt}",
+        f"  Architecture: {arch}",
+        f"  Endianness:   {endian}",
+        f"  Bits:         {bits}",
+        f"  Linking:      {'static' if is_static else 'dynamic'}",
+        f"  PIE:          {'yes' if is_pie else 'no'}",
+        f"  Entry Point:  {hex(entry) if entry else 'N/A'}",
+        f"  File Size:    {file_size:,} bytes",
+    ]
+
+    if interpreter:
+        lines.append(f"  Interpreter:  {interpreter}")
+
+    if deps:
+        lines.append(f"  Dependencies ({len(deps)}):")
+        for dep in deps:
+            lines.append(f"    - {dep}")
+
+        # Check sysroot availability for standalone emulation (ELF only)
+        if fmt == "ELF":
+            from app.services.sysroot_service import check_dependencies
+            dep_check = check_dependencies(arch or "", deps)
+            if dep_check.get("missing"):
+                lines.append("")
+                lines.append(f"  Sysroot ({dep_check.get('sysroot_path', 'N/A')}):")
+                lines.append(f"    Available: {', '.join(dep_check['available']) or 'none'}")
+                lines.append(f"    Missing:   {', '.join(dep_check['missing'])}")
+            elif dep_check.get("sysroot_path"):
+                lines.append("")
+                lines.append(f"  Sysroot: All dependencies available at {dep_check['sysroot_path']}")
+    elif is_static:
+        lines.append("  No shared library dependencies (static binary)")
+        lines.append("  Can be emulated directly without a sysroot")
+
+    # PE-specific details via pefile
+    if fmt == "PE":
+        from app.services.binary_analysis_service import check_pe_protections
+
+        pe_info = await loop.run_in_executor(None, check_pe_protections, path)
+        if "error" not in pe_info:
+            def _yn(val: object) -> str:
+                return "enabled" if val is True else "disabled"
+
+            lines.append("")
+            lines.append("  PE Security Characteristics:")
+            lines.append(f"    DEP/NX:           {_yn(pe_info.get('dep_nx'))}")
+            lines.append(f"    ASLR:             {_yn(pe_info.get('aslr'))}")
+            lines.append(f"    SEH:              {_yn(pe_info.get('seh'))}")
+            lines.append(f"    CFG:              {_yn(pe_info.get('cfg'))}")
+            lines.append(f"    High Entropy VA:  {_yn(pe_info.get('high_entropy_va'))}")
+            lines.append(f"    Authenticode:     {_yn(pe_info.get('authenticode'))}")
+
+            sections = pe_info.get("sections", [])
+            if sections:
+                lines.append("")
+                lines.append(f"  Sections ({len(sections)}):")
+                for sec in sections:
+                    flags = ", ".join(sec.get("flags", []))
+                    entropy = sec.get("entropy", 0)
+                    lines.append(
+                        f"    {sec['name']:<10} vsize={sec['virtual_size']:>8}  "
+                        f"raw={sec['raw_size']:>8}  entropy={entropy}  [{flags}]"
+                    )
+
+            imports_by_dll = pe_info.get("imports_by_dll", {})
+            if imports_by_dll:
+                total_funcs = sum(len(v) for v in imports_by_dll.values())
+                lines.append("")
+                lines.append(f"  Imports ({total_funcs} functions from {len(imports_by_dll)} DLLs):")
+                for dll, funcs in sorted(imports_by_dll.items()):
+                    lines.append(f"    [{dll}] ({len(funcs)} functions)")
+                    # Show first 10 per DLL to keep output manageable
+                    for func in funcs[:10]:
+                        lines.append(f"      {func}")
+                    if len(funcs) > 10:
+                        lines.append(f"      ... ({len(funcs) - 10} more)")
+
+            exports = pe_info.get("exports", [])
+            if exports:
+                lines.append("")
+                lines.append(f"  Exports ({len(exports)}):")
+                for exp in exports[:20]:
+                    lines.append(f"    {exp}")
+                if len(exports) > 20:
+                    lines.append(f"    ... ({len(exports) - 20} more)")
+
+    return "\n".join(lines)
+
+
 async def _handle_get_binary_info(input: dict, context: ToolContext) -> str:
     """Get binary metadata: architecture, format, entry point, etc."""
     path = context.resolve_path(input["binary_path"])
@@ -256,38 +372,152 @@ async def _handle_get_binary_info(input: dict, context: ToolContext) -> str:
     cache = get_analysis_cache()
     info = await cache.get_binary_info(path, context.firmware_id, context.db)
 
-    if not info:
-        return "Could not retrieve binary info."
+    if info:
+        bin_info = info.get("bin", {})
+        lines = [
+            "Binary Information:",
+            "",
+            f"  File:         {bin_info.get('file', 'unknown')}",
+            f"  Format:       {bin_info.get('bintype', 'unknown')}",
+            f"  Architecture: {bin_info.get('arch', 'unknown')}",
+            f"  Bits:         {bin_info.get('bits', 'unknown')}",
+            f"  Endianness:   {bin_info.get('endian', 'unknown')}",
+            f"  OS:           {bin_info.get('os', 'unknown')}",
+            f"  Machine:      {bin_info.get('machine', 'unknown')}",
+            f"  Class:        {bin_info.get('class', 'unknown')}",
+            f"  Language:     {bin_info.get('lang', 'unknown')}",
+            f"  Stripped:     {bin_info.get('stripped', 'unknown')}",
+            f"  Static:       {bin_info.get('static', 'unknown')}",
+            f"  Linked libs:  {', '.join(bin_info.get('libs', [])) or 'none'}",
+        ]
+        return "\n".join(lines)
 
-    core = info.get("core", {})
-    bin_info = info.get("bin", {})
+    # Fallback: use LIEF/pefile for PE or non-ELF binaries where radare2 failed
+    is_pe = False
+    try:
+        with open(path, "rb") as f:
+            magic = f.read(4)
+        if magic[:2] == b"MZ":
+            is_pe = True
+    except OSError:
+        pass
 
-    lines = [
-        "Binary Information:",
-        "",
-        f"  File:         {bin_info.get('file', 'unknown')}",
-        f"  Format:       {bin_info.get('bintype', 'unknown')}",
-        f"  Architecture: {bin_info.get('arch', 'unknown')}",
-        f"  Bits:         {bin_info.get('bits', 'unknown')}",
-        f"  Endianness:   {bin_info.get('endian', 'unknown')}",
-        f"  OS:           {bin_info.get('os', 'unknown')}",
-        f"  Machine:      {bin_info.get('machine', 'unknown')}",
-        f"  Class:        {bin_info.get('class', 'unknown')}",
-        f"  Language:     {bin_info.get('lang', 'unknown')}",
-        f"  Stripped:     {bin_info.get('stripped', 'unknown')}",
-        f"  Static:       {bin_info.get('static', 'unknown')}",
-        f"  Linked libs:  {', '.join(bin_info.get('libs', [])) or 'none'}",
-    ]
+    if is_pe:
+        from app.services.binary_analysis_service import analyze_binary, check_pe_protections
 
-    return "\n".join(lines)
+        loop = asyncio.get_running_loop()
+        lief_info = await loop.run_in_executor(None, analyze_binary, path)
+        pe_info = await loop.run_in_executor(None, check_pe_protections, path)
+
+        deps = lief_info.get("dependencies", [])
+        lines = [
+            "Binary Information (PE via LIEF + pefile):",
+            "",
+            f"  File:         {os.path.basename(path)}",
+            f"  Format:       PE",
+            f"  Architecture: {lief_info.get('architecture', 'unknown')}",
+            f"  Bits:         {lief_info.get('bits', 'unknown')}",
+            f"  Endianness:   {lief_info.get('endianness', 'little')}",
+            f"  Entry Point:  {hex(lief_info['entry_point']) if lief_info.get('entry_point') else 'N/A'}",
+            f"  Static:       {'yes' if lief_info.get('is_static') else 'no'}",
+            f"  Linked DLLs:  {', '.join(deps) or 'none'}",
+        ]
+
+        if "error" not in pe_info:
+            def _yn(v: object) -> str:
+                return "yes" if v is True else "no"
+
+            lines.extend([
+                "",
+                "  Security:",
+                f"    DEP/NX:     {_yn(pe_info.get('dep_nx'))}",
+                f"    ASLR:       {_yn(pe_info.get('aslr'))}",
+                f"    SEH:        {_yn(pe_info.get('seh'))}",
+                f"    CFG:        {_yn(pe_info.get('cfg'))}",
+                f"    Signed:     {_yn(pe_info.get('authenticode'))}",
+            ])
+
+        return "\n".join(lines)
+
+    # Non-PE, non-ELF — try LIEF generic analysis
+    from app.services.binary_analysis_service import analyze_binary
+
+    loop = asyncio.get_running_loop()
+    lief_info = await loop.run_in_executor(None, analyze_binary, path)
+    if lief_info.get("format") != "unknown":
+        lines = [
+            f"Binary Information ({lief_info['format'].upper()} via LIEF):",
+            "",
+            f"  File:         {os.path.basename(path)}",
+            f"  Format:       {lief_info['format'].upper()}",
+            f"  Architecture: {lief_info.get('architecture', 'unknown')}",
+            f"  Bits:         {lief_info.get('bits', 'unknown')}",
+            f"  Endianness:   {lief_info.get('endianness', 'unknown')}",
+            f"  Entry Point:  {hex(lief_info['entry_point']) if lief_info.get('entry_point') else 'N/A'}",
+            f"  Static:       {'yes' if lief_info.get('is_static') else 'no'}",
+            f"  Dependencies: {', '.join(lief_info.get('dependencies', [])) or 'none'}",
+        ]
+        return "\n".join(lines)
+
+    return "Could not retrieve binary info. The file may not be a recognized binary format."
 
 
 async def _handle_check_binary_protections(
     input: dict, context: ToolContext
 ) -> str:
-    """Check binary security protections (NX, RELRO, canary, PIE, Fortify)."""
+    """Check binary security protections (NX, RELRO, canary, PIE, Fortify for ELF; DEP, ASLR, SEH, CFG for PE)."""
     path = context.resolve_path(input["binary_path"])
 
+    # Detect format to choose the right checker
+    is_pe = False
+    try:
+        with open(path, "rb") as f:
+            magic = f.read(4)
+        if magic[:2] == b"MZ":
+            is_pe = True
+    except OSError:
+        pass
+
+    if is_pe:
+        # PE protection check via pefile
+        from app.services.binary_analysis_service import check_pe_protections
+
+        loop = asyncio.get_running_loop()
+        pe_info = await loop.run_in_executor(None, check_pe_protections, path)
+
+        if "error" in pe_info:
+            return f"Error: {pe_info['error']}"
+
+        def _pe_status(val: object) -> str:
+            if isinstance(val, bool):
+                return "enabled" if val else "disabled"
+            return str(val)
+
+        lines = [
+            "PE Binary Protection Status:",
+            "",
+            f"  DEP/NX:             {_pe_status(pe_info.get('dep_nx'))}",
+            f"  ASLR:               {_pe_status(pe_info.get('aslr'))}",
+            f"  SEH:                {_pe_status(pe_info.get('seh'))}",
+            f"  CFG (Control Flow): {_pe_status(pe_info.get('cfg'))}",
+            f"  High Entropy VA:    {_pe_status(pe_info.get('high_entropy_va'))}",
+            f"  Force Integrity:    {_pe_status(pe_info.get('force_integrity'))}",
+            f"  Authenticode:       {_pe_status(pe_info.get('authenticode'))}",
+        ]
+
+        # Summary score
+        enabled = sum(
+            1
+            for k in ("dep_nx", "aslr", "seh", "cfg", "authenticode")
+            if pe_info.get(k) is True
+        )
+        total = 5
+        lines.append("")
+        lines.append(f"  Protection score: {enabled}/{total}")
+
+        return "\n".join(lines)
+
+    # ELF protection check (existing logic)
     protections = check_binary_protections(path)
 
     if "error" in protections:
@@ -1469,6 +1699,162 @@ async def _handle_detect_capabilities(
     return "\n".join(lines)
 
 
+async def _handle_list_binary_capabilities(
+    input: dict, context: ToolContext
+) -> str:
+    """List capability categories found in a binary (lightweight summary)."""
+    path = context.resolve_path(input.get("binary_path") or input.get("path", "/"))
+
+    if not os.path.isfile(path):
+        return f"Error: file not found: {input.get('binary_path', input.get('path', ''))}"
+
+    capa_bin = shutil.which("capa")
+    if not capa_bin:
+        return (
+            "Error: capa is not installed or not on PATH. "
+            "Install it with: pip install flare-capa"
+        )
+
+    # Run capa with JSON output
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            capa_bin, path, "-j",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        try:
+            stdout_bytes, stderr_bytes = await asyncio.wait_for(
+                proc.communicate(), timeout=60
+            )
+        except asyncio.TimeoutError:
+            proc.kill()
+            await proc.communicate()
+            return (
+                "Error: capa timed out after 60 seconds. "
+                "Try detect_capabilities with the full 120s timeout, "
+                "or use a smaller binary."
+            )
+    except Exception as exc:
+        return f"Error running capa: {exc}"
+
+    stdout = stdout_bytes.decode("utf-8", errors="replace")
+    stderr = stderr_bytes.decode("utf-8", errors="replace")
+
+    if proc.returncode != 0:
+        stderr_lower = stderr.lower()
+        if "unsupported" in stderr_lower or "not a supported" in stderr_lower:
+            return f"Capa does not support this binary format or architecture.\nDetails: {stderr.strip()}"
+        if "no capabilities" in stderr_lower:
+            return "No capabilities detected in this binary."
+        return f"Capa failed (exit code {proc.returncode}):\n{stderr.strip()}"
+
+    try:
+        data = json.loads(stdout)
+    except json.JSONDecodeError:
+        return f"Error: could not parse capa JSON output. stderr: {stderr.strip()[:500]}"
+
+    rules = data.get("rules", {})
+    if not rules:
+        return "No capabilities detected in this binary."
+
+    # Group by top-level namespace and count
+    by_namespace: dict[str, int] = {}
+    attack_count = 0
+    for rule_name, rule_data in rules.items():
+        meta = rule_data.get("meta", {})
+        namespace = meta.get("namespace", "uncategorized")
+        top_ns = namespace.split("/")[0] if namespace else "uncategorized"
+        by_namespace[top_ns] = by_namespace.get(top_ns, 0) + 1
+        if meta.get("attack"):
+            attack_count += 1
+
+    total = sum(by_namespace.values())
+    bin_name = input.get("binary_path", input.get("path", ""))
+
+    lines = [
+        f"CAPA Summary: {total} capabilities in {bin_name}",
+        "",
+    ]
+
+    # Sort by count descending
+    for ns, count in sorted(by_namespace.items(), key=lambda x: -x[1]):
+        lines.append(f"  {ns}: {count}")
+
+    if attack_count:
+        lines.append(f"\n{attack_count} capabilities have MITRE ATT&CK mappings.")
+        lines.append("Use detect_capabilities for full details and ATT&CK technique IDs.")
+
+    return "\n".join(lines)
+
+
+async def _handle_analyze_raw_binary(input: dict, context: ToolContext) -> str:
+    """Detect CPU architecture from a raw binary with no recognized headers."""
+    path = context.resolve_path(input["binary_path"])
+
+    if not os.path.isfile(path):
+        return f"Error: File not found: {input['binary_path']}"
+
+    file_size = os.path.getsize(path)
+    if file_size < 64:
+        return "Error: File too small for meaningful architecture detection (< 64 bytes)."
+
+    # First check if it actually has headers (might just be misidentified)
+    from app.services.binary_analysis_service import analyze_binary, detect_raw_architecture
+
+    loop = asyncio.get_running_loop()
+    info = await loop.run_in_executor(None, analyze_binary, path)
+
+    if info.get("format") != "unknown":
+        return (
+            f"This file has recognized headers ({info['format'].upper()}). "
+            f"Use analyze_binary_format or get_binary_info instead.\n"
+            f"Architecture: {info.get('architecture', 'unknown')}"
+        )
+
+    # Run statistical architecture detection
+    chunk_size = int(input.get("chunk_size", 0))
+    candidates = await loop.run_in_executor(
+        None, detect_raw_architecture, path, chunk_size
+    )
+
+    if not candidates:
+        return (
+            "Could not detect architecture. The file may be:\n"
+            "  - Encrypted or compressed data\n"
+            "  - A non-code binary (filesystem image, certificate, etc.)\n"
+            "  - An architecture not in the training corpus"
+        )
+
+    lines = [
+        f"Raw Binary Architecture Analysis ({file_size:,} bytes):",
+        "",
+    ]
+
+    for i, candidate in enumerate(candidates):
+        prefix = ">>>" if i == 0 else "   "
+        arch = candidate["architecture"]
+        raw = candidate["raw_name"]
+        endian = candidate.get("endianness", "unknown")
+        confidence = candidate.get("confidence", "unknown")
+        lines.append(
+            f"  {prefix} {raw:<20} -> {arch} ({endian}-endian)  "
+            f"[{confidence} confidence]"
+        )
+
+    if candidates:
+        top = candidates[0]
+        lines.extend([
+            "",
+            f"Best match: {top['architecture']} ({top.get('endianness', 'unknown')}-endian)",
+            "",
+            "Note: Statistical detection works best on code sections. If the binary",
+            "contains mixed data (code + filesystem + headers), results may vary.",
+            "Use chunk_size parameter to scan sub-regions independently.",
+        ])
+
+    return "\n".join(lines)
+
+
 def register_binary_tools(registry: ToolRegistry) -> None:
     """Register all binary analysis tools with the given registry."""
 
@@ -1648,16 +2034,18 @@ def register_binary_tools(registry: ToolRegistry) -> None:
     registry.register(
         name="get_binary_info",
         description=(
-            "Get detailed metadata about an ELF binary: architecture, "
+            "Get detailed metadata about a binary: architecture, "
             "endianness, format, linked libraries, entry point, and more. "
-            "Uses Ghidra analysis cache."
+            "Works with ELF (via Ghidra cache), PE (via pefile), and "
+            "Mach-O (via LIEF). For PE binaries, also shows security "
+            "characteristics (DEP, ASLR, SEH, CFG, Authenticode)."
         ),
         input_schema={
             "type": "object",
             "properties": {
                 "binary_path": {
                     "type": "string",
-                    "description": "Path to the ELF binary",
+                    "description": "Path to the binary (ELF, PE, or Mach-O)",
                 },
             },
             "required": ["binary_path"],
@@ -1666,19 +2054,43 @@ def register_binary_tools(registry: ToolRegistry) -> None:
     )
 
     registry.register(
-        name="check_binary_protections",
+        name="analyze_binary_format",
         description=(
-            "Check security protections of an ELF binary: NX (no-execute), "
-            "RELRO (read-only relocations), stack canaries, PIE (position-"
-            "independent executable), Fortify Source, and whether the binary "
-            "is stripped. Equivalent to checksec."
+            "Analyze a binary file's format, architecture, linking type, and "
+            "shared library dependencies using LIEF. Works for ELF, PE, and "
+            "Mach-O formats. For standalone binaries, also checks sysroot "
+            "availability for emulation. Instant (no Ghidra required)."
         ),
         input_schema={
             "type": "object",
             "properties": {
                 "binary_path": {
                     "type": "string",
-                    "description": "Path to the ELF binary",
+                    "description": (
+                        "Path to the binary file (ELF, PE, or Mach-O). "
+                        "For standalone binary uploads, use the filename directly."
+                    ),
+                },
+            },
+            "required": ["binary_path"],
+        },
+        handler=_handle_analyze_binary_format,
+    )
+
+    registry.register(
+        name="check_binary_protections",
+        description=(
+            "Check security protections of a binary. For ELF: NX, RELRO, "
+            "stack canaries, PIE, Fortify Source, stripped status. For PE: "
+            "DEP/NX, ASLR, SEH, Control Flow Guard, Authenticode. "
+            "Automatically detects format. Equivalent to checksec."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "binary_path": {
+                    "type": "string",
+                    "description": "Path to the binary (ELF or PE)",
                 },
             },
             "required": ["binary_path"],
@@ -2015,4 +2427,64 @@ def register_binary_tools(registry: ToolRegistry) -> None:
             "required": ["binary_path"],
         },
         handler=_handle_detect_capabilities,
+    )
+
+    registry.register(
+        name="list_binary_capabilities",
+        description=(
+            "Quick summary of capability categories found in an ELF binary "
+            "using FLARE capa. Returns only category names and counts — much "
+            "faster to scan than full detect_capabilities output. Use this to "
+            "triage multiple binaries, then call detect_capabilities on the "
+            "interesting ones for full details and ATT&CK mappings."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "binary_path": {
+                    "type": "string",
+                    "description": (
+                        "Path to the ELF binary in the firmware filesystem "
+                        "(e.g., '/usr/bin/httpd', '/bin/busybox')"
+                    ),
+                },
+            },
+            "required": ["binary_path"],
+        },
+        handler=_handle_list_binary_capabilities,
+    )
+
+    registry.register(
+        name="analyze_raw_binary",
+        description=(
+            "Detect CPU architecture from a raw binary with no recognized "
+            "ELF/PE/Mach-O headers. Uses statistical analysis (cpu_rec by "
+            "Airbus, 70+ architectures) to identify the instruction set. "
+            "Ideal for bare-metal firmware dumps, ROM images, bootloader "
+            "extracts, and encrypted firmware where headers are stripped. "
+            "Returns top architecture candidates with confidence levels."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "binary_path": {
+                    "type": "string",
+                    "description": (
+                        "Path to the raw binary file (no ELF/PE/Mach-O headers). "
+                        "For firmware with recognized headers, use analyze_binary_format instead."
+                    ),
+                },
+                "chunk_size": {
+                    "type": "integer",
+                    "description": (
+                        "Optional: analyze the binary in chunks of this size (bytes) "
+                        "to detect multiple architectures in a composite binary. "
+                        "Default: 0 (analyze the whole file as one unit). "
+                        "Suggested: 65536 for mixed firmware images."
+                    ),
+                },
+            },
+            "required": ["binary_path"],
+        },
+        handler=_handle_analyze_raw_binary,
     )

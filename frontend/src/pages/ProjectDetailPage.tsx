@@ -322,6 +322,9 @@ export default function ProjectDetailPage() {
                       {isUnpacked && (
                         <Badge variant="default" className="text-xs">unpacked</Badge>
                       )}
+                      {fwDetail?.binary_info && (
+                        <Badge variant="outline" className="text-xs">standalone binary</Badge>
+                      )}
                     </CardTitle>
                     <div className="flex gap-1">
                       {!isUnpacked && !hasError && (
@@ -357,6 +360,28 @@ export default function ProjectDetailPage() {
                         <dd className="font-medium">
                           {fw.architecture}
                           {fw.endianness ? ` (${fw.endianness})` : ''}
+                        </dd>
+                      </div>
+                    )}
+                    {fwDetail?.binary_info && (
+                      <div className="flex items-center gap-2">
+                        <Cpu className="h-4 w-4 text-muted-foreground" />
+                        <dt className="text-muted-foreground">Binary:</dt>
+                        <dd className="font-medium">
+                          {fwDetail.binary_info.format?.toUpperCase() ?? 'Unknown'}
+                          {fwDetail.binary_info.bits ? ` ${fwDetail.binary_info.bits}-bit` : ''}
+                          {' '}
+                          {fwDetail.binary_info.is_static ? 'static' : 'dynamic'}
+                          {fwDetail.binary_info.is_pie ? ', PIE' : ''}
+                        </dd>
+                      </div>
+                    )}
+                    {fwDetail?.binary_info && fwDetail.binary_info.dependencies.length > 0 && (
+                      <div className="flex items-start gap-2 col-span-2">
+                        <Cpu className="h-4 w-4 text-muted-foreground mt-0.5" />
+                        <dt className="text-muted-foreground">Dependencies:</dt>
+                        <dd className="font-mono text-xs">
+                          {fwDetail.binary_info.dependencies.join(', ')}
                         </dd>
                       </div>
                     )}

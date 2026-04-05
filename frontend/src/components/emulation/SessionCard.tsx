@@ -81,8 +81,13 @@ export function SessionCard({ session, isActive, projectId, onConnect, onStop, o
             {statusCfg.label}
           </Badge>
           <span className="text-xs font-medium">
-            {session.mode === 'user' ? 'User' : 'System'} Mode
+            {session.mode === 'qiling' ? 'Qiling' : session.mode === 'user' ? 'User' : 'System'} Mode
           </span>
+          {session.mode === 'qiling' && (
+            <Badge variant="outline" className="text-[10px] border-purple-500/50 text-purple-400">
+              Qiling
+            </Badge>
+          )}
         </div>
         <div className="flex items-center gap-2">
           {session.architecture && (
@@ -129,7 +134,7 @@ export function SessionCard({ session, isActive, projectId, onConnect, onStop, o
       )}
 
       <div className="mt-2 flex flex-wrap gap-2">
-        {session.status === 'running' && (
+        {session.status === 'running' && session.mode !== 'qiling' && (
           <>
             <Button
               variant="outline"
@@ -169,6 +174,16 @@ export function SessionCard({ session, isActive, projectId, onConnect, onStop, o
           {showLogs ? <ChevronUp className="ml-1 h-3 w-3" /> : <ChevronDown className="ml-1 h-3 w-3" />}
         </Button>
       </div>
+
+      {/* Qiling output — shown inline for batch emulation results */}
+      {session.mode === 'qiling' && session.logs && (
+        <div className="mt-2 rounded-md border border-purple-500/20 bg-[#0a0a0b] p-2">
+          <div className="mb-1 text-[10px] font-medium text-purple-400">Emulation Output</div>
+          <pre className="max-h-80 overflow-auto whitespace-pre-wrap break-words text-[11px] text-zinc-300 font-mono">
+            {session.logs}
+          </pre>
+        </div>
+      )}
 
       {/* Expandable log viewer */}
       {showLogs && (

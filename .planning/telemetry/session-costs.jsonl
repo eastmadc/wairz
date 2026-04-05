@@ -8,3 +8,5 @@
 {"schema":2,"timestamp":"2026-04-03T05:21:25.191Z","campaign_slug":null,"session_id":"5cd41d6b-ef5a-40ec-8df0-02461d884cd4","agent_count":0,"duration_minutes":10,"estimated_cost":2,"override_cost":null}
 {"schema":2,"timestamp":"2026-04-03T05:38:49.759Z","campaign_slug":null,"session_id":"5cd41d6b-ef5a-40ec-8df0-02461d884cd4","agent_count":0,"duration_minutes":10,"estimated_cost":2,"override_cost":null}
 {"schema":2,"timestamp":"2026-04-03T05:58:21.474Z","campaign_slug":null,"session_id":"95c8659c-d736-4bc5-adf7-1b9157a446aa","agent_count":0,"duration_minutes":10,"estimated_cost":2,"override_cost":null}
+{"schema":2,"timestamp":"2026-04-04T16:03:44.636Z","campaign_slug":"uefi-firmware-support","session_id":"942dd9e2-c235-4605-a652-80896ae16b17","agent_count":0,"duration_minutes":132,"estimated_cost":14.2,"override_cost":null}
+{"schema":2,"timestamp":"2026-04-05T00:07:01.062Z","campaign_slug":"uefi-firmware-support","session_id":"8417834c-0b8c-4fb7-8401-f08b7598720f","agent_count":0,"duration_minutes":10,"estimated_cost":2,"override_cost":null}

@@ -1,5 +1,6 @@
 """Service for pushing SBOMs to Dependency-Track."""
 
+import base64
 import json
 import logging
 
@@ -41,6 +42,10 @@ class DependencyTrackService:
 
         headers = {"X-Api-Key": self.api_key}
 
+        # DT expects the BOM as a base64-encoded CycloneDX JSON string
+        bom_bytes = json.dumps(sbom_json).encode()
+        bom_b64 = base64.b64encode(bom_bytes).decode()
+
         async with httpx.AsyncClient(timeout=30.0) as client:
             resp = await client.put(
                 f"{self.base_url}/api/v1/bom",
@@ -49,7 +54,7 @@ class DependencyTrackService:
                     "projectName": project_name,
                     "projectVersion": project_version,
                     "autoCreate": True,
-                    "bom": json.dumps(sbom_json),
+                    "bom": bom_b64,
                 },
             )
             resp.raise_for_status()

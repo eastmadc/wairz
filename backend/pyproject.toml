@@ -24,6 +24,9 @@ dependencies = [
     "cryptography>=43.0.0",
     "yara-python>=4.5.0",
     "redis>=5.0.0",
+    "arq>=0.26.0",
+    "lief>=0.15.0",
+    "pefile>=2024.8",
 ]
 
 [project.scripts]

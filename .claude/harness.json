@@ -56,7 +56,19 @@
         "name": "auto-review-no-commit-in-tool-handler",
         "pattern": "context\\.db\\.commit\\(\\)",
         "filePattern": "backend/app/ai/tools/*.py",
-        "message": "Learned from review K1: Use context.db.flush() in tool handlers. The outer MCP dispatch handles commit \u2014 committing here prevents rollback on partial failures."
+        "message": "Learned from review K1: Use context.db.flush() in tool handlers. The outer MCP dispatch handles commit — committing here prevents rollback on partial failures."
+      },
+      {
+        "name": "auto-standalone-dockerignore-venv",
+        "pattern": "COPY \\. \\.",
+        "filePattern": "**/Dockerfile",
+        "message": "Learned from standalone binary campaign: Ensure .dockerignore excludes .venv -- COPY . . will overwrite the Docker-built venv with the host venv, causing Python version mismatches and missing modules."
+      },
+      {
+        "name": "auto-standalone-lief-enum-case",
+        "pattern": "CPU_TYPE\\.[a-z]",
+        "filePattern": "backend/app/services/binary_analysis_service.py",
+        "message": "Learned from standalone binary campaign: LIEF Mach-O CPU_TYPE enums are UPPERCASE (X86_64, ARM64), not lowercase. Always verify with dir()."
       }
     ]
   },
@@ -119,6 +131,6 @@
     "sessions": 0,
     "campaigns": 0,
     "override": null,
-    "sessions_completed": 27
+    "sessions_completed": 29
   }
 }

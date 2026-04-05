@@ -178,6 +178,29 @@ RUN ARCH=$(uname -m) && \
         | tar xz -C /usr/local/bin payload-dumper-go && \
     chmod +x /usr/local/bin/payload-dumper-go || echo "WARN: payload-dumper-go install failed"
 
+# Install flare-capa for binary capability detection (crypto, network, anti-analysis, etc.)
+# Installed separately from app dependencies because capa has a large dependency tree.
+RUN pip3 install --no-cache-dir --break-system-packages flare-capa \
+    || echo "WARN: flare-capa install failed — detect_capabilities tool won't work"
+
+# Install cpu_rec for raw binary architecture detection (Airbus tool, 70+ architectures).
+# cpu_rec is a standalone script + corpus — not on PyPI, installed from GitHub.
+RUN git clone --depth 1 https://github.com/airbus-seclab/cpu_rec.git /opt/cpu_rec \
+    && cd /opt/cpu_rec \
+    && for f in cpu_rec_corpus/*.xz; do unxz "$f" 2>/dev/null || true; done \
+    && echo "cpu_rec installed at /opt/cpu_rec" \
+    || echo "WARN: cpu_rec install failed — raw binary architecture detection won't work"
+
+# Install Qiling Framework rootfs templates for PE/Mach-O emulation.
+# Qiling is a Python binary emulation framework that can run Windows PE and macOS
+# Mach-O binaries without QEMU. The rootfs provides minimal OS file structures.
+# NOTE: Windows DLLs are NOT included due to licensing — users must provide their own
+# by mounting a volume at /opt/qiling-rootfs/x86_windows/Windows/System32/ etc.
+RUN git clone --depth 1 https://github.com/qilingframework/rootfs.git /opt/qiling-rootfs \
+    && rm -rf /opt/qiling-rootfs/.git \
+    && echo "Qiling rootfs installed at /opt/qiling-rootfs" \
+    || echo "WARN: Qiling rootfs download failed — PE/Mach-O emulation won't work"
+
 # Install uv
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
@@ -194,8 +217,21 @@ WORKDIR /app
 # Copy dependency files first for caching
 COPY pyproject.toml uv.lock* ./
 
-# Install dependencies
-RUN uv sync --no-dev --no-editable 2>/dev/null || uv sync --no-editable
+# Force venv to use Python 3.12 from the base image — NOT the system
+# python3.13 from Debian packages (needed for Qiling C extension compat).
+ARG VENV_CACHE_BUST=2
+RUN rm -rf .venv \
+    && uv venv --python /usr/local/bin/python3.12 .venv \
+    && uv sync --no-dev --no-editable 2>/dev/null \
+    || uv sync --no-editable
+
+# Install Qiling system-wide (separate from uv venv to avoid dep conflicts).
+# keystone-engine needs source build on ARM64. Qiling runs via subprocess
+# using system Python, so no conflict with the venv's packages.
+RUN pip3 install --no-cache-dir --break-system-packages \
+        --no-binary :all: keystone-engine \
+    && pip3 install --no-cache-dir --break-system-packages qiling \
+    || echo "WARN: Qiling install failed — PE/Mach-O emulation won't work"
 
 # Copy application code
 COPY . .
@@ -207,7 +243,9 @@ COPY --from=kernels . /opt/kernels/
 
 # Create data and Ghidra project directories
 RUN mkdir -p /data/firmware /tmp/ghidra_projects \
-    && chown -R wairz:wairz /data /app /tmp/ghidra_projects /opt/ghidra /opt/kernels
+    && chown -R wairz:wairz /data /app /tmp/ghidra_projects /opt/ghidra /opt/kernels \
+    && ([ -d /opt/qiling-rootfs ] && chown -R wairz:wairz /opt/qiling-rootfs || true) \
+    && ([ -d /opt/cpu_rec ] && chown -R wairz:wairz /opt/cpu_rec || true)
 
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh

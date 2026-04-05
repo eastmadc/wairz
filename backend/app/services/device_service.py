@@ -316,6 +316,7 @@ class DeviceService:
                         firmware.endianness = result.endianness
                         firmware.os_info = result.os_info
                         firmware.kernel_path = result.kernel_path
+                        firmware.binary_info = result.binary_info
                         firmware.unpack_log = result.unpack_log
                         project.status = "ready"
                     else:

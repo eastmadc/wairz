@@ -7,6 +7,7 @@ from fastapi.responses import JSONResponse
 from starlette.requests import Request
 
 from app.config import get_settings
+from app.middleware.auth import APIKeyMiddleware
 from app.routers import analysis, comparison, compliance, component_map, device, documents, emulation, events, export_import, files, findings, firmware, fuzzing, kernels, projects, sbom, security_audit, terminal, tools, uart
 from app.services.event_service import event_service
 from app.utils.sandbox import PathTraversalError
@@ -54,6 +55,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# API key auth — runs after CORS (Starlette middleware stack is LIFO,
+# so adding it after CORSMiddleware means CORS processes first).
+app.add_middleware(APIKeyMiddleware)
 
 app.include_router(projects.router)
 app.include_router(firmware.router)

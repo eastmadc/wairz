@@ -133,6 +133,13 @@ export default function EmulationPage() {
         if (fw) {
           setFirmwareArch(fw.architecture ?? null)
           setFirmwareKernelPath(fw.kernel_path ?? null)
+          // Pre-fill binary path for standalone binaries
+          // Use extracted_filename (sanitized name on disk) rather than
+          // original_filename which may have special chars replaced
+          if (fw.binary_info) {
+            const fname = fw.binary_info.extracted_filename ?? fw.original_filename
+            if (fname) setBinaryPath(fname)
+          }
         }
       })
       .catch(() => {})
@@ -395,6 +402,65 @@ export default function EmulationPage() {
               </button>
             </div>
 
+            {/* Standalone binary indicator */}
+            {(() => {
+              const fw = firmwareList.find((f) => f.id === selectedFirmwareId) ?? firmwareList[0]
+              if (fw?.binary_info) {
+                const bi = fw.binary_info
+                const isRaw = bi.format === 'unknown' && bi.arch_candidates && bi.arch_candidates.length > 0
+                return (
+                  <div className="rounded-md border border-blue-500/30 bg-blue-500/5 p-2.5 text-xs space-y-1">
+                    <div className="font-medium text-blue-400">
+                      {isRaw ? 'Raw Binary Mode' : 'Standalone Binary Mode'}
+                    </div>
+                    {isRaw ? (
+                      <div className="space-y-1.5">
+                        <div className="text-muted-foreground">
+                          No recognized headers. Architecture detected via {bi.arch_detection_method ?? 'statistical analysis'}.
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-muted-foreground">Architecture:</span>
+                          <select
+                            className="rounded border border-border bg-background px-2 py-0.5 text-xs"
+                            value={firmwareArch ?? bi.architecture ?? ''}
+                            onChange={(e) => setFirmwareArch(e.target.value || null)}
+                          >
+                            {bi.arch_candidates!.map((c) => (
+                              <option key={c.architecture} value={c.architecture}>
+                                {c.raw_name} - {c.architecture} ({c.endianness ?? '?'}-endian) [{c.confidence}]
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="text-muted-foreground">
+                        {bi.format?.toUpperCase()} {bi.bits}-bit{' '}
+                        {bi.is_static ? 'static' : 'dynamic'}
+                        {bi.dependencies.length > 0 && (
+                          <span> ({bi.dependencies.length} dependencies)</span>
+                        )}
+                        {bi.is_static && bi.format === 'elf' && (
+                          <span className="ml-1 text-green-400">- no sysroot needed</span>
+                        )}
+                        {(bi.format === 'pe' || bi.format === 'macho') && (
+                          <div className="mt-1 flex items-center gap-1.5">
+                            <span className="rounded bg-purple-500/20 px-1.5 py-0.5 text-[10px] font-medium text-purple-400">
+                              Qiling Emulation
+                            </span>
+                            <span className="text-[10px] text-muted-foreground">
+                              {bi.format === 'pe' ? 'Windows' : 'macOS'} binary - batch execution, no interactive terminal
+                            </span>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )
+              }
+              return null
+            })()}
+
             <p className="text-xs text-muted-foreground">
               {mode === 'user'
                 ? 'Run a single binary in a chroot. Fast, good for testing specific programs.'
@@ -628,14 +694,41 @@ export default function EmulationPage() {
           </div>
         </div>
 
-        {/* Center panel — terminal */}
+        {/* Center panel — terminal or Qiling output */}
         <div className="relative flex-1 bg-[#0a0a0b]">
-          {showTerminal && activeSession && projectId ? (
+          {showTerminal && activeSession && activeSession.mode !== 'qiling' && projectId ? (
             <EmulationTerminal
               projectId={projectId}
               session={activeSession}
               onClose={() => setShowTerminal(false)}
             />
+          ) : activeSession && activeSession.mode === 'qiling' ? (
+            <div className="flex h-full flex-col p-4">
+              <div className="mb-3 flex items-center gap-2">
+                <Badge variant="outline" className="border-purple-500/50 text-purple-400 text-xs">
+                  Qiling Emulation
+                </Badge>
+                <span className="text-xs text-muted-foreground">
+                  {activeSession.status === 'stopped' ? 'Completed' : activeSession.status}
+                  {activeSession.architecture && ` - ${activeSession.architecture}`}
+                </span>
+                <button
+                  className="ml-auto text-xs text-muted-foreground hover:text-foreground"
+                  onClick={() => { setActiveSession(null); setShowTerminal(false) }}
+                >
+                  Close
+                </button>
+              </div>
+              {activeSession.error_message && (
+                <div className="mb-3 rounded-md bg-destructive/10 px-3 py-2 text-xs text-destructive">
+                  <AlertCircle className="mr-1 inline h-3 w-3" />
+                  {activeSession.error_message}
+                </div>
+              )}
+              <pre className="flex-1 overflow-auto whitespace-pre-wrap break-words rounded-md bg-[#111] p-3 text-xs text-zinc-300 font-mono">
+                {activeSession.logs || '(no output)'}
+              </pre>
+            </div>
           ) : (
             <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
               <div className="text-center">

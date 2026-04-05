@@ -19,6 +19,21 @@ class FirmwareUpdate(BaseModel):
     version_label: str | None = None
 
 
+class BinaryInfoResponse(BaseModel):
+    """Structured binary analysis results (stored as JSONB on Firmware)."""
+    format: str | None = None
+    architecture: str | None = None
+    endianness: str | None = None
+    bits: int | None = None
+    is_static: bool | None = None
+    is_pie: bool | None = None
+    interpreter: str | None = None
+    dependencies: list[str] = []
+    entry_point: int | None = None
+    file_size: int | None = None
+    extracted_filename: str | None = None
+
+
 class FirmwareDetailResponse(BaseModel):
     model_config = {"from_attributes": True}
 
@@ -36,6 +51,7 @@ class FirmwareDetailResponse(BaseModel):
     unpack_log: str | None
     unpack_stage: str | None = None
     unpack_progress: int | None = None
+    binary_info: BinaryInfoResponse | None = None
     created_at: datetime
 
 
