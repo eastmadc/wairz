@@ -312,6 +312,22 @@ export interface PortForward {
   guest: number
 }
 
+export interface FirmwareService {
+  port: number
+  protocol: string
+  service: string
+  host_port: number | null
+  url: string | null
+}
+
+export type SystemEmulationStage =
+  | 'extracting'
+  | 'detecting_arch'
+  | 'preparing_image'
+  | 'booting'
+  | 'checking'
+  | 'running'
+
 export interface EmulationSession {
   id: string
   project_id: string
@@ -327,6 +343,22 @@ export interface EmulationSession {
   started_at: string | null
   stopped_at: string | null
   created_at: string
+  // System emulation (FirmAE) fields
+  discovered_services: FirmwareService[] | null
+  system_emulation_stage: string | null
+  kernel_used: string | null
+  firmware_ip: string | null
+}
+
+export interface SystemEmulationStartRequest {
+  brand?: string
+  timeout?: number
+}
+
+export interface SystemCommandResponse {
+  stdout: string
+  stderr: string
+  exit_code: number
 }
 
 export type StubProfile = 'none' | 'generic' | 'tenda'

@@ -107,3 +107,65 @@ class EmulationPresetResponse(BaseModel):
     stub_profile: str
     created_at: datetime
     updated_at: datetime
+
+
+# ── System Emulation (FirmAE) ──
+
+
+class SystemEmulationStartRequest(BaseModel):
+    brand: str = "unknown"
+    timeout: int = Field(default=600, ge=60, le=3600)
+
+
+class FirmwareServiceResponse(BaseModel):
+    port: int
+    protocol: str
+    service: str
+    host_port: int | None = None
+    url: str | None = None
+
+
+class SystemEmulationStatusResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    project_id: uuid.UUID
+    firmware_id: uuid.UUID
+    mode: str
+    status: str
+    architecture: str | None
+    binary_path: str | None
+    arguments: str | None
+    port_forwards: list[dict] | None
+    error_message: str | None
+    logs: str | None
+    started_at: datetime | None
+    stopped_at: datetime | None
+    created_at: datetime
+    # System emulation fields
+    discovered_services: list[dict] | None = None
+    system_emulation_stage: str | None = None
+    kernel_used: str | None = None
+    firmware_ip: str | None = None
+    nvram_state: dict | None = None
+    idle_since: datetime | None = None
+
+
+class SystemCommandRequest(BaseModel):
+    command: str
+    timeout: int = Field(default=30, ge=1, le=120)
+
+
+class SystemCommandResponse(BaseModel):
+    stdout: str
+    stderr: str
+    exit_code: int
+
+
+class NetworkCaptureRequest(BaseModel):
+    duration: int = Field(default=10, ge=1, le=120)
+    interface: str = "eth0"
+
+
+class NvramResponse(BaseModel):
+    nvram: dict[str, str]

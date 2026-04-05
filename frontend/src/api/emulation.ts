@@ -6,6 +6,9 @@ import type {
   EmulationPreset,
   EmulationPresetCreate,
   EmulationPresetUpdate,
+  FirmwareService,
+  SystemEmulationStartRequest,
+  SystemCommandResponse,
 } from '@/types'
 
 export async function startEmulation(
@@ -128,4 +131,69 @@ export async function deletePreset(
   presetId: string,
 ): Promise<void> {
   await apiClient.delete(`/projects/${projectId}/emulation/presets/${presetId}`)
+}
+
+// ── System Emulation (FirmAE) ──
+
+export async function startSystemEmulation(
+  projectId: string,
+  firmwareId: string,
+  request?: SystemEmulationStartRequest,
+): Promise<EmulationSession> {
+  const { data } = await apiClient.post<EmulationSession>(
+    `/projects/${projectId}/emulation/system`,
+    request ?? {},
+    { params: { firmware_id: firmwareId } },
+  )
+  return data
+}
+
+export async function getSystemEmulationStatus(
+  projectId: string,
+  sessionId: string,
+): Promise<EmulationSession> {
+  const { data } = await apiClient.get<EmulationSession>(
+    `/projects/${projectId}/emulation/system/${sessionId}`,
+  )
+  return data
+}
+
+export async function getSystemEmulationServices(
+  projectId: string,
+  sessionId: string,
+): Promise<FirmwareService[]> {
+  const { data } = await apiClient.get<FirmwareService[]>(
+    `/projects/${projectId}/emulation/system/${sessionId}/services`,
+  )
+  return data
+}
+
+export async function stopSystemEmulation(
+  projectId: string,
+  sessionId: string,
+): Promise<void> {
+  await apiClient.delete(`/projects/${projectId}/emulation/system/${sessionId}`)
+}
+
+export async function runCommandInFirmware(
+  projectId: string,
+  sessionId: string,
+  command: string,
+  timeout = 30,
+): Promise<SystemCommandResponse> {
+  const { data } = await apiClient.post<SystemCommandResponse>(
+    `/projects/${projectId}/emulation/system/${sessionId}/command`,
+    { command, timeout },
+  )
+  return data
+}
+
+export function buildSystemEmulationTerminalURL(
+  projectId: string,
+  sessionId: string,
+  port: number,
+): string {
+  const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+  const host = window.location.host
+  return `${proto}//${host}/api/v1/projects/${projectId}/emulation/system/${sessionId}/ws/${port}`
 }

@@ -21,8 +21,16 @@ from app.schemas.emulation import (
     EmulationPresetUpdate,
     EmulationSessionResponse,
     EmulationStartRequest,
+    FirmwareServiceResponse,
+    NetworkCaptureRequest,
+    NvramResponse,
+    SystemCommandRequest,
+    SystemCommandResponse,
+    SystemEmulationStartRequest,
+    SystemEmulationStatusResponse,
 )
 from app.services.emulation_service import EmulationService
+from app.services.system_emulation_service import SystemEmulationService
 
 logger = logging.getLogger(__name__)
 
@@ -318,6 +326,190 @@ async def delete_preset(
         await db.commit()
     except ValueError as exc:
         raise HTTPException(404, str(exc))
+
+
+# ── System Emulation (FirmAE) Endpoints ──
+
+
+@router.post(
+    "/system",
+    response_model=SystemEmulationStatusResponse,
+    status_code=201,
+)
+async def start_system_emulation(
+    project_id: uuid.UUID,
+    request: SystemEmulationStartRequest,
+    firmware: Firmware = Depends(_resolve_firmware),
+    db: AsyncSession = Depends(get_db),
+):
+    """Start FirmAE full system emulation for the project's firmware."""
+    svc = SystemEmulationService(db)
+    try:
+        session = await svc.start_system_emulation(
+            firmware=firmware,
+            project_id=project_id,
+            brand=request.brand,
+            timeout=request.timeout,
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    return session
+
+
+@router.get(
+    "/system/{session_id}",
+    response_model=SystemEmulationStatusResponse,
+)
+async def get_system_emulation_status(
+    project_id: uuid.UUID,
+    session_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+):
+    """Get the current status of a system emulation session (polls FirmAE shim)."""
+    result = await db.execute(
+        select(EmulationSession).where(EmulationSession.id == session_id)
+    )
+    session = result.scalar_one_or_none()
+    if not session or session.project_id != project_id:
+        raise HTTPException(404, "Session not found")
+
+    svc = SystemEmulationService(db)
+    try:
+        session = await svc.poll_system_status(session_id)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    return session
+
+
+@router.get(
+    "/system/{session_id}/services",
+    response_model=list[FirmwareServiceResponse],
+)
+async def get_system_emulation_services(
+    project_id: uuid.UUID,
+    session_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+):
+    """List network services discovered on the running firmware."""
+    result = await db.execute(
+        select(EmulationSession).where(EmulationSession.id == session_id)
+    )
+    session = result.scalar_one_or_none()
+    if not session or session.project_id != project_id:
+        raise HTTPException(404, "Session not found")
+
+    svc = SystemEmulationService(db)
+    try:
+        services = await svc.get_firmware_services(session_id)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    return services
+
+
+@router.delete("/system/{session_id}", status_code=204)
+async def stop_system_emulation(
+    project_id: uuid.UUID,
+    session_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+):
+    """Stop a system emulation session and remove the FirmAE sidecar container."""
+    result = await db.execute(
+        select(EmulationSession).where(EmulationSession.id == session_id)
+    )
+    session = result.scalar_one_or_none()
+    if not session or session.project_id != project_id:
+        raise HTTPException(404, "Session not found")
+
+    svc = SystemEmulationService(db)
+    try:
+        await svc.stop_system_emulation(session_id)
+        await db.commit()
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+
+
+@router.post(
+    "/system/{session_id}/command",
+    response_model=SystemCommandResponse,
+)
+async def run_command_in_system_emulation(
+    project_id: uuid.UUID,
+    session_id: uuid.UUID,
+    request: SystemCommandRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Execute a command inside the FirmAE sidecar (accesses the running firmware)."""
+    result = await db.execute(
+        select(EmulationSession).where(EmulationSession.id == session_id)
+    )
+    session = result.scalar_one_or_none()
+    if not session or session.project_id != project_id:
+        raise HTTPException(404, "Session not found")
+
+    svc = SystemEmulationService(db)
+    try:
+        exec_result = await svc.run_command_in_firmware(
+            session_id=session_id,
+            command=request.command,
+            timeout=request.timeout,
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    return exec_result
+
+
+@router.post(
+    "/system/{session_id}/capture",
+)
+async def capture_network_traffic(
+    project_id: uuid.UUID,
+    session_id: uuid.UUID,
+    request: NetworkCaptureRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Capture network traffic from the FirmAE emulated firmware."""
+    result = await db.execute(
+        select(EmulationSession).where(EmulationSession.id == session_id)
+    )
+    session = result.scalar_one_or_none()
+    if not session or session.project_id != project_id:
+        raise HTTPException(404, "Session not found")
+
+    svc = SystemEmulationService(db)
+    try:
+        output = await svc.capture_network_traffic(
+            session_id=session_id,
+            duration=request.duration,
+            interface=request.interface,
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    return {"capture": output}
+
+
+@router.get(
+    "/system/{session_id}/nvram",
+    response_model=NvramResponse,
+)
+async def get_nvram_state(
+    project_id: uuid.UUID,
+    session_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+):
+    """Get the NVRAM key-value state from the running firmware."""
+    result = await db.execute(
+        select(EmulationSession).where(EmulationSession.id == session_id)
+    )
+    session = result.scalar_one_or_none()
+    if not session or session.project_id != project_id:
+        raise HTTPException(404, "Session not found")
+
+    svc = SystemEmulationService(db)
+    try:
+        nvram = await svc.get_nvram_state(session_id)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    return {"nvram": nvram}
 
 
 @router.websocket("/{session_id}/terminal")

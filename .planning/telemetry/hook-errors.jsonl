@@ -48,3 +48,4 @@
 {"schema":1,"timestamp":"2026-04-05T01:56:05.115Z","hook":"protect-files","action":"blocked","detail":"Read /home/kali/.claude/mcp.json (outside project root)"}
 {"schema":1,"timestamp":"2026-04-05T01:56:06.137Z","hook":"protect-files","action":"blocked","detail":"Read /home/kali/.cache/uv/archive-v0/_jmd_eWIEQBURZpqHwOUG/lib/python3.13/site-packages/ouroboros/codex/ouroboros.md (outside project root)"}
 {"schema":1,"timestamp":"2026-04-05T01:56:06.708Z","hook":"protect-files","action":"blocked","detail":"Read /home/kali/.cache/uv/archive-v0/_jmd_eWIEQBURZpqHwOUG/lib/python3.13/site-packages/ouroboros/codex/skills/run/SKILL.md (outside project root)"}
+{"schema":1,"timestamp":"2026-04-05T13:56:40.886Z","hook":"protect-files","action":"blocked","detail":"Read /home/kali/.claude/plugins/marketplaces/ouroboros/skills/interview/SKILL.md (outside project root)"}

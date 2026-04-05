@@ -617,6 +617,219 @@ def register_emulation_tools(registry: ToolRegistry) -> None:
         handler=_handle_qiling_rootfs_status,
     )
 
+    # ── FirmAE System Emulation Tools ──
+
+    registry.register(
+        name="start_system_emulation",
+        description=(
+            "Start full system emulation using FirmAE for the current firmware. "
+            "FirmAE automatically detects the architecture, sets up networking, "
+            "and boots the firmware in QEMU system mode. This is different from "
+            "the manual system mode — FirmAE handles kernel selection, NVRAM "
+            "emulation, and network configuration automatically.\n\n"
+            "The pipeline runs through phases: extraction → architecture detection → "
+            "network setup → QEMU boot → connectivity check. Poll status to track "
+            "progress. Only one system emulation session per project is allowed.\n\n"
+            "Use this when you want automated full-system emulation without "
+            "manually configuring kernels and init scripts."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "brand": {
+                    "type": "string",
+                    "description": (
+                        "Firmware brand/vendor (e.g., 'netgear', 'tplink', 'dlink'). "
+                        "Helps FirmAE select appropriate NVRAM defaults. "
+                        "Defaults to 'unknown'."
+                    ),
+                },
+                "timeout": {
+                    "type": "integer",
+                    "description": (
+                        "Pipeline timeout in seconds (default 600, min 60, max 3600). "
+                        "Increase for very large firmware images."
+                    ),
+                },
+            },
+        },
+        handler=_handle_start_system_emulation,
+    )
+
+    registry.register(
+        name="system_emulation_status",
+        description=(
+            "Check the status of a FirmAE system emulation session. "
+            "Returns the current pipeline stage, detected architecture, "
+            "guest IP, and discovered services. Poll this periodically "
+            "after starting system emulation to track progress."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "session_id": {
+                    "type": "string",
+                    "description": "The system emulation session ID",
+                },
+            },
+            "required": ["session_id"],
+        },
+        handler=_handle_system_emulation_status,
+    )
+
+    registry.register(
+        name="list_firmware_services",
+        description=(
+            "List network services discovered on the running firmware by FirmAE. "
+            "Runs an nmap scan inside the sidecar to detect open ports and "
+            "identify services (HTTP, SSH, telnet, etc.). Returns port numbers, "
+            "protocols, service names, and mapped host ports for browser access."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "session_id": {
+                    "type": "string",
+                    "description": "The system emulation session ID",
+                },
+            },
+            "required": ["session_id"],
+        },
+        handler=_handle_list_firmware_services,
+    )
+
+    registry.register(
+        name="run_command_in_firmware",
+        description=(
+            "Execute a command inside the FirmAE sidecar container, which has "
+            "network access to the running firmware. Use this for interacting "
+            "with the emulated firmware's services, running diagnostics, or "
+            "executing tools against the firmware from within its network.\n\n"
+            "The command runs in the sidecar (not inside the firmware itself). "
+            "Use curl/wget to interact with firmware web services, or ssh/telnet "
+            "clients to connect to firmware network services."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "session_id": {
+                    "type": "string",
+                    "description": "The system emulation session ID",
+                },
+                "command": {
+                    "type": "string",
+                    "description": "Shell command to execute in the sidecar",
+                },
+                "timeout": {
+                    "type": "integer",
+                    "description": "Command timeout in seconds (default 30, max 120)",
+                },
+            },
+            "required": ["session_id", "command"],
+        },
+        handler=_handle_run_command_in_firmware,
+    )
+
+    registry.register(
+        name="stop_system_emulation",
+        description=(
+            "Stop a FirmAE system emulation session and remove the sidecar "
+            "container. Always stop sessions when done to free resources."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "session_id": {
+                    "type": "string",
+                    "description": "The system emulation session ID to stop",
+                },
+            },
+            "required": ["session_id"],
+        },
+        handler=_handle_stop_system_emulation,
+    )
+
+    registry.register(
+        name="capture_network_traffic",
+        description=(
+            "Capture network traffic from the FirmAE emulated firmware using "
+            "tcpdump inside the sidecar. Returns a summary of captured packets. "
+            "Useful for analyzing firmware network behavior, discovering "
+            "phone-home endpoints, and identifying protocols in use."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "session_id": {
+                    "type": "string",
+                    "description": "The system emulation session ID",
+                },
+                "duration": {
+                    "type": "integer",
+                    "description": "Capture duration in seconds (default 10, max 120)",
+                },
+                "interface": {
+                    "type": "string",
+                    "description": "Network interface to capture on (default 'eth0')",
+                },
+            },
+            "required": ["session_id"],
+        },
+        handler=_handle_capture_network_traffic,
+    )
+
+    registry.register(
+        name="get_nvram_state",
+        description=(
+            "Read the current NVRAM key-value state from the running FirmAE "
+            "emulation. NVRAM stores firmware configuration (WiFi passwords, "
+            "admin credentials, network settings, etc.). FirmAE emulates NVRAM "
+            "via libnvram — this tool reads the current state."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "session_id": {
+                    "type": "string",
+                    "description": "The system emulation session ID",
+                },
+            },
+            "required": ["session_id"],
+        },
+        handler=_handle_get_nvram_state,
+    )
+
+    registry.register(
+        name="interact_web_endpoint",
+        description=(
+            "Make an HTTP request to the firmware's web interface from inside "
+            "the FirmAE sidecar. The sidecar has direct network access to the "
+            "firmware's guest IP. Use this to test web endpoints, check for "
+            "default credentials, explore the management interface, and verify "
+            "web-based vulnerabilities."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "session_id": {
+                    "type": "string",
+                    "description": "The system emulation session ID",
+                },
+                "method": {
+                    "type": "string",
+                    "enum": ["GET", "POST", "PUT", "DELETE", "HEAD", "OPTIONS"],
+                    "description": "HTTP method (default GET)",
+                },
+                "path": {
+                    "type": "string",
+                    "description": "URL path (e.g., '/', '/login.html', '/cgi-bin/admin')",
+                },
+            },
+            "required": ["session_id"],
+        },
+        handler=_handle_interact_web_endpoint,
+    )
+
 
 # ---------------------------------------------------------------------------
 # Tool handlers
@@ -2464,3 +2677,293 @@ async def _handle_qiling_rootfs_status(input: dict, context: ToolContext) -> str
     ])
 
     return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# FirmAE system emulation handlers
+# ---------------------------------------------------------------------------
+
+
+async def _handle_start_system_emulation(input: dict, context: ToolContext) -> str:
+    """Start FirmAE system emulation for the current firmware."""
+    from app.services.system_emulation_service import SystemEmulationService
+
+    brand = input.get("brand", "unknown")
+    timeout = input.get("timeout", 600)
+
+    # Get firmware record
+    result = await context.db.execute(
+        select(Firmware).where(Firmware.id == context.firmware_id)
+    )
+    firmware = result.scalar_one_or_none()
+    if not firmware:
+        return "Error: firmware not found."
+
+    svc = SystemEmulationService(context.db)
+    try:
+        session = await svc.start_system_emulation(
+            firmware=firmware,
+            project_id=context.project_id,
+            brand=brand,
+            timeout=timeout,
+        )
+        await context.db.flush()
+    except ValueError as exc:
+        return f"Error starting system emulation: {exc}"
+    except Exception as exc:
+        return f"Error starting system emulation: {exc}"
+
+    lines = [
+        "FirmAE system emulation started.",
+        f"  Session ID: {session.id}",
+        f"  Mode: {session.mode}",
+        f"  Status: {session.status}",
+        f"  Architecture: {session.architecture or 'detecting...'}",
+    ]
+    if session.error_message:
+        lines.append(f"  Error: {session.error_message}")
+    else:
+        lines.extend([
+            "",
+            "The FirmAE pipeline is now running through its phases:",
+            "  extraction -> arch detection -> network setup -> QEMU boot -> connectivity check",
+            "",
+            "Poll with system_emulation_status to track progress.",
+            "Use stop_system_emulation when done to free resources.",
+        ])
+
+    return "\n".join(lines)
+
+
+async def _handle_system_emulation_status(input: dict, context: ToolContext) -> str:
+    """Check FirmAE system emulation status."""
+    from app.services.system_emulation_service import SystemEmulationService
+    from uuid import UUID
+
+    session_id = input.get("session_id")
+    if not session_id:
+        return "Error: session_id is required."
+
+    svc = SystemEmulationService(context.db)
+    try:
+        session = await svc.poll_system_status(UUID(session_id))
+    except ValueError as exc:
+        return f"Error: {exc}"
+
+    lines = [
+        f"Session: {session.id}",
+        f"  Mode: {session.mode}",
+        f"  Status: {session.status}",
+        f"  Pipeline stage: {session.system_emulation_stage or 'unknown'}",
+        f"  Architecture: {session.architecture or 'detecting...'}",
+        f"  Firmware IP: {session.firmware_ip or 'not yet discovered'}",
+    ]
+    if session.kernel_used:
+        lines.append(f"  Kernel: {session.kernel_used}")
+    if session.discovered_services:
+        lines.append(f"  Services found: {len(session.discovered_services)}")
+        for svc_info in session.discovered_services[:10]:
+            port = svc_info.get("port")
+            service = svc_info.get("service", "unknown")
+            host_port = svc_info.get("host_port")
+            hp_str = f" -> localhost:{host_port}" if host_port else ""
+            lines.append(f"    {port}/{svc_info.get('protocol', 'tcp')} {service}{hp_str}")
+    if session.error_message:
+        lines.append(f"  Error: {session.error_message}")
+    if session.started_at:
+        from datetime import datetime, timezone
+        uptime = datetime.now(timezone.utc) - session.started_at.replace(
+            tzinfo=timezone.utc if session.started_at.tzinfo is None else session.started_at.tzinfo
+        )
+        lines.append(f"  Uptime: {int(uptime.total_seconds())}s")
+
+    return "\n".join(lines)
+
+
+async def _handle_list_firmware_services(input: dict, context: ToolContext) -> str:
+    """List network services discovered on the running firmware."""
+    from app.services.system_emulation_service import SystemEmulationService
+    from uuid import UUID
+
+    session_id = input.get("session_id")
+    if not session_id:
+        return "Error: session_id is required."
+
+    svc = SystemEmulationService(context.db)
+    try:
+        services = await svc.get_firmware_services(UUID(session_id))
+    except ValueError as exc:
+        return f"Error: {exc}"
+
+    if not services:
+        return "No network services discovered yet. The firmware may still be booting."
+
+    lines = [f"Discovered services ({len(services)}):\n"]
+    for s in services:
+        port = s.get("port")
+        protocol = s.get("protocol", "tcp")
+        service = s.get("service", "unknown")
+        host_port = s.get("host_port")
+        url = s.get("url")
+
+        line = f"  {port}/{protocol} — {service}"
+        if host_port:
+            line += f" (host port: {host_port})"
+        if url:
+            line += f"\n    URL: {url}"
+        lines.append(line)
+
+    return "\n".join(lines)
+
+
+async def _handle_run_command_in_firmware(input: dict, context: ToolContext) -> str:
+    """Execute a command in the FirmAE sidecar."""
+    from app.services.system_emulation_service import SystemEmulationService
+    from uuid import UUID
+
+    session_id = input.get("session_id")
+    command = input.get("command")
+    timeout = min(input.get("timeout", 30), 120)
+
+    if not session_id or not command:
+        return "Error: session_id and command are required."
+
+    svc = SystemEmulationService(context.db)
+    try:
+        result = await svc.run_command_in_firmware(
+            session_id=UUID(session_id),
+            command=command,
+            timeout=timeout,
+        )
+    except ValueError as exc:
+        return f"Error: {exc}"
+
+    lines = []
+    if result["stdout"]:
+        lines.append(f"stdout:\n{result['stdout']}")
+    if result["stderr"]:
+        lines.append(f"stderr:\n{result['stderr']}")
+    lines.append(f"exit_code: {result['exit_code']}")
+
+    settings = get_settings()
+    max_bytes = settings.max_tool_output_kb * 1024
+    output = "\n".join(lines)
+    if len(output) > max_bytes:
+        output = output[:max_bytes] + f"\n... [output truncated at {settings.max_tool_output_kb}KB]"
+
+    return output
+
+
+async def _handle_stop_system_emulation(input: dict, context: ToolContext) -> str:
+    """Stop FirmAE system emulation."""
+    from app.services.system_emulation_service import SystemEmulationService
+    from uuid import UUID
+
+    session_id = input.get("session_id")
+    if not session_id:
+        return "Error: session_id is required."
+
+    svc = SystemEmulationService(context.db)
+    try:
+        session = await svc.stop_system_emulation(UUID(session_id))
+        await context.db.flush()
+    except ValueError as exc:
+        return f"Error: {exc}"
+
+    return f"System emulation session {session.id} stopped successfully."
+
+
+async def _handle_capture_network_traffic(input: dict, context: ToolContext) -> str:
+    """Capture network traffic from the emulated firmware."""
+    from app.services.system_emulation_service import SystemEmulationService
+    from uuid import UUID
+
+    session_id = input.get("session_id")
+    if not session_id:
+        return "Error: session_id is required."
+
+    duration = input.get("duration", 10)
+    interface = input.get("interface", "eth0")
+
+    svc = SystemEmulationService(context.db)
+    try:
+        output = await svc.capture_network_traffic(
+            session_id=UUID(session_id),
+            duration=duration,
+            interface=interface,
+        )
+    except ValueError as exc:
+        return f"Error: {exc}"
+
+    settings = get_settings()
+    max_bytes = settings.max_tool_output_kb * 1024
+    if len(output) > max_bytes:
+        output = output[:max_bytes] + f"\n... [output truncated at {settings.max_tool_output_kb}KB]"
+
+    return f"=== Network Capture ({duration}s on {interface}) ===\n{output}"
+
+
+async def _handle_get_nvram_state(input: dict, context: ToolContext) -> str:
+    """Read NVRAM state from the running firmware."""
+    from app.services.system_emulation_service import SystemEmulationService
+    from uuid import UUID
+
+    session_id = input.get("session_id")
+    if not session_id:
+        return "Error: session_id is required."
+
+    svc = SystemEmulationService(context.db)
+    try:
+        nvram = await svc.get_nvram_state(UUID(session_id))
+    except ValueError as exc:
+        return f"Error: {exc}"
+
+    if not nvram:
+        return "No NVRAM entries found. The firmware may not use libnvram or hasn't initialized yet."
+
+    lines = [f"NVRAM state ({len(nvram)} entries):\n"]
+    for key, value in sorted(nvram.items()):
+        # Truncate very long values
+        display_value = value if len(value) <= 200 else value[:200] + "..."
+        lines.append(f"  {key}={display_value}")
+
+    return "\n".join(lines)
+
+
+async def _handle_interact_web_endpoint(input: dict, context: ToolContext) -> str:
+    """Make HTTP request to the firmware's web interface."""
+    from app.services.system_emulation_service import SystemEmulationService
+    from uuid import UUID
+
+    session_id = input.get("session_id")
+    if not session_id:
+        return "Error: session_id is required."
+
+    method = input.get("method", "GET")
+    path = input.get("path", "/")
+
+    svc = SystemEmulationService(context.db)
+    try:
+        result = await svc.interact_web_endpoint(
+            session_id=UUID(session_id),
+            method=method,
+            path=path,
+        )
+    except ValueError as exc:
+        return f"Error: {exc}"
+
+    lines = [
+        f"HTTP {result['method']} {result['url']}",
+        f"Status: {result['status_code']}",
+        "",
+        "Response body:",
+        result["body"],
+    ]
+
+    settings = get_settings()
+    max_bytes = settings.max_tool_output_kb * 1024
+    output = "\n".join(lines)
+    if len(output) > max_bytes:
+        output = output[:max_bytes] + f"\n... [output truncated at {settings.max_tool_output_kb}KB]"
+
+    return output

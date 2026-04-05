@@ -43,3 +43,11 @@ class EmulationSession(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
+
+    # System emulation (FirmAE) columns
+    discovered_services: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    system_emulation_stage: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    kernel_used: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    firmware_ip: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    nvram_state: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    idle_since: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

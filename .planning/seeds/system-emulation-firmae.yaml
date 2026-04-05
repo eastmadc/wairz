@@ -1,0 +1,187 @@
+goal: Add FirmAE-style automated full system emulation to Wairz by wrapping FirmAE
+  as a privileged sidecar Docker container with a thin Flask API shim, orchestrated
+  by the existing backend via Docker SDK, enabling users to boot entire consumer router
+  firmware images and interact with running firmware network services (web UI, SSH,
+  telnet) from the browser with no manual steps
+task_type: code
+brownfield_context:
+  project_type: brownfield
+  context_references:
+  - path: backend/app/services/emulation_service.py
+    role: primary
+    summary: Existing emulation service managing Docker containers for user-mode QEMU
+      via Docker SDK with container lifecycle, port mappings, and cleanup
+  - path: backend/app/ai/tools/emulation.py
+    role: primary
+    summary: Existing 13 MCP emulation tools (start_emulation, run_command_in_emulation,
+      stop_emulation, etc.) to extend with system-specific tools
+  - path: backend/app/routers/terminal.py
+    role: primary
+    summary: Existing FastAPI WebSocket endpoint bridging xterm.js to Docker exec
+      sockets with reconnect and keepalive — extend for TCP proxy to sidecar ports
+  - path: frontend/src/pages/EmulationPage.tsx
+    role: primary
+    summary: Existing emulation page UI to add User Mode / System Mode toggle and
+      service discovery display
+  - path: emulation/Dockerfile
+    role: primary
+    summary: Existing QEMU emulation container Dockerfile — reference for building
+      FirmAE sidecar Dockerfile
+  - path: backend/app/routers/emulation.py
+    role: reference
+    summary: REST endpoints for emulation session management
+  - path: backend/app/models/
+    role: reference
+    summary: SQLAlchemy ORM models directory for adding system emulation session model
+  - path: backend/app/schemas/
+    role: reference
+    summary: Pydantic schemas directory for system emulation request/response schemas
+  - path: backend/app/config.py
+    role: reference
+    summary: pydantic-settings configuration for adding sidecar image, timeout, and
+      network settings
+  existing_patterns:
+  - Docker SDK container orchestration with privileged containers and SYS_ADMIN caps
+  - Dynamic port mapping via port_bindings dict mapped to host ports
+  - FastAPI WebSocket-to-Docker-exec bridge in routers/terminal.py
+  - Async SQLAlchemy session management with background task pattern
+  - MCP tool registration via ToolRegistry with ToolContext providing project_id,
+    firmware_id, db
+  - Frontend polling with useEffect + setInterval for long-running operations
+  - Container auto-cleanup on failure matching user-mode emulation cleanup
+  - Pydantic schemas with from_attributes=True for ORM compatibility
+  - Alembic migrations auto-run on container startup
+  - Bridge network mode for emulation containers on emulation_net
+  existing_dependencies:
+  - Docker SDK (python docker library)
+  - FastAPI with async WebSocket support
+  - SQLAlchemy 2.0 async with asyncpg
+  - Pydantic and pydantic-settings
+  - Redis for caching/state
+  - xterm.js frontend terminal
+  - React 19 + Zustand state management
+  - QEMU system mode binaries (ARM, MIPS, MIPSel) already in emulation container
+constraints:
+- Must run inside Docker as a privileged sidecar container matching existing emulation
+  container pattern
+- Support ARM, MIPS, and MIPSel architectures for v1 (AArch64 deferred)
+- Pass raw firmware blob to FirmAE full pipeline (do not skip FirmAE extraction)
+- Sidecar mounts STORAGE_ROOT as read-only shared volume for firmware blob access
+- 1 system emulation per project concurrent limit
+- 10-minute pipeline timeout for FirmAE stages with force-kill on hang
+- 30-minute idle timeout once firmware is running
+- Dynamic port mapping for exposed firmware services (same pattern as existing user-mode
+  emulation)
+- Thin Flask API shim inside sidecar exposes /start /status /ports /stop JSON endpoints
+- Backend handles WebSocket-to-TCP proxy for SSH/telnet by extending existing routers/terminal.py
+  pattern
+- Mode toggle within existing EmulationPage (User Mode / System Mode) not a separate
+  page
+- Extend existing MCP emulation tool set with system-specific tools not a separate
+  tool category
+- Auto-cleanup of network resources and containers on failure matching existing user-mode
+  cleanup pattern
+- No manual steps in the emulation pipeline
+- Python 3.12 async backend
+- No new frontend proxy or iframe complexity
+acceptance_criteria:
+- Successfully boot OpenWrt ARM firmware and expose network services
+- Successfully boot OpenWrt MIPS firmware and expose network services
+- Successfully boot DD-WRT MIPSel firmware and expose network services
+- At least 3 firmware images across at least 2 architectures (ARM + MIPS) boot successfully
+- At least one firmware has its web UI reachable via browser link from the frontend
+- At least one firmware has SSH or telnet accessible via xterm.js terminal widget
+- FirmAE sidecar container built with Dockerfile and Flask API shim serving /start
+  /status /ports /stop endpoints
+- EmulationPage has User Mode / System Mode toggle with shared SessionCard UI
+- 8 MCP tools implemented: start_system_emulation, system_emulation_status, list_firmware_services,
+  run_command_in_firmware, stop_system_emulation, capture_network_traffic, get_nvram_state,
+  interact_web_endpoint
+- Backend auto-cleans containers and network resources on pipeline failure or timeout
+- Frontend displays discovered services list with clickable links for HTTP and inline
+  xterm.js for SSH/telnet
+- Pipeline timeout at 10 minutes and idle timeout at 30 minutes both enforce correctly
+ontology_schema:
+  name: SystemEmulation
+  description: Domain model for full system emulation of firmware images using FirmAE
+    sidecar containers
+  fields:
+  - name: session_id
+    type: string
+    required: true
+  - name: project_id
+    type: string
+    required: true
+  - name: firmware_id
+    type: string
+    required: true
+  - name: container_id
+    type: string
+    required: true
+  - name: status
+    type: string
+    description: Pipeline status (pending, extracting, inferring_network, booting,
+      running, failed, stopped, timeout)
+    required: true
+  - name: architecture
+    type: string
+    required: true
+  - name: firmware_ip
+    type: string
+    required: true
+  - name: discovered_services
+    type: array
+    required: true
+  - name: port_mappings
+    type: object
+    required: true
+  - name: pipeline_started_at
+    type: string
+    required: true
+  - name: boot_completed_at
+    type: string
+    required: true
+  - name: nvram_state
+    type: object
+    required: true
+  - name: kernel_used
+    type: string
+    required: true
+  - name: error_message
+    type: string
+    required: true
+  - name: mode
+    type: string
+    required: true
+  - name: idle_since
+    type: string
+    required: true
+evaluation_principles:
+- name: architecture_consistency
+  weight: 0.25
+- name: automation_reliability
+  weight: 0.3
+- name: integration_cohesion
+  weight: 0.2
+- name: security_posture
+  weight: 0.1
+- name: user_experience
+  weight: 0.15
+exit_conditions:
+- name: acceptance_test_pass
+  criteria: OpenWrt ARM + OpenWrt MIPS + DD-WRT MIPSel all reach running state with
+    at least one discoverable network service each
+- name: web_ui_reachable
+  criteria: Frontend generates a clickable link that opens the firmware HTTP interface
+- name: terminal_accessible
+  criteria: User can open xterm.js widget and get interactive shell on running firmware
+- name: mcp_tools_functional
+  criteria: All 8 system emulation MCP tools return valid output against running session
+- name: timeout_enforcement
+  criteria: Hanging pipeline force-killed at 10min, idle session cleaned at 30min
+metadata:
+  seed_id: seed_ff0982031c5b
+  version: 1.0.0
+  created_at: '2026-04-05T15:29:06.991111Z'
+  ambiguity_score: 0.184
+  interview_id: interview_20260405_135704
