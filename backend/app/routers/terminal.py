@@ -3,12 +3,16 @@
 Spawns a lightweight Docker container with the firmware directory mounted
 read-only, providing an isolated shell. Uses the same container+exec pattern
 as the emulation terminal (routers/emulation.py).
+
+Also provides a WebSocket-to-TCP proxy for system emulation port forwarding
+(SSH, telnet, etc.) via the FirmAE sidecar container.
 """
 
 import asyncio
 import io
 import logging
 import os
+import socket
 import tarfile
 import uuid
 
@@ -17,6 +21,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from sqlalchemy import select
 
 from app.database import async_session_factory
+from app.models.emulation_session import EmulationSession
 from app.models.firmware import Firmware
 from app.models.project import Project
 
@@ -285,3 +290,186 @@ async def websocket_terminal(
         except Exception:
             pass
         logger.info("Terminal session ended: project=%s", project_id)
+
+
+# ── WebSocket TCP Proxy for System Emulation Port Forwarding ──
+
+# This endpoint is on the emulation router's URL space, but we define it
+# in this module to keep all WebSocket bridge logic together. The actual
+# route is registered via a separate router included in main.py.
+
+system_ws_router = APIRouter(
+    prefix="/api/v1/projects/{project_id}/emulation/system",
+    tags=["terminal"],
+)
+
+
+@system_ws_router.websocket("/{session_id}/ws/{port}")
+async def websocket_tcp_proxy(
+    websocket: WebSocket,
+    project_id: uuid.UUID,
+    session_id: uuid.UUID,
+    port: int,
+):
+    """WebSocket-to-TCP proxy for system emulation port forwarding.
+
+    Bridges xterm.js (WebSocket) to a TCP port (SSH:22, telnet:23, etc.)
+    on the FirmAE sidecar container. Looks up the session's container_id,
+    resolves the container's IP on emulation_net, then proxies
+    WebSocket <-> TCP.
+
+    Protocol (same as firmware terminal):
+      - Client sends: { "type": "input", "data": "<bytes>" }
+      - Client sends: { "type": "resize", "cols": 80, "rows": 24 }
+      - Server sends: { "type": "output", "data": "<text>" }
+      - Server sends: { "type": "error", "data": "<message>" }
+    """
+    await websocket.accept()
+
+    # Validate port range
+    if port < 1 or port > 65535:
+        await websocket.send_json({"type": "error", "data": "Invalid port number"})
+        await websocket.close(code=4004)
+        return
+
+    # Look up session and container
+    async with async_session_factory() as db:
+        result = await db.execute(
+            select(EmulationSession).where(
+                EmulationSession.id == session_id,
+                EmulationSession.project_id == project_id,
+            )
+        )
+        session = result.scalar_one_or_none()
+        if not session:
+            await websocket.send_json({"type": "error", "data": "Session not found"})
+            await websocket.close(code=4004)
+            return
+
+        if session.status != "running" or not session.container_id:
+            await websocket.send_json(
+                {"type": "error", "data": f"Session is not running (status: {session.status})"}
+            )
+            await websocket.close(code=4004)
+            return
+
+        container_id = session.container_id
+
+    # Resolve the container's IP on the emulation network
+    from app.config import get_settings
+
+    settings = get_settings()
+    loop = asyncio.get_running_loop()
+
+    try:
+        client = await loop.run_in_executor(None, docker.from_env)
+        container = await loop.run_in_executor(
+            None, client.containers.get, container_id,
+        )
+        await loop.run_in_executor(None, container.reload)
+    except docker.errors.NotFound:
+        await websocket.send_json({"type": "error", "data": "Container not found"})
+        await websocket.close(code=4004)
+        return
+    except Exception as exc:
+        await websocket.send_json({"type": "error", "data": f"Docker error: {exc}"})
+        await websocket.close(code=4004)
+        return
+
+    networks = container.attrs.get("NetworkSettings", {}).get("Networks", {})
+    net_info = networks.get(settings.emulation_network, {})
+    container_ip = net_info.get("IPAddress")
+
+    if not container_ip:
+        await websocket.send_json(
+            {"type": "error", "data": "Could not resolve container IP on emulation network"}
+        )
+        await websocket.close(code=4004)
+        return
+
+    # Connect TCP socket to the container's port
+    tcp_sock = None
+    try:
+        tcp_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        tcp_sock.settimeout(10)
+        await loop.run_in_executor(None, tcp_sock.connect, (container_ip, port))
+        tcp_sock.setblocking(False)
+    except (ConnectionRefusedError, OSError) as exc:
+        await websocket.send_json(
+            {"type": "error", "data": f"Cannot connect to {container_ip}:{port} — {exc}"}
+        )
+        await websocket.close(code=4004)
+        if tcp_sock:
+            tcp_sock.close()
+        return
+
+    await websocket.send_json({
+        "type": "output",
+        "data": f"\r\n  Connected to system emulation port {port} ({container_ip}:{port})\r\n\r\n",
+    })
+
+    async def read_tcp():
+        """Read from TCP socket and send to WebSocket."""
+        try:
+            while True:
+                data = await loop.sock_recv(tcp_sock, 4096)
+                if not data:
+                    break
+                await websocket.send_json({
+                    "type": "output",
+                    "data": data.decode("utf-8", errors="replace"),
+                })
+        except OSError:
+            pass
+        except Exception:
+            logger.debug("TCP reader stopped", exc_info=True)
+
+    async def write_tcp():
+        """Read from WebSocket and write to TCP socket."""
+        try:
+            while True:
+                msg = await websocket.receive_json()
+                msg_type = msg.get("type")
+
+                if msg_type == "input":
+                    input_data = msg.get("data", "")
+                    if input_data:
+                        await loop.sock_sendall(
+                            tcp_sock, input_data.encode("utf-8"),
+                        )
+                elif msg_type == "ping":
+                    await websocket.send_json({"type": "pong"})
+
+        except WebSocketDisconnect:
+            pass
+        except Exception:
+            logger.debug("TCP writer stopped", exc_info=True)
+
+    async def keepalive():
+        """Send periodic pings to keep the WebSocket alive."""
+        try:
+            while True:
+                await asyncio.sleep(15)
+                await websocket.send_json({"type": "ping"})
+        except Exception:
+            pass
+
+    try:
+        reader_task = asyncio.create_task(read_tcp())
+        writer_task = asyncio.create_task(write_tcp())
+        keepalive_task = asyncio.create_task(keepalive())
+        done, pending = await asyncio.wait(
+            [reader_task, writer_task], return_when=asyncio.FIRST_COMPLETED,
+        )
+        for task in pending:
+            task.cancel()
+        keepalive_task.cancel()
+    finally:
+        try:
+            tcp_sock.close()
+        except Exception:
+            pass
+        logger.info(
+            "System emulation TCP proxy ended: project=%s session=%s port=%d",
+            project_id, session_id, port,
+        )

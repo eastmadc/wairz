@@ -113,6 +113,30 @@ export function SessionCard({ session, isActive, projectId, onConnect, onStop, o
         </p>
       )}
 
+      {/* System emulation (FirmAE) details */}
+      {session.system_emulation_stage && (
+        <div className="mt-1 flex flex-wrap items-center gap-1.5">
+          <Badge variant="outline" className="text-[10px] border-cyan-500/30 text-cyan-400">
+            {session.system_emulation_stage}
+          </Badge>
+          {session.firmware_ip && (
+            <span className="text-[10px] text-muted-foreground font-mono">
+              {session.firmware_ip}
+            </span>
+          )}
+          {session.kernel_used && (
+            <span className="text-[10px] text-muted-foreground truncate max-w-[180px]" title={session.kernel_used}>
+              {session.kernel_used}
+            </span>
+          )}
+          {session.discovered_services && session.discovered_services.length > 0 && (
+            <Badge variant="outline" className="text-[10px]">
+              {session.discovered_services.length} services
+            </Badge>
+          )}
+        </div>
+      )}
+
       <div className="mt-1 flex items-center gap-2 text-[10px] text-muted-foreground">
         <Clock className="h-3 w-3" />
         {formatDate(session.created_at)}

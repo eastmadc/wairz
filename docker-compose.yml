@@ -48,6 +48,7 @@ services:
       EMULATION_IMAGE: wairz-emulation
       EMULATION_NETWORK: wairz_emulation_net
       FUZZING_IMAGE: wairz-fuzzing
+      SYSTEM_EMULATION_IMAGE: wairz-system-emulation
       UART_BRIDGE_HOST: host.docker.internal
       UART_BRIDGE_PORT: "9999"
     extra_hosts:
@@ -83,6 +84,7 @@ services:
       EMULATION_IMAGE: wairz-emulation
       EMULATION_NETWORK: wairz_emulation_net
       FUZZING_IMAGE: wairz-fuzzing
+      SYSTEM_EMULATION_IMAGE: wairz-system-emulation
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
@@ -128,6 +130,28 @@ services:
         limits:
           memory: 2048M
           pids: 256
+
+  system-emulation:
+    profiles: ["build"]
+    build:
+      context: ./system-emulation
+      dockerfile: Dockerfile
+    image: wairz-system-emulation
+    privileged: true
+    ports:
+      - "5000"
+    volumes:
+      - firmware_data:/firmwares:ro
+    networks:
+      - emulation_net
+    environment:
+      - POSTGRES_PASSWORD=firmae
+    deploy:
+      resources:
+        limits:
+          memory: 2048M
+          pids: 512
+    restart: unless-stopped
 
   vulhunt:
     image: ghcr.io/vulhunt-re/vulhunt:latest

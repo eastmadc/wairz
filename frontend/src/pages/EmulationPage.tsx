@@ -11,6 +11,7 @@ import {
   AlertCircle,
   Save,
   BookOpen,
+  Server,
 } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -31,6 +32,7 @@ import FirmwareSelector from '@/components/projects/FirmwareSelector'
 import KernelManager from '@/components/emulation/KernelManager'
 import { SessionCard } from '@/components/emulation/SessionCard'
 import { EmulationTerminal } from '@/components/emulation/EmulationTerminal'
+import { SystemEmulationPanel } from '@/components/emulation/SystemEmulationPanel'
 import { extractErrorMessage } from '@/utils/error'
 import type {
   EmulationSession,
@@ -40,11 +42,16 @@ import type {
   StubProfile,
 } from '@/types'
 
+type PageTab = 'user' | 'system-firmae'
+
 export default function EmulationPage() {
   const { projectId } = useParams<{ projectId: string }>()
   const [searchParams, setSearchParams] = useSearchParams()
   const selectedFirmwareId = useProjectStore((s) => s.selectedFirmwareId)
   const [firmwareList, setFirmwareList] = useState<FirmwareDetail[]>([])
+
+  // Top-level page tab: user-mode emulation vs FirmAE system emulation
+  const [pageTab, setPageTab] = useState<PageTab>('user')
 
   const [sessions, setSessions] = useState<EmulationSession[]>([])
   const [loading, setLoading] = useState(true)
@@ -303,6 +310,13 @@ export default function EmulationPage() {
     )
   }
 
+  const handleSystemTerminalConnect = (session: EmulationSession, _port?: number) => {
+    setActiveSession(session)
+    if (session.status === 'running') {
+      setShowTerminal(true)
+    }
+  }
+
   return (
     <div className="flex h-full flex-col">
       {/* Header */}
@@ -322,8 +336,71 @@ export default function EmulationPage() {
             </Button>
           </div>
         </div>
+
+        {/* Page-level tabs */}
+        <div className="mt-3 flex gap-1">
+          <button
+            onClick={() => setPageTab('user')}
+            className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
+              pageTab === 'user'
+                ? 'bg-primary/10 text-primary border border-primary/30'
+                : 'text-muted-foreground hover:text-foreground hover:bg-accent'
+            }`}
+          >
+            <Cpu className="h-3.5 w-3.5" />
+            User Mode
+          </button>
+          <button
+            onClick={() => setPageTab('system-firmae')}
+            className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
+              pageTab === 'system-firmae'
+                ? 'bg-primary/10 text-primary border border-primary/30'
+                : 'text-muted-foreground hover:text-foreground hover:bg-accent'
+            }`}
+          >
+            <Server className="h-3.5 w-3.5" />
+            System Mode
+            <Badge variant="outline" className="text-[9px] ml-0.5 px-1 py-0">FirmAE</Badge>
+          </button>
+        </div>
       </div>
 
+      {/* System Mode (FirmAE) tab content */}
+      {pageTab === 'system-firmae' && (
+        <div className="flex flex-1 overflow-hidden">
+          <div className="w-96 shrink-0 overflow-y-auto border-r border-border p-4">
+            <SystemEmulationPanel
+              projectId={projectId!}
+              firmwareId={selectedFirmwareId ?? firmwareList[0]?.id ?? null}
+              onConnectTerminal={handleSystemTerminalConnect}
+            />
+          </div>
+
+          {/* Terminal area */}
+          <div className="relative flex-1 bg-[#0a0a0b]">
+            {showTerminal && activeSession && projectId ? (
+              <EmulationTerminal
+                projectId={projectId}
+                session={activeSession}
+                onClose={() => setShowTerminal(false)}
+              />
+            ) : (
+              <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+                <div className="text-center">
+                  <Server className="mx-auto mb-3 h-10 w-10 text-muted-foreground/30" />
+                  <p>Start system emulation or connect to a running session</p>
+                  <p className="mt-1 text-xs text-muted-foreground/60">
+                    The terminal will appear here when a system emulation session is active
+                  </p>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* User Mode tab content */}
+      {pageTab === 'user' && (
       <div className="flex flex-1 overflow-hidden">
         {/* Left panel — controls + session list */}
         <div className="w-96 shrink-0 overflow-y-auto border-r border-border p-4 space-y-6">
@@ -743,7 +820,7 @@ export default function EmulationPage() {
 
         </div>
       </div>
+      )}
     </div>
   )
 }
-
