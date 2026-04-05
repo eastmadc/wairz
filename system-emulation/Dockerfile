@@ -53,7 +53,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     e2fsprogs \
     kpartx \
     uml-utilities \
-    sudo bc file cpio fdisk \
+    sudo bc file cpio fdisk bash-static \
     lsof procps \
     # Build tools (for FirmAE's libnvram etc.)
     build-essential gcc-mipsel-linux-gnu gcc-mips-linux-gnu \
@@ -92,6 +92,14 @@ RUN cd ${FIRMAE_DIR}/firmae-kernel-v4.1 2>/dev/null || true && \
     if [ -d "${FIRMAE_DIR}/src/console" ]; then \
         cd ${FIRMAE_DIR}/src/console && make 2>/dev/null || true; \
     fi
+
+# ---------------------------------------------------------------------------
+# 3b. Patch FirmAE for Docker compatibility (no kpartx/loop partitions)
+# ---------------------------------------------------------------------------
+COPY patches/ /tmp/patches/
+RUN chmod +x /tmp/patches/*.sh && \
+    /tmp/patches/docker-compat.sh ${FIRMAE_DIR} && \
+    rm -rf /tmp/patches
 
 # ---------------------------------------------------------------------------
 # 4. Download pre-built FirmAE kernels

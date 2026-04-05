@@ -1,0 +1,29 @@
+--- a/scripts/makeImage.sh
++++ b/scripts/makeImage.sh
+@@ -46,18 +46,14 @@
+ echo "----Creating QEMU Image----"
+ qemu-img create -f raw "${IMAGE}" 1G
+ chmod a+rw "${IMAGE}"
+
+-echo "----Creating Partition Table----"
+-echo -e "o\nn\np\n1\n\n\nw" | /sbin/fdisk "${IMAGE}"
++echo "----Creating Filesystem (no partition table - Docker compatible)----"
++mkfs.ext2 -F "${IMAGE}"
+
+-echo "----Mounting QEMU Image----"
+-DEVICE=`add_partition ${IMAGE}`
+-
+-echo "----Creating Filesystem----"
+-sync
+-mkfs.ext2 "${DEVICE}"
+-
+ echo "----Making QEMU Image Mountpoint----"
+ if [ ! -e "${IMAGE_DIR}" ]; then
+     mkdir "${IMAGE_DIR}"
+     chown "${USER}" "${IMAGE_DIR}"
+ fi
+
+ echo "----Mounting QEMU Image Partition----"
+ sync
+-mount "${DEVICE}" "${IMAGE_DIR}"
++mount -o loop "${IMAGE}" "${IMAGE_DIR}"
