@@ -59,6 +59,9 @@ services:
       - ./emulation/kernels:/opt/kernels:rw
       - /var/run/docker.sock:/var/run/docker.sock
       - /tmp/wairz-dumps:/tmp/wairz-dumps
+    networks:
+      - default
+      - emulation_net
     depends_on:
       postgres:
         condition: service_healthy
@@ -182,6 +185,7 @@ volumes:
 
 networks:
   emulation_net:
-    internal: true
+    name: wairz_emulation_net
+    external: true
   default:
     driver: bridge
