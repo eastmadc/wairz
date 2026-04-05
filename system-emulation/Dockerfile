@@ -53,7 +53,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     e2fsprogs \
     kpartx \
     uml-utilities \
-    sudo \
+    sudo bc file cpio fdisk \
     lsof procps \
     # Build tools (for FirmAE's libnvram etc.)
     build-essential gcc-mipsel-linux-gnu gcc-mips-linux-gnu \
@@ -114,10 +114,11 @@ RUN mkdir -p ${PGDATA} /run/postgresql && \
 # ---------------------------------------------------------------------------
 # 6. Install Flask API shim dependencies
 # ---------------------------------------------------------------------------
-RUN pip3 install --no-cache-dir --break-system-packages \
-    flask==3.1.* \
-    gunicorn==23.* \
-    psycopg2-binary==2.9.*
+RUN pip3 install --no-cache-dir \
+    flask \
+    gunicorn \
+    psycopg2-binary \
+    python-magic
 
 # ---------------------------------------------------------------------------
 # 7. Copy shim application and entrypoint

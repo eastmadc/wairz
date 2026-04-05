@@ -29,8 +29,8 @@ fi
 # 2. Start PostgreSQL
 # ---------------------------------------------------------------------------
 echo "[entrypoint] Starting PostgreSQL..."
-mkdir -p /run/postgresql
-chown postgres:postgres /run/postgresql
+mkdir -p /run/postgresql /data/logs /data/scratch
+chown -R postgres:postgres /run/postgresql /data/logs /var/lib/postgresql
 
 # Start PostgreSQL as the postgres user
 su - postgres -c "/usr/lib/postgresql/15/bin/pg_ctl -D ${PGDATA} -l /data/logs/postgresql.log -o '-p ${PGPORT}' start"
@@ -66,8 +66,8 @@ elif [ -f "${FIRMAE_DIR}/database/schema.sql" ]; then
     su - postgres -c "psql -p ${PGPORT} -d ${FIRMAE_DB} -f ${FIRMAE_DIR}/database/schema.sql" 2>/dev/null || true
 fi
 
-# Set FirmAE's DB password if needed
-su - postgres -c "psql -p ${PGPORT} -c \"ALTER USER postgres PASSWORD '${POSTGRES_PASSWORD:-firmae}'\"" 2>/dev/null || true
+# FirmAE hardcodes user "firmadyne" with password "firmadyne"
+su - postgres -c "psql -p ${PGPORT} -c \"DO \\\$\\\$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='firmadyne') THEN CREATE ROLE firmadyne LOGIN SUPERUSER PASSWORD 'firmadyne'; END IF; END \\\$\\\$;\"" 2>/dev/null || true
 
 echo "[entrypoint] Database initialized."
 
@@ -80,7 +80,7 @@ export FIRMAE_DIR
 export PGHOST=localhost
 export PGPORT
 export PGUSER
-export PGPASSWORD="${POSTGRES_PASSWORD:-firmae}"
+export PGPASSWORD="firmadyne"
 export PGDATABASE="${FIRMAE_DB}"
 
 exec gunicorn \
