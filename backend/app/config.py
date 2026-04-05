@@ -36,7 +36,7 @@ class Settings(BaseSettings):
     fuzzing_cpu_limit: float = 2.0
     fuzzing_data_dir: str = "/data/fuzzing"
     system_emulation_image: str = "wairz-system-emulation"
-    system_emulation_pipeline_timeout: int = 600  # 10 min
+    system_emulation_pipeline_timeout: int = 1800  # 30 min (cross-arch on RPi is slow)
     system_emulation_idle_timeout: int = 1800  # 30 min
     system_emulation_ram_limit: str = "2g"
     system_emulation_cpu_limit: int = 2
