@@ -64,6 +64,40 @@ services:
       redis:
         condition: service_healthy
 
+  worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      additional_contexts:
+        kernels: ./emulation/kernels
+      args:
+        DOCKER_GID: "${DOCKER_GID:-999}"
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://wairz:wairz@postgres:5432/wairz
+      REDIS_URL: redis://redis:6379/0
+      STORAGE_ROOT: /data/firmware
+      GHIDRA_INSTALL_DIR: /opt/ghidra
+      GHIDRA_SCRIPTS_PATH: /opt/ghidra_scripts
+      EMULATION_IMAGE: wairz-emulation
+      EMULATION_NETWORK: wairz_emulation_net
+      FUZZING_IMAGE: wairz-fuzzing
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - firmware_data:/data/firmware
+      - ./ghidra/scripts:/opt/ghidra_scripts:ro
+      - ./emulation/kernels:/opt/kernels:rw
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /tmp/wairz-dumps:/tmp/wairz-dumps
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    entrypoint: ["sh", "-c", ".venv/bin/python -m alembic upgrade head && exec .venv/bin/arq app.workers.arq_worker.WorkerSettings"]
+
   emulation:
     profiles: ["build"]
     build:

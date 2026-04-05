@@ -28,3 +28,23 @@
 {"schema":1,"timestamp":"2026-04-03T06:07:23.823Z","hook":"external-action-gate","action":"blocked","detail":"grep .env (secrets): grep DOCKER_GID /home/kali/code/wairz/.env 2>/dev/null || echo \"NOT_SET\""}
 {"schema":1,"timestamp":"2026-04-03T06:08:14.744Z","hook":"protect-files","action":"blocked","detail":"Read .env.example (.env secrets)"}
 {"schema":1,"timestamp":"2026-04-03T06:08:24.465Z","hook":"protect-files","action":"blocked","detail":"Read .env.example (.env secrets)"}
+{"schema":1,"timestamp":"2026-04-04T13:59:30.958Z","hook":"protect-files","action":"blocked","detail":"Read .env.example (.env secrets)"}
+{"schema":1,"timestamp":"2026-04-04T13:59:39.773Z","hook":"external-action-gate","action":"blocked","detail":"cat .env (secrets): cat /home/kali/code/wairz/.env.example 2>/dev/null || echo \"file does not exist\""}
+{"schema":1,"timestamp":"2026-04-04T14:00:36.092Z","hook":"external-action-gate","action":"blocked","detail":"tail .env (secrets): tail -5 /home/kali/code/wairz/.env.example"}
+{"schema":1,"timestamp":"2026-04-04T14:00:39.430Z","hook":"protect-files","action":"blocked","detail":"Read .env.example (.env secrets)"}
+{"schema":1,"timestamp":"2026-04-04T14:56:37.634Z","hook":"protect-files","action":"blocked","detail":"Write /home/kali/.claude/projects/-home-kali-code-wairz/memory/feedback_verify_before_planning.md (outside project root)"}
+{"schema":1,"timestamp":"2026-04-04T14:56:50.770Z","hook":"protect-files","action":"blocked","detail":"Read /home/kali/.claude/projects/-home-kali-code-wairz/memory/MEMORY.md (outside project root)"}
+{"schema":1,"timestamp":"2026-04-04T16:02:16.388Z","hook":"external-action-gate","action":"first-encounter","detail":"git push: git push origin clean-history 2>&1"}
+{"schema":1,"timestamp":"2026-04-04T16:02:20.442Z","hook":"external-action-gate","action":"first-encounter","detail":"git push: git push origin clean-history"}
+{"schema":1,"timestamp":"2026-04-04T16:03:03.604Z","hook":"external-action-gate","action":"first-encounter","detail":"git push: git push myfork clean-history"}
+{"schema":1,"timestamp":"2026-04-04T17:43:37.414Z","hook":"protect-files","action":"blocked","detail":"Write /home/kali/.claude/projects/-home-kali-code-wairz/memory/project_standalone_binary.md (outside project root)"}
+{"schema":1,"timestamp":"2026-04-04T17:43:46.166Z","hook":"protect-files","action":"blocked","detail":"Write /home/kali/.claude/projects/-home-kali-code-wairz/memory/project_standalone_binary.md (outside project root)"}
+{"schema":1,"timestamp":"2026-04-04T17:43:59.955Z","hook":"protect-files","action":"blocked","detail":"Read /home/kali/.claude/projects/-home-kali-code-wairz/memory/MEMORY.md (outside project root)"}
+{"schema":1,"timestamp":"2026-04-04T21:40:50.324Z","hook":"protect-files","action":"blocked","detail":"Edit .claude/harness.json (pattern: .claude/harness.json)"}
+{"schema":1,"timestamp":"2026-04-05T01:55:58.113Z","hook":"protect-files","action":"blocked","detail":"Read /home/kali/.claude/harness.json (outside project root)"}
+{"schema":1,"timestamp":"2026-04-05T01:55:59.117Z","hook":"protect-files","action":"blocked","detail":"Read /home/kali/.cache/uv/archive-v0/_jmd_eWIEQBURZpqHwOUG/lib/python3.13/site-packages/ouroboros/codex/ouroboros.md (outside project root)"}
+{"schema":1,"timestamp":"2026-04-05T01:56:02.869Z","hook":"protect-files","action":"blocked","detail":"Read /home/kali/.claude/settings.json (outside project root)"}
+{"schema":1,"timestamp":"2026-04-05T01:56:03.220Z","hook":"protect-files","action":"blocked","detail":"Read /home/kali/.claude/settings.local.json (outside project root)"}
+{"schema":1,"timestamp":"2026-04-05T01:56:05.115Z","hook":"protect-files","action":"blocked","detail":"Read /home/kali/.claude/mcp.json (outside project root)"}
+{"schema":1,"timestamp":"2026-04-05T01:56:06.137Z","hook":"protect-files","action":"blocked","detail":"Read /home/kali/.cache/uv/archive-v0/_jmd_eWIEQBURZpqHwOUG/lib/python3.13/site-packages/ouroboros/codex/ouroboros.md (outside project root)"}
+{"schema":1,"timestamp":"2026-04-05T01:56:06.708Z","hook":"protect-files","action":"blocked","detail":"Read /home/kali/.cache/uv/archive-v0/_jmd_eWIEQBURZpqHwOUG/lib/python3.13/site-packages/ouroboros/codex/skills/run/SKILL.md (outside project root)"}

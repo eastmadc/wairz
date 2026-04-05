@@ -43,7 +43,17 @@ RUN mkdir -p /out/stubs && \
     aarch64-linux-gnu-gcc -nostdlib -fPIC -shared -Wl,--hash-style=sysv \
         -o /out/stubs/stubs_tenda_aarch64.so /src/stubs/stubs_tenda.c
 
-# Stage 2: Runtime image
+# Stage 2: Build minimal sysroots for standalone binary emulation
+FROM debian:bookworm-slim AS sysroot-builder
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    dpkg-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY scripts/build-sysroots.sh /tmp/build-sysroots.sh
+RUN chmod +x /tmp/build-sysroots.sh && /tmp/build-sysroots.sh
+
+# Stage 3: Runtime image
 FROM debian:bookworm-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -64,6 +74,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Copy pre-compiled stub libraries from builder stage
 COPY --from=stub-builder /out/stubs/ /opt/stubs/
+
+# Copy pre-built sysroots for standalone binary emulation
+COPY --from=sysroot-builder /opt/sysroots/ /opt/sysroots/
 
 # Copy helper scripts
 COPY scripts/ /opt/scripts/

@@ -828,8 +828,17 @@ async def _handle_push_to_dependency_track(
         ],
     }
 
-    project_name = input.get("project_name") or "wairz-firmware"
-    project_version = input.get("project_version", "1.0")
+    # Use firmware metadata for defaults
+    from app.models.firmware import Firmware
+    fw_result = await context.db.execute(
+        select(Firmware).where(Firmware.id == context.firmware_id)
+    )
+    fw = fw_result.scalars().first()
+    default_name = fw.original_filename if fw and fw.original_filename else "wairz-firmware"
+    default_version = fw.sha256[:12] if fw and fw.sha256 else "1.0"
+
+    project_name = input.get("project_name") or default_name
+    project_version = input.get("project_version") or default_version
 
     try:
         dt_result = await svc.push_sbom(

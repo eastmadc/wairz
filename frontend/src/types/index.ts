@@ -24,6 +24,29 @@ export interface FirmwareSummary {
   created_at: string
 }
 
+export interface ArchCandidate {
+  architecture: string
+  raw_name: string
+  endianness: string | null
+  confidence: string
+}
+
+export interface BinaryInfo {
+  format: string | null
+  architecture: string | null
+  endianness: string | null
+  bits: number | null
+  is_static: boolean | null
+  is_pie: boolean | null
+  interpreter: string | null
+  dependencies: string[]
+  entry_point: number | null
+  file_size: number | null
+  extracted_filename: string | null
+  arch_candidates?: ArchCandidate[]
+  arch_detection_method?: string | null
+}
+
 export interface FirmwareDetail extends FirmwareSummary {
   project_id: string
   storage_path: string | null
@@ -32,6 +55,7 @@ export interface FirmwareDetail extends FirmwareSummary {
   unpack_log: string | null
   unpack_stage: string | null
   unpack_progress: number | null
+  binary_info: BinaryInfo | null
 }
 
 export interface FileEntry {
@@ -280,7 +304,7 @@ export interface DocumentContent {
 
 // ── Emulation types ──
 
-export type EmulationMode = 'user' | 'system'
+export type EmulationMode = 'user' | 'system' | 'qiling'
 export type EmulationStatus = 'created' | 'starting' | 'running' | 'stopping' | 'stopped' | 'error'
 
 export interface PortForward {
@@ -299,6 +323,7 @@ export interface EmulationSession {
   arguments: string | null
   port_forwards: PortForward[]
   error_message: string | null
+  logs: string | null
   started_at: string | null
   stopped_at: string | null
   created_at: string

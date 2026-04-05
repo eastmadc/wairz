@@ -3,8 +3,13 @@
 #
 # Usage: start-user-mode.sh <arch> <rootfs_path> <binary_path> [args...]
 #
-# Uses QEMU's -L flag to set the library search root (no chroot needed),
-# so the rootfs can be mounted read-only.
+# For firmware rootfs mode:
+#   Uses QEMU's -L flag to set the library search root (no chroot needed),
+#   so the rootfs can be mounted read-only.
+#
+# For standalone binary mode (QEMU_LD_PREFIX set):
+#   Uses the sysroot at QEMU_LD_PREFIX for library resolution instead of
+#   the rootfs path. The binary is run directly without chroot.
 
 set -e
 
@@ -50,8 +55,12 @@ if [ -z "$QEMU_PATH" ]; then
     exit 1
 fi
 
-# Use QEMU's -L flag to set library root prefix (works with read-only rootfs).
-# The binary path is relative to the rootfs, so prepend rootfs path.
+# Determine the library search root:
+# - If QEMU_LD_PREFIX is set (standalone binary with sysroot), use that
+# - Otherwise use the rootfs path (firmware mode)
+LIB_ROOT="${QEMU_LD_PREFIX:-$ROOTFS}"
+
+# Build the full binary path
 FULL_BINARY="${ROOTFS}/${BINARY#/}"
 
 if [ ! -f "$FULL_BINARY" ]; then
@@ -59,4 +68,4 @@ if [ ! -f "$FULL_BINARY" ]; then
     exit 1
 fi
 
-exec "$QEMU_PATH" -L "$ROOTFS" "$FULL_BINARY" "$@"
+exec "$QEMU_PATH" -L "$LIB_ROOT" "$FULL_BINARY" "$@"

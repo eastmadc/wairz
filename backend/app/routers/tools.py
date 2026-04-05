@@ -67,6 +67,7 @@ ALLOWED_TOOLS: set[str] = {
     "trace_dataflow",
     "cross_binary_dataflow",
     "detect_capabilities",
+    "list_binary_capabilities",
     # Security analysis (read-only)
     "check_known_cves",
     "analyze_config_security",

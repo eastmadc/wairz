@@ -229,17 +229,34 @@ async def unpack_firmware(
 
     if fw_type in ("elf_binary", "pe_binary"):
         import shutil
+        from app.services.binary_analysis_service import analyze_binary
+
         dest = os.path.join(extraction_dir, os.path.basename(firmware_path))
         shutil.copy2(firmware_path, dest)
         result.extracted_path = extraction_dir
         result.extraction_dir = extraction_dir
-        if fw_type == "elf_binary":
-            result.unpack_log += "Single ELF binary — skipped filesystem extraction."
-            arch, endian = detect_architecture_from_elf(firmware_path)
-            result.architecture = arch
-            result.endianness = endian
-        else:
-            result.unpack_log += "Single PE binary — skipped filesystem extraction."
+
+        # Run full binary analysis (format, arch, linking, dependencies)
+        binary_info = analyze_binary(firmware_path)
+        # Store the actual filename in extraction dir so the frontend can
+        # pre-fill binary_path correctly (may differ from original_filename
+        # due to sanitization)
+        binary_info["extracted_filename"] = os.path.basename(dest)
+        result.binary_info = binary_info
+        result.architecture = binary_info.get("architecture")
+        result.endianness = binary_info.get("endianness")
+
+        fmt = binary_info.get("format", fw_type.replace("_binary", "")).upper()
+        linking = "static" if binary_info.get("is_static") else "dynamic"
+        deps = binary_info.get("dependencies", [])
+        dep_str = f" Dependencies: {', '.join(deps)}." if deps else ""
+
+        result.unpack_log += (
+            f"Single {fmt} binary — skipped filesystem extraction. "
+            f"Architecture: {result.architecture or 'unknown'}, "
+            f"Endianness: {result.endianness or 'unknown'}, "
+            f"Linking: {linking}.{dep_str}"
+        )
         result.success = True
         return result
 
@@ -396,11 +413,49 @@ async def unpack_firmware(
     _STANDALONE_BINARY_MAX = 10 * 1024 * 1024  # 10 MB
     if not result.success and fw_size <= _STANDALONE_BINARY_MAX:
         import shutil
+        from app.services.binary_analysis_service import analyze_binary
+
         dest = os.path.join(extraction_dir, os.path.basename(firmware_path))
         if not os.path.exists(dest):
             shutil.copy2(firmware_path, dest)
         result.extracted_path = extraction_dir
         result.extraction_dir = extraction_dir
+
+        # Attempt binary analysis for arch detection on the fallback path
+        try:
+            binary_info = analyze_binary(firmware_path)
+            if binary_info.get("architecture"):
+                binary_info["extracted_filename"] = os.path.basename(dest)
+                result.binary_info = binary_info
+                result.architecture = binary_info["architecture"]
+                result.endianness = binary_info.get("endianness")
+            elif binary_info.get("format") == "unknown":
+                # No recognized headers — try statistical architecture detection
+                # for raw binaries (bare-metal firmware, ROM dumps, bootloaders)
+                from app.services.binary_analysis_service import detect_raw_architecture
+                candidates = detect_raw_architecture(firmware_path)
+                if candidates:
+                    top = candidates[0]
+                    binary_info["architecture"] = top["architecture"]
+                    binary_info["endianness"] = top.get("endianness")
+                    binary_info["arch_candidates"] = candidates
+                    binary_info["arch_detection_method"] = "cpu_rec"
+                    binary_info["extracted_filename"] = os.path.basename(dest)
+                    result.binary_info = binary_info
+                    result.architecture = top["architecture"]
+                    result.endianness = top.get("endianness")
+                    arch_names = ", ".join(
+                        f"{c['raw_name']} ({c['confidence']})" for c in candidates[:3]
+                    )
+                    result.unpack_log += (
+                        f"Raw binary — detected architecture candidates: {arch_names}\n"
+                    )
+                else:
+                    binary_info["extracted_filename"] = os.path.basename(dest)
+                    result.binary_info = binary_info
+        except Exception:
+            pass
+
         result.unpack_log += (
             "\nAll extraction methods exhausted.\n"
             "Treating as standalone binary file.\n"

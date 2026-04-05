@@ -65,7 +65,19 @@ RUN mkdir -p /opt/desock && \
     aarch64-linux-gnu-gcc -fPIC -shared -Wl,--hash-style=sysv -o /opt/desock/desock_aarch64.so /desock/desock.c
 
 # ---------------------------------------------------------------------------
-# Stage 2: Lean runtime image
+# Stage 2: Build minimal sysroots for standalone binary fuzzing
+# ---------------------------------------------------------------------------
+FROM debian:bookworm-slim AS sysroot-builder
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    dpkg-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY sysroots/build-sysroots.sh /tmp/build-sysroots.sh
+RUN chmod +x /tmp/build-sysroots.sh && /tmp/build-sysroots.sh
+
+# ---------------------------------------------------------------------------
+# Stage 3: Lean runtime image
 # ---------------------------------------------------------------------------
 FROM debian:bookworm-slim
 
@@ -102,6 +114,9 @@ COPY --from=builder /usr/local/bin/afl-qemu-trace-i386 /usr/local/bin/
 
 # Copy cross-compiled desock libraries
 COPY --from=builder /opt/desock/ /opt/desock/
+
+# Copy pre-built sysroots for standalone binary fuzzing
+COPY --from=sysroot-builder /opt/sysroots/ /opt/sysroots/
 
 # Create working directories
 RUN mkdir -p /data/firmware /opt/fuzzing /opt/dictionaries

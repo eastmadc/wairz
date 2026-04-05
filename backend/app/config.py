@@ -53,6 +53,7 @@ class Settings(BaseSettings):
     dependency_track_api_key: str = ""
     vulhunt_url: str = "http://vulhunt:8080"
     vulhunt_timeout: int = 300
+    api_key: str = ""
     log_level: str = "INFO"
 
 

@@ -367,7 +367,94 @@ class EmulationService:
         self.db.add(session)
         await self.db.flush()
 
-        # Start Docker container
+        # Detect standalone binary mode: binary_info is only set for standalone
+        # binaries (direct ELF/PE upload or extraction fallback), never for
+        # firmware with a proper rootfs.
+        is_standalone = firmware.binary_info is not None
+
+        # Check if this binary should use Qiling instead of QEMU/Docker.
+        # Qiling handles PE (Windows) and Mach-O (macOS) binaries that QEMU
+        # user-mode can't emulate. Qiling runs in-process (no Docker needed).
+        binary_format = (firmware.binary_info or {}).get("format")
+        use_qiling = (
+            is_standalone
+            and binary_format in ("pe", "macho")
+            and mode == "user"
+        )
+
+        if use_qiling:
+            try:
+                from app.services.qiling_service import run_binary_async, get_rootfs_path
+
+                # Resolve absolute binary path
+                abs_binary = os.path.join(
+                    firmware.extracted_path,
+                    binary_path.lstrip("/") if binary_path else "",
+                )
+
+                # Parse arguments
+                args = shlex.split(arguments) if arguments else None
+
+                # Resolve rootfs
+                rootfs = get_rootfs_path(binary_format, arch)
+
+                session.mode = "qiling"
+                session.started_at = datetime.now(timezone.utc)
+                await self.db.flush()
+
+                # Run Qiling emulation (batch, not interactive)
+                qresult = await run_binary_async(
+                    binary_path=abs_binary,
+                    rootfs=rootfs,
+                    args=args,
+                    timeout=60,
+                    trace_syscalls=True,
+                    binary_format=binary_format,
+                    architecture=arch,
+                )
+
+                # Store results in session
+                output_parts = []
+                if qresult.stdout:
+                    output_parts.append(f"=== STDOUT ===\n{qresult.stdout}")
+                if qresult.stderr:
+                    output_parts.append(f"=== STDERR ===\n{qresult.stderr}")
+                if qresult.error:
+                    output_parts.append(f"=== ERROR ===\n{qresult.error}")
+                if qresult.memory_errors:
+                    output_parts.append(
+                        f"=== MEMORY ERRORS ===\n" +
+                        "\n".join(qresult.memory_errors)
+                    )
+                if qresult.syscall_trace:
+                    trace = qresult.syscall_trace[:100]  # Cap for storage
+                    output_parts.append(
+                        f"=== SYSCALL TRACE ({qresult.syscall_count} total) ===\n" +
+                        "\n".join(trace)
+                    )
+
+                summary = (
+                    f"Qiling emulation completed in {qresult.duration_ms}ms. "
+                    f"Exit code: {qresult.exit_code}. "
+                    f"Syscalls: {qresult.syscall_count}."
+                )
+                if qresult.timed_out:
+                    summary += " (TIMED OUT)"
+
+                session.logs = "\n\n".join(output_parts) if output_parts else "(no output)"
+                session.error_message = qresult.error
+                session.status = "stopped"
+                session.stopped_at = datetime.now(timezone.utc)
+
+            except Exception as exc:
+                logger.exception("Qiling emulation failed")
+                session.status = "error"
+                session.error_message = str(exc)
+
+            await self.db.flush()
+            return session
+
+        # Start Docker container (QEMU path — for ELF binaries and system mode)
         try:
             container_id = await self._start_container(
                 session=session,
@@ -377,6 +464,8 @@ class EmulationService:
                 init_path=init_path,
                 pre_init_script=pre_init_script,
                 stub_profile=stub_profile,
+                is_standalone=is_standalone,
+                binary_info=firmware.binary_info,
             )
             session.container_id = container_id
             session.status = "running"
@@ -880,6 +969,8 @@ echo "Symlink repair: pass1=$PASS1 pass2=$PASS2 pass3=$PASS3"
         init_path: str | None = None,
         pre_init_script: str | None = None,
         stub_profile: str = "none",
+        is_standalone: bool = False,
+        binary_info: dict | None = None,
     ) -> str:
         """Spawn a Docker container for this emulation session."""
         client = self._get_docker_client()
@@ -994,22 +1085,59 @@ echo "Symlink repair: pass1=$PASS1 pass2=$PASS2 pass3=$PASS3"
             self._ensure_binfmt_misc(session.architecture or "arm")
             arch = session.architecture or "arm"
             qemu_bin = QEMU_USER_BIN_MAP.get(arch, "qemu-arm-static")
-            container.exec_run([
-                "sh", "-c",
-                f"cp $(which {qemu_bin}) /firmware/{qemu_bin} && "
-                f"chmod +x /firmware/{qemu_bin}"
-            ])
-            # Ensure /proc and /dev exist for binaries that need them
-            container.exec_run([
-                "sh", "-c",
-                "mkdir -p /firmware/proc /firmware/dev /firmware/tmp /firmware/sys && "
-                "mount -t proc proc /firmware/proc 2>/dev/null || true && "
-                "mount --bind /dev /firmware/dev 2>/dev/null || true"
-            ])
-            logger.info(
-                "User-mode chroot prepared: copied %s into /firmware/",
-                qemu_bin,
-            )
+
+            if is_standalone:
+                # Standalone binary mode: no chroot, use QEMU directly with
+                # -L pointing to the sysroot for library resolution.
+                is_static = binary_info.get("is_static", False) if binary_info else False
+                from app.services.sysroot_service import get_sysroot_path
+
+                sysroot_path = get_sysroot_path(arch) if not is_static else None
+
+                # Mark the container as standalone mode via a flag file
+                # so exec_command and the WebSocket terminal know to use
+                # the non-chroot execution path.
+                container.exec_run([
+                    "sh", "-c",
+                    "touch /tmp/.standalone_mode && "
+                    f"echo '{arch}' > /tmp/.standalone_arch && "
+                    f"echo '{1 if is_static else 0}' > /tmp/.standalone_static"
+                ])
+
+                # Make the binary executable (must run as root since firmware
+                # files are owned by root from the bind mount)
+                container.exec_run(
+                    ["sh", "-c", "chmod +x /firmware/* 2>/dev/null || true"],
+                    user="root",
+                )
+
+                if sysroot_path and not is_static:
+                    logger.info(
+                        "Standalone binary mode (dynamic): arch=%s sysroot=%s",
+                        arch, sysroot_path,
+                    )
+                else:
+                    logger.info(
+                        "Standalone binary mode (static): arch=%s", arch,
+                    )
+            else:
+                # Standard firmware rootfs mode: chroot-based
+                container.exec_run([
+                    "sh", "-c",
+                    f"cp $(which {qemu_bin}) /firmware/{qemu_bin} && "
+                    f"chmod +x /firmware/{qemu_bin}"
+                ])
+                # Ensure /proc and /dev exist for binaries that need them
+                container.exec_run([
+                    "sh", "-c",
+                    "mkdir -p /firmware/proc /firmware/dev /firmware/tmp /firmware/sys && "
+                    "mount -t proc proc /firmware/proc 2>/dev/null || true && "
+                    "mount --bind /dev /firmware/dev 2>/dev/null || true"
+                ])
+                logger.info(
+                    "User-mode chroot prepared: copied %s into /firmware/",
+                    qemu_bin,
+                )
 
         # For system mode, copy the kernel into the container and launch QEMU
         if session.mode == "system":
@@ -1240,14 +1368,37 @@ echo "Symlink repair: pass1=$PASS1 pass2=$PASS2 pass3=$PASS3"
         )
 
     @staticmethod
-    def build_user_shell_cmd(arch: str) -> list[str]:
+    def build_user_shell_cmd(
+        arch: str,
+        is_standalone: bool = False,
+        binary_path: str | None = None,
+        is_static: bool = False,
+    ) -> list[str]:
         """Return the command list for an interactive QEMU user-mode shell.
 
-        Uses chroot so all firmware paths work naturally (e.g., /bin/foo
-        resolves to /firmware/bin/foo). The qemu-static binary was copied
-        into /firmware/ during session setup.
+        For firmware rootfs mode: uses chroot so all firmware paths work
+        naturally (e.g., /bin/foo resolves to /firmware/bin/foo).
+
+        For standalone binary mode: uses QEMU directly with -L for sysroot,
+        running the binary without a chroot.
         """
         qemu_bin = QEMU_USER_BIN_MAP.get(arch, "qemu-arm-static")
+
+        if is_standalone and binary_path:
+            from app.services.sysroot_service import get_sysroot_path
+
+            # For standalone binaries, run QEMU directly (no chroot)
+            # The binary is at /firmware/<binary_name>
+            full_binary = f"/firmware/{binary_path.lstrip('/')}"
+            qemu_path = f"/usr/bin/{qemu_bin}"
+
+            if is_static:
+                return [qemu_path, full_binary]
+            else:
+                sysroot = get_sysroot_path(arch) or "/opt/sysroots/arm"
+                return [qemu_path, "-L", sysroot, full_binary]
+
+        # Standard firmware rootfs mode
         return ["chroot", "/firmware", f"/{qemu_bin}", "/bin/sh"]
 
     async def stop_session(self, session_id: UUID) -> EmulationSession:
@@ -1341,11 +1492,40 @@ echo "Symlink repair: pass1=$PASS1 pass2=$PASS2 pass3=$PASS3"
         if session.mode == "user":
             arch = session.architecture or "arm"
             qemu_bin = QEMU_USER_BIN_MAP.get(arch, "qemu-arm-static")
-            exec_cmd = [
-                "timeout", str(timeout),
-                "chroot", "/firmware",
-                f"/{qemu_bin}", "/bin/sh", "-c", env_prefix + command,
-            ]
+
+            # Check if this is a standalone binary session (marker set in _start_container)
+            standalone_check = container.exec_run(
+                ["test", "-f", "/tmp/.standalone_mode"], demux=True,
+            )
+            is_standalone = standalone_check.exit_code == 0
+
+            if is_standalone:
+                # Standalone binary mode: run QEMU directly with sysroot
+                from app.services.sysroot_service import get_sysroot_path
+
+                static_check = container.exec_run(
+                    ["cat", "/tmp/.standalone_static"], demux=True,
+                )
+                is_static = False
+                if static_check.exit_code == 0:
+                    stdout = static_check.output[0] if isinstance(static_check.output, tuple) else static_check.output
+                    is_static = stdout and stdout.strip() == b"1"
+
+                sysroot = get_sysroot_path(arch)
+                ld_prefix = f"QEMU_LD_PREFIX={sysroot} " if sysroot and not is_static else ""
+
+                exec_cmd = [
+                    "timeout", str(timeout),
+                    "sh", "-c",
+                    f"{ld_prefix}{env_prefix}/usr/bin/{qemu_bin} /firmware/{(session.binary_path or '').lstrip('/')} {command}",
+                ]
+            else:
+                # Standard firmware rootfs mode: chroot
+                exec_cmd = [
+                    "timeout", str(timeout),
+                    "chroot", "/firmware",
+                    f"/{qemu_bin}", "/bin/sh", "-c", env_prefix + command,
+                ]
         else:
             # System mode: use serial-exec.sh to send commands through the
             # QEMU serial console socket with proper output capture.

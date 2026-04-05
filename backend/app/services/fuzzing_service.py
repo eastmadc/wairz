@@ -352,6 +352,10 @@ class FuzzingService:
         if not firmware or not firmware.extracted_path:
             raise ValueError("Firmware not found or not unpacked")
 
+        # Detect standalone binary mode
+        is_standalone = firmware.binary_info is not None
+        is_static = (firmware.binary_info or {}).get("is_static", False)
+
         settings = self._settings
         client = self._get_docker_client()
 
@@ -459,11 +463,21 @@ class FuzzingService:
             # not actual memory usage; a fixed -m limit causes mmap to
             # fail.  The Docker container's --memory limit handles real
             # memory enforcement.
+            #
+            # For standalone binaries: use sysroot for library resolution
+            # instead of the firmware rootfs. Static binaries don't need it.
+            if is_standalone and not is_static:
+                from app.services.sysroot_service import get_sysroot_path
+                sysroot = get_sysroot_path(arch) or "/opt/sysroots/arm"
+                ld_prefix = sysroot
+            else:
+                ld_prefix = "/firmware"
+
             afl_cmd = (
                 f"AFL_NO_UI=1 "
                 f"AFL_I_DONT_CARE_ABOUT_MISSING_CRASHES=1 "
                 f"AFL_SKIP_CPUFREQ=1 "
-                f"QEMU_LD_PREFIX=/firmware "
+                f"QEMU_LD_PREFIX={ld_prefix} "
             )
 
             # Inject desock library via AFL_PRELOAD to redirect socket
@@ -742,6 +756,15 @@ class FuzzingService:
         arch = firmware.architecture or "arm"
         qemu_bin = QEMU_USER_MAP.get(arch, "qemu-arm-static")
 
+        # Determine QEMU_LD_PREFIX for standalone vs firmware binaries
+        is_standalone = firmware.binary_info is not None
+        is_static = (firmware.binary_info or {}).get("is_static", False)
+        if is_standalone and not is_static:
+            from app.services.sysroot_service import get_sysroot_path
+            ld_prefix = get_sysroot_path(arch) or "/opt/sysroots/arm"
+        else:
+            ld_prefix = "/firmware"
+
         client = self._get_docker_client()
         try:
             container = client.containers.get(campaign.container_id)
@@ -756,7 +779,7 @@ class FuzzingService:
         try:
             # Step 1: Reproduce the crash under QEMU user-mode to get the signal
             reproduce_cmd = (
-                f"QEMU_LD_PREFIX=/firmware "
+                f"QEMU_LD_PREFIX={ld_prefix} "
                 f"timeout 30 {qemu_bin} /firmware/{binary_in_firmware} "
                 f"< {crash_path} 2>&1; echo EXIT_CODE=$?"
             )
@@ -788,7 +811,7 @@ class FuzzingService:
 
             gdb_cmd = (
                 f"timeout 30 sh -c '"
-                f"QEMU_LD_PREFIX=/firmware "
+                f"QEMU_LD_PREFIX={ld_prefix} "
                 f"{qemu_bin} -g {gdb_port} /firmware/{binary_in_firmware} "
                 f"< {crash_path} &"
                 f" sleep 1 &&"

@@ -553,6 +553,70 @@ def register_emulation_tools(registry: ToolRegistry) -> None:
         handler=_handle_start_from_preset,
     )
 
+    # --- Qiling emulation tools ---
+
+    registry.register(
+        name="emulate_with_qiling",
+        description=(
+            "Run a PE (Windows) or Mach-O (macOS) binary through Qiling "
+            "emulation. Qiling is a Python-based binary emulation framework "
+            "that can execute foreign-OS binaries without QEMU or the native "
+            "OS. Supports: PE (x86, x86_64), Mach-O (x86_64), ELF (x86, "
+            "x86_64, ARM, AArch64, MIPS). Returns stdout, stderr, exit code, "
+            "and optional syscall trace. Runs in-process (no Docker container). "
+            "Best for: Windows malware samples, macOS binaries, quick analysis "
+            "of PE files found in firmware (UEFI DXE drivers, Windows IoT)."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "binary_path": {
+                    "type": "string",
+                    "description": (
+                        "Path to the PE, Mach-O, or ELF binary to emulate"
+                    ),
+                },
+                "arguments": {
+                    "type": "string",
+                    "description": (
+                        "Command-line arguments to pass to the binary "
+                        "(space-separated, will be split)"
+                    ),
+                },
+                "timeout": {
+                    "type": "integer",
+                    "description": (
+                        "Maximum execution time in seconds (default: 30, max: 120)"
+                    ),
+                },
+                "trace_syscalls": {
+                    "type": "boolean",
+                    "description": (
+                        "Capture syscall trace for analysis (default: true). "
+                        "Slightly slower but provides detailed execution info."
+                    ),
+                },
+            },
+            "required": ["binary_path"],
+        },
+        handler=_handle_emulate_with_qiling,
+    )
+
+    registry.register(
+        name="check_qiling_rootfs",
+        description=(
+            "Check which Qiling rootfs templates are available for PE/Mach-O "
+            "emulation. Shows supported format/architecture combinations and "
+            "whether the required OS libraries are present. Run this before "
+            "emulate_with_qiling to verify the emulation environment is ready."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {},
+        },
+        handler=_handle_qiling_rootfs_status,
+    )
+
 
 # ---------------------------------------------------------------------------
 # Tool handlers
@@ -681,15 +745,27 @@ async def _handle_start_emulation(input: dict, context: ToolContext) -> str:
     except Exception as exc:
         return f"Error starting emulation: {exc}"
 
+    is_standalone = firmware.binary_info is not None
     lines = [
         f"Emulation session started successfully.",
         f"  Session ID: {session.id}",
-        f"  Mode: {session.mode}",
+        f"  Mode: {session.mode}{'  [standalone binary]' if is_standalone else ''}",
         f"  Architecture: {session.architecture}",
         f"  Status: {session.status}",
     ]
     if session.binary_path:
         lines.append(f"  Binary: {session.binary_path}")
+    if is_standalone:
+        bi = firmware.binary_info or {}
+        linking = "static" if bi.get("is_static") else "dynamic"
+        lines.append(f"  Linking: {linking}")
+        if not bi.get("is_static"):
+            from app.services.sysroot_service import get_sysroot_path
+            sysroot = get_sysroot_path(session.architecture or "arm")
+            lines.append(f"  Sysroot: {sysroot or 'none'}")
+            deps = bi.get("dependencies", [])
+            if deps:
+                lines.append(f"  Dependencies: {', '.join(deps)}")
     if session.error_message:
         lines.append(f"  Error: {session.error_message}")
     if session.port_forwards:
@@ -2267,3 +2343,124 @@ async def _handle_start_from_preset(input: dict, context: ToolContext) -> str:
 
     result = await _handle_start_emulation(start_input, context)
     return f"Starting from preset '{preset.name}'...\n\n{result}"
+
+
+async def _handle_emulate_with_qiling(input: dict, context: ToolContext) -> str:
+    """Run a PE or Mach-O binary through Qiling emulation."""
+    binary_path_raw = input.get("binary_path", "").strip()
+    if not binary_path_raw:
+        return "Error: binary_path is required."
+
+    path = context.resolve_path(binary_path_raw)
+    if not os.path.isfile(path):
+        return f"Error: File not found: {binary_path_raw}"
+
+    args_str = input.get("arguments", "").strip()
+    args = args_str.split() if args_str else None
+    timeout = min(input.get("timeout", 30), 120)
+    trace_syscalls = input.get("trace_syscalls", True)
+
+    # Auto-detect format
+    from app.services.binary_analysis_service import analyze_binary
+    import asyncio
+    loop = asyncio.get_running_loop()
+    info = await loop.run_in_executor(None, analyze_binary, path)
+
+    binary_format = info.get("format", "unknown")
+    architecture = info.get("architecture")
+
+    if binary_format not in ("pe", "macho", "elf"):
+        return (
+            f"Error: Qiling requires a recognized binary format (PE, Mach-O, or ELF). "
+            f"Detected format: {binary_format}. Use analyze_raw_binary first for raw binaries."
+        )
+
+    from app.services.qiling_service import (
+        run_binary_async,
+        get_rootfs_path,
+        is_qiling_supported,
+        check_rootfs_status,
+    )
+
+    if not is_qiling_supported(binary_format, architecture or ""):
+        return (
+            f"Error: Qiling does not support {binary_format}/{architecture}. "
+            "Supported combinations: PE (x86, x86_64), Mach-O (x86_64), "
+            "ELF (x86, x86_64, arm, aarch64, mips, mipsel)."
+        )
+
+    rootfs = get_rootfs_path(binary_format, architecture or "")
+    if not rootfs:
+        return (
+            f"Error: No Qiling rootfs available for {binary_format}/{architecture}. "
+            "The rootfs templates should be installed at /opt/qiling-rootfs/. "
+            "For Windows PE emulation, you also need Windows system DLLs."
+        )
+
+    result = await run_binary_async(
+        binary_path=path,
+        rootfs=rootfs,
+        args=args,
+        timeout=timeout,
+        trace_syscalls=trace_syscalls,
+        binary_format=binary_format,
+        architecture=architecture,
+    )
+
+    lines = [
+        f"Qiling Emulation Result ({binary_format.upper()} {architecture}):",
+        f"  Duration: {result.duration_ms}ms",
+        f"  Exit Code: {result.exit_code}",
+        f"  Syscalls: {result.syscall_count}",
+        f"  Timed Out: {'yes' if result.timed_out else 'no'}",
+    ]
+
+    if result.error:
+        lines.extend(["", f"Error: {result.error}"])
+
+    if result.stdout:
+        stdout_lines = result.stdout.strip()
+        if len(stdout_lines) > 4000:
+            stdout_lines = stdout_lines[:4000] + "\n... (truncated)"
+        lines.extend(["", "=== STDOUT ===", stdout_lines])
+
+    if result.stderr:
+        stderr_lines = result.stderr.strip()
+        if len(stderr_lines) > 2000:
+            stderr_lines = stderr_lines[:2000] + "\n... (truncated)"
+        lines.extend(["", "=== STDERR ===", stderr_lines])
+
+    if result.memory_errors:
+        lines.extend(["", "=== MEMORY ERRORS ==="])
+        for err in result.memory_errors[:10]:
+            lines.append(f"  {err}")
+
+    if result.syscall_trace:
+        lines.extend(["", f"=== SYSCALL TRACE (showing {min(len(result.syscall_trace), 50)}/{result.syscall_count}) ==="])
+        for call in result.syscall_trace[:50]:
+            lines.append(f"  {call}")
+
+    return "\n".join(lines)
+
+
+async def _handle_qiling_rootfs_status(input: dict, context: ToolContext) -> str:
+    """Check which Qiling rootfs templates are available."""
+    from app.services.qiling_service import check_rootfs_status
+
+    status = check_rootfs_status()
+
+    lines = ["Qiling Rootfs Status:", ""]
+    for key, info in sorted(status.items()):
+        available = "available" if info["available"] else "MISSING"
+        libs = "system libs OK" if info.get("has_system_libs") else "system libs MISSING"
+        lines.append(
+            f"  {key:<20} {available:<12} {libs:<20} ({info['rootfs_path']})"
+        )
+
+    lines.extend([
+        "",
+        "Note: Windows PE emulation requires Windows system DLLs (ntdll.dll, kernel32.dll, etc.)",
+        "due to licensing restrictions. Mount them at /opt/qiling-rootfs/x86_windows/Windows/System32/.",
+    ])
+
+    return "\n".join(lines)

@@ -16,6 +16,7 @@ class UnpackResult:
     endianness: str | None = None
     os_info: str | None = None
     kernel_path: str | None = None
+    binary_info: dict | None = None
     unpack_log: str = ""
     success: bool = False
     error: str | None = None

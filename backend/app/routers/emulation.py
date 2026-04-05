@@ -375,7 +375,29 @@ async def websocket_emulation_terminal(
 
     # Build the shell command — for user mode, run through QEMU user-mode
     if session.mode == "user":
-        shell_cmd = EmulationService.build_user_shell_cmd(session.architecture or "arm")
+        # Check if this is a standalone binary session
+        standalone_check = container.exec_run(
+            ["test", "-f", "/tmp/.standalone_mode"], demux=True,
+        )
+        is_standalone = standalone_check.exit_code == 0
+
+        if is_standalone:
+            static_check = container.exec_run(
+                ["cat", "/tmp/.standalone_static"], demux=True,
+            )
+            is_static = False
+            if static_check.exit_code == 0:
+                stdout = static_check.output[0] if isinstance(static_check.output, tuple) else static_check.output
+                is_static = stdout and stdout.strip() == b"1"
+
+            shell_cmd = EmulationService.build_user_shell_cmd(
+                session.architecture or "arm",
+                is_standalone=True,
+                binary_path=session.binary_path,
+                is_static=is_static,
+            )
+        else:
+            shell_cmd = EmulationService.build_user_shell_cmd(session.architecture or "arm")
     else:
         # System mode: wait for QEMU serial socket, then connect via socat.
         # The start-system-mode.sh script creates an ext4 rootfs image and
