@@ -1,6 +1,6 @@
 # Anti-patterns: Automated System Emulation (FirmAE)
 
-> Extracted: 2026-04-05
+> Extracted: 2026-04-05 (updated 2026-04-06 with Phase 5 E2E findings)
 > Campaign: .planning/campaigns/system-emulation-firmae.md
 
 ## Failed Patterns
@@ -40,3 +40,27 @@
 - **Failure mode:** On ARM64 host (Raspberry Pi), cross-architecture QEMU emulation (MIPS on ARM64) takes significantly longer. FirmAE's disk image creation alone takes ~5 minutes, and QEMU boot + network inference takes another ~5 minutes. The 10-minute timeout fired during the network inference phase.
 - **Evidence:** Pipeline reached `[*] infer network start!!!` before timeout at 600.6s. Firmware IP (192.168.1.2) was detected but not returned before cleanup.
 - **How to avoid:** When testing on non-x86 hardware, multiply expected timeouts by 3-5x. For QEMU system emulation (not just user-mode), cross-arch overhead is especially significant because the entire OS boots under emulation. Default to 30 minutes on ARM64.
+
+### 7. Writing Regex Patterns Without Checking Actual Tool Output
+- **What was done:** Wrote 6 regex patterns for FirmAE pipeline stage detection by guessing what FirmAE would print (e.g., `running firmware`, `detecting architecture`, `creating image`).
+- **Failure mode:** None of the 6 patterns matched FirmAE's actual stdout. FirmAE prints `[*] Extract done!!!`, `[+] get architecture done!!!`, `[*] infer network start!!!`, etc. — completely different from the guessed patterns. Stage detection was 100% broken: all sessions showed `stage=None`.
+- **Evidence:** Phase 5 E2E testing. Every session in the database had `system_emulation_stage=None`. Fixed by reading FirmAE's `run.sh` and matching against actual echo statements.
+- **How to avoid:** Before writing output-parsing regexes for a third-party tool, ALWAYS read the tool's source to find exact output strings. Run the tool once and capture stdout. Never guess patterns.
+
+### 8. Timeout Watchdog That Doesn't Distinguish Startup from Running
+- **What was done:** Pipeline timeout watchdog enforced a single deadline from start, regardless of whether QEMU had already booted successfully and the firmware was running.
+- **Failure mode:** FirmAE's "run" mode keeps QEMU alive indefinitely (by design — the user interacts with the firmware). The watchdog killed QEMU after 1800s even though the firmware was fully booted with web and network reachable. Error: "Pipeline timed out after 1800s in phase 'running'".
+- **Evidence:** First successful E2E test was killed by the watchdog despite reaching `phase=running`, `network_reachable=true`, `web_reachable=true`.
+- **How to avoid:** Timeout watchdogs should distinguish startup phases (where timeout makes sense) from operational phases (where the process is running as designed). Exit the watchdog when the target state is reached; let idle-timeout handle eventual cleanup separately.
+
+### 9. Schema Default Shadowing Config Value
+- **What was done:** Pydantic schema for `SystemEmulationStartRequest` had `timeout: int = Field(default=600)`. The config file had `system_emulation_pipeline_timeout: int = 1800`. The router passed `request.timeout` directly to the service.
+- **Failure mode:** Frontend sends the schema default (600s = 10 min). Config value (1800s = 30 min) was never used. Pipeline timed out on RPi where cross-arch QEMU emulation takes 15-25 minutes for the full FirmAE pipeline.
+- **Evidence:** Multiple sessions with `error_message='Pipeline failed with exit code -15'` (SIGTERM from 10-min timeout).
+- **How to avoid:** When a Pydantic schema default exists alongside a config value for the same setting, the router/controller must reconcile them — either read the config default, or detect when the client sent the schema default vs. an explicit override.
+
+### 10. Port Scanning Too Many Ports in Cross-Architecture QEMU
+- **What was done:** nmap scan in the service discovery endpoint used `--top-ports 1000` with service version detection (`-sV`).
+- **Failure mode:** Scanning 1000 ports through QEMU cross-architecture emulation (MIPS on ARM64) is extremely slow — nmap exceeded the 60s timeout before finding any open ports. Service discovery returned empty results despite ports 22, 80, 443 being open.
+- **Evidence:** Service discovery endpoint returned `[]`. Direct nmap scan of just 6 ports completed in 12 seconds and found 3 open ports.
+- **How to avoid:** In QEMU cross-arch environments, limit port scans to common embedded device ports (15-20 ports max) instead of broad sweeps. Use `-T5 --max-retries 0` for speed. Increase timeout to 120s.
