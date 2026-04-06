@@ -1,0 +1,27 @@
+name: Firmware Security Scan
+on:
+  workflow_dispatch:
+    inputs:
+      firmware-url:
+        description: 'URL to firmware image'
+        required: true
+      skip-phases:
+        description: 'Comma-separated phases to skip (e.g. compliance,android)'
+        required: false
+        default: ''
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download firmware
+        run: wget -q -O firmware.bin "${{ github.event.inputs.firmware-url }}"
+
+      - name: Scan firmware
+        uses: ./.github/actions/firmware-scan
+        with:
+          firmware-path: firmware.bin
+          fail-on-critical: 'true'
+          format: json
+          skip-phases: ${{ github.event.inputs.skip-phases }}

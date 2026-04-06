@@ -28,10 +28,12 @@ dependencies = [
     "lief>=0.15.0",
     "pefile>=2024.8",
     "capstone>=5.0.0",
+    "aiosqlite>=0.20.0",
 ]
 
 [project.scripts]
 wairz-mcp = "app.mcp_server:main"
+wairz-scan = "app.cli.scan:main"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

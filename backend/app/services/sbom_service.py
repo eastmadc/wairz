@@ -5,6 +5,7 @@ and binaries for version information, and returns a deduplicated list of
 identified components with CPE and PURL identifiers.
 """
 
+import logging
 import os
 import re
 from dataclasses import dataclass, field
@@ -12,6 +13,8 @@ from dataclasses import dataclass, field
 from elftools.elf.elffile import ELFFile
 
 from app.utils.sandbox import safe_walk, validate_path
+
+logger = logging.getLogger(__name__)
 
 MAX_BINARIES_SCAN = 200
 MAX_BINARY_READ = 256 * 1024  # 256KB for strings extraction
@@ -111,8 +114,71 @@ CPE_VENDOR_MAP: dict[str, tuple[str, str]] = {
     "syslog-ng": ("balabit", "syslog-ng"),
     # IoT protocols
     "libcoap": ("libcoap", "libcoap"),
+    "lwip": ("lwip_project", "lwip"),
+    "contiki": ("contiki-os", "contiki"),
+    "contiki-ng": ("contiki-ng", "contiki-ng"),
+    "tinydtls": ("eclipse", "tinydtls"),
+    "mbed-os-connectivity": ("arm", "mbed_os"),
+    "mbed-os": ("arm", "mbed_os"),
     # TR-069/CWMP
     "cwmpd": ("cwmp", "cwmpd"),
+    # Bootloaders (additional)
+    "grub": ("gnu", "grub2"),
+    "grub2": ("gnu", "grub2"),
+    "coreboot": ("coreboot", "coreboot"),
+    "barebox": ("barebox", "barebox"),
+    "arm-trusted-firmware": ("arm", "arm-trusted-firmware"),
+    "atf": ("arm", "arm-trusted-firmware"),
+    "bl1": ("arm", "arm-trusted-firmware"),
+    "bl2": ("arm", "arm-trusted-firmware"),
+    "bl31": ("arm", "arm-trusted-firmware"),
+    "edk2": ("tianocore", "edk2"),
+    "tianocore": ("tianocore", "edk2"),
+    # Android framework
+    "android": ("google", "android"),
+    "webview": ("google", "android"),
+    "android-runtime": ("google", "android"),
+    # MediaTek SoC libraries
+    "libmtk": ("mediatek", "mt_system_software"),
+    "libmtk_bsg": ("mediatek", "mt_system_software"),
+    "libmtk_vpu": ("mediatek", "mt_system_software"),
+    "libnvram": ("mediatek", "mt_system_software"),
+    "libcam_utils": ("mediatek", "mt_system_software"),
+    "mtk-ccci": ("mediatek", "mt_system_software"),
+    "mediatek-telephony": ("mediatek", "mt_system_software"),
+    # Qualcomm SoC libraries
+    "libqmi": ("qualcomm", "mdm"),
+    "libqmi_cci": ("qualcomm", "mdm"),
+    "libqmi_csi": ("qualcomm", "mdm"),
+    "libdiag": ("qualcomm", "mdm"),
+    "libqti": ("qualcomm", "mdm"),
+    "libadsprpc": ("qualcomm", "mdm"),
+    "libcdsprpc": ("qualcomm", "mdm"),
+    "adreno": ("qualcomm", "adreno_gpu"),
+    "libgsl": ("qualcomm", "adreno_gpu"),
+    "qca-wifi": ("qualcomm", "qca_wifi_firmware"),
+    # Industrial protocols
+    "libmodbus": ("libmodbus", "libmodbus"),
+    "open62541": ("open62541", "open62541"),
+    "libopen62541": ("open62541", "open62541"),
+    "opcua": ("opcfoundation", "ua-.net_standard"),
+    "bacnet": ("bacnet", "bacnet_stack"),
+    "libcanopen": ("canopen", "canopen"),
+    # Additional network / embedded
+    "libevent": ("libevent_project", "libevent"),
+    "libev": ("libev_project", "libev"),
+    "libuv": ("libuv_project", "libuv"),
+    "protobuf": ("google", "protobuf"),
+    "grpc": ("grpc", "grpc"),
+    "libmicrohttpd": ("gnu", "libmicrohttpd"),
+    "lldpd": ("lldpd_project", "lldpd"),
+    "snmpd": ("net-snmp", "net-snmp"),
+    "chrony": ("chrony_project", "chrony"),
+    # Bluetooth / wireless
+    "bluez": ("bluez", "bluez"),
+    "libbluetooth": ("bluez", "bluez"),
+    "iw": ("kernel", "iw"),
+    "wireless-tools": ("hewlett_packard_enterprise", "wireless_tools"),
 }
 
 # Regex patterns for binary version string extraction
@@ -290,6 +356,7 @@ class IdentifiedComponent:
     detection_confidence: str = "medium"
     file_paths: list[str] = field(default_factory=list)
     metadata: dict = field(default_factory=dict)
+    source_partition: str | None = None
 
 
 class SbomService:
@@ -298,12 +365,55 @@ class SbomService:
     def __init__(self, extracted_root: str):
         self.extracted_root = os.path.realpath(extracted_root)
         self._components: dict[tuple[str, str | None], IdentifiedComponent] = {}
+        self._current_partition: str | None = None
 
     def _validate(self, path: str) -> str:
         return validate_path(self.extracted_root, path)
 
     def _abs_path(self, rel_path: str) -> str:
         return os.path.join(self.extracted_root, rel_path.lstrip("/"))
+
+    def _get_all_scan_roots(self) -> list[tuple[str, str | None]]:
+        """Return all directories to scan: (path, partition_name | None).
+
+        The primary extracted root is always first (partition_name=None).
+        For multi-partition firmware (Android), sibling directories under
+        a shared parent (e.g. rootfs/) are included with their directory
+        name as partition label.
+        """
+        roots: list[tuple[str, str | None]] = [(self.extracted_root, None)]
+
+        parent = os.path.dirname(self.extracted_root)
+        primary_name = os.path.basename(self.extracted_root)
+
+        # Heuristic: if the parent directory name suggests a multi-partition
+        # layout, include sibling partitions.
+        if os.path.basename(parent) in ("rootfs", "partitions", "images"):
+            try:
+                for entry in sorted(os.listdir(parent)):
+                    sibling_path = os.path.join(parent, entry)
+                    if (
+                        entry != primary_name
+                        and os.path.isdir(sibling_path)
+                        and not entry.startswith(".")
+                    ):
+                        roots.append((sibling_path, entry))
+            except OSError:
+                pass
+
+        # Also check for Android-style partitions nested inside the primary
+        # root (e.g. <root>/vendor, <root>/product, <root>/system_ext).
+        android_partitions = ("vendor", "product", "system_ext", "odm")
+        for part_name in android_partitions:
+            part_path = os.path.join(self.extracted_root, part_name)
+            if os.path.isdir(part_path):
+                # These are sub-dirs inside the primary root — mark the
+                # partition name but don't add a new scan root (the primary
+                # root walk already covers them).  We record them so custom
+                # strategies that only scan specific sub-paths can iterate.
+                pass  # Covered by primary root walk
+
+        return roots
 
     def generate_sbom(self) -> list[dict]:
         """Run all identification strategies and return component list.
@@ -315,20 +425,42 @@ class SbomService:
         # Custom strategies run after and override Syft for same components.
         self._run_syft_scan()
 
-        self._scan_package_managers()
-        self._scan_python_packages()
-        self._scan_kernel_version()
-        self._scan_firmware_markers()
-        self._scan_busybox()
-        self._scan_c_library()
-        self._scan_gcc_version()
-        self._scan_library_sonames()
-        self._scan_binary_version_strings()
-        self._scan_android_components()
+        # Discover all scan roots for multi-partition firmware
+        scan_roots = self._get_all_scan_roots()
+
+        # Run custom strategies across all scan roots.
+        # The primary root is always first; additional partitions get
+        # their own pass with a temporary extracted_root swap.
+        original_root = self.extracted_root
+        for scan_root, partition_name in scan_roots:
+            self.extracted_root = scan_root
+            self._current_partition = partition_name
+
+            self._scan_package_managers()
+            self._scan_python_packages()
+            self._scan_kernel_version()
+            self._scan_firmware_markers()
+            self._scan_busybox()
+            self._scan_c_library()
+            self._scan_gcc_version()
+            self._scan_library_sonames()
+            self._scan_binary_version_strings()
+            self._scan_android_components()
+
+        # Restore the original root and clear partition context
+        self.extracted_root = original_root
+        self._current_partition = None
+
         self._annotate_service_risks()
+
+        # CPE enrichment post-processor — fills in missing CPEs
+        self._enrich_cpes()
 
         results = []
         for comp in self._components.values():
+            metadata = dict(comp.metadata)
+            if comp.source_partition:
+                metadata["source_partition"] = comp.source_partition
             results.append({
                 "name": comp.name,
                 "version": comp.version,
@@ -339,7 +471,7 @@ class SbomService:
                 "detection_source": comp.detection_source,
                 "detection_confidence": comp.detection_confidence,
                 "file_paths": comp.file_paths or None,
-                "metadata": comp.metadata,
+                "metadata": metadata,
             })
 
         return results
@@ -358,6 +490,10 @@ class SbomService:
 
     def _add_component(self, comp: IdentifiedComponent) -> None:
         """Add or merge a component, preferring higher-confidence detections."""
+        # Stamp source partition from the current scanning context
+        if self._current_partition and not comp.source_partition:
+            comp.source_partition = self._current_partition
+
         key = (self._normalize_name(comp.name), self._normalize_version(comp.version))
         existing = self._components.get(key)
 
@@ -380,12 +516,30 @@ class SbomService:
             existing.file_paths = merged_paths
 
     @staticmethod
-    def _build_cpe(vendor: str, product: str, version: str | None) -> str | None:
+    def _build_cpe(vendor: str, product: str, version: str | None,
+                   part: str = "a") -> str | None:
+        """Build a CPE 2.3 string.
+
+        Args:
+            vendor: CPE vendor field.
+            product: CPE product field.
+            version: Software version (None returns None).
+            part: CPE part — "a" for application (default), "o" for
+                  operating-system, "h" for hardware.
+        """
         if not version:
             return None
         # Sanitize version for CPE
         ver = version.strip()
-        return f"cpe:2.3:a:{vendor}:{product}:{ver}:*:*:*:*:*:*:*"
+        return f"cpe:2.3:{part}:{vendor}:{product}:{ver}:*:*:*:*:*:*:*"
+
+    @staticmethod
+    def _build_os_cpe(vendor: str, product: str, version: str | None) -> str | None:
+        """Convenience wrapper for OS-type CPE (part='o')."""
+        if not version:
+            return None
+        ver = version.strip()
+        return f"cpe:2.3:o:{vendor}:{product}:{ver}:*:*:*:*:*:*:*"
 
     @staticmethod
     def _build_purl(name: str, version: str | None, pkg_type: str = "generic") -> str | None:
@@ -1666,6 +1820,200 @@ class SbomService:
         if len(current) >= min_length:
             strings.append(bytes(current))
         return strings
+
+    # ------------------------------------------------------------------
+    # Post-processing: CPE enrichment
+    # ------------------------------------------------------------------
+
+    # Android API level to version mapping for CPE enrichment
+    _ANDROID_API_TO_VERSION: dict[int, str] = {
+        21: "5.0", 22: "5.1", 23: "6.0", 24: "7.0", 25: "7.1",
+        26: "8.0", 27: "8.1", 28: "9", 29: "10", 30: "11",
+        31: "12", 32: "12L", 33: "13", 34: "14", 35: "15",
+    }
+
+    def _enrich_cpes(self) -> None:
+        """Post-processing pass to fill in missing CPEs.
+
+        Runs after all scanning strategies have completed.  For each
+        component that lacks a CPE, attempts enrichment via:
+          1. Direct CPE_VENDOR_MAP lookup (exact + normalized name)
+          2. Fuzzy matching (strip lib prefix, normalize hyphens/underscores)
+          3. Kernel module inheritance (inherit linux_kernel CPE)
+          4. Android APK targetSdkVersion -> Android version CPE
+        """
+        # Find the kernel version for module inheritance
+        kernel_version = self._find_kernel_version()
+
+        stats: dict[str, int] = {
+            "direct_map": 0,
+            "fuzzy_match": 0,
+            "kernel_inherit": 0,
+            "android_sdk": 0,
+            "already_had_cpe": 0,
+            "no_match": 0,
+        }
+
+        for key, comp in list(self._components.items()):
+            if comp.cpe:
+                stats["already_had_cpe"] += 1
+                continue
+
+            enriched = False
+
+            # --- 1. Direct CPE_VENDOR_MAP lookup ---
+            name_lower = comp.name.lower()
+            vendor_product = CPE_VENDOR_MAP.get(name_lower)
+            if vendor_product and comp.version:
+                part = "o" if comp.type == "operating-system" else "a"
+                comp.cpe = self._build_cpe(
+                    vendor_product[0], vendor_product[1], comp.version, part=part
+                )
+                comp.supplier = comp.supplier or vendor_product[0]
+                stats["direct_map"] += 1
+                enriched = True
+
+            # --- 2. Fuzzy matching ---
+            if not enriched and comp.version:
+                fuzzy_cpe = self._fuzzy_cpe_lookup(comp.name, comp.version, comp.type)
+                if fuzzy_cpe:
+                    comp.cpe = fuzzy_cpe
+                    stats["fuzzy_match"] += 1
+                    enriched = True
+
+            # --- 3. Kernel module inheritance ---
+            if not enriched and kernel_version and self._is_kernel_module(comp):
+                comp.cpe = self._build_os_cpe(
+                    "linux", "linux_kernel", kernel_version
+                )
+                comp.metadata["cpe_inherited_from"] = "linux-kernel"
+                stats["kernel_inherit"] += 1
+                enriched = True
+
+            # --- 4. Android APK targetSdkVersion ---
+            if not enriched and self._is_android_component(comp):
+                sdk_version = comp.metadata.get("targetSdkVersion")
+                if sdk_version:
+                    try:
+                        api_level = int(sdk_version)
+                        android_ver = self._ANDROID_API_TO_VERSION.get(api_level)
+                        if android_ver:
+                            comp.cpe = self._build_os_cpe(
+                                "google", "android", android_ver
+                            )
+                            stats["android_sdk"] += 1
+                            enriched = True
+                    except (ValueError, TypeError):
+                        pass
+
+            if not enriched:
+                stats["no_match"] += 1
+
+        total_enriched = (
+            stats["direct_map"] + stats["fuzzy_match"]
+            + stats["kernel_inherit"] + stats["android_sdk"]
+        )
+        logger.info(
+            "CPE enrichment complete: %d components enriched "
+            "(direct_map=%d, fuzzy=%d, kernel_inherit=%d, android_sdk=%d), "
+            "%d already had CPE, %d unmatched",
+            total_enriched,
+            stats["direct_map"],
+            stats["fuzzy_match"],
+            stats["kernel_inherit"],
+            stats["android_sdk"],
+            stats["already_had_cpe"],
+            stats["no_match"],
+        )
+
+    def _find_kernel_version(self) -> str | None:
+        """Look up the kernel version from already-identified components."""
+        for comp in self._components.values():
+            if comp.name == "linux-kernel" and comp.version:
+                return comp.version
+        return None
+
+    @staticmethod
+    def _is_kernel_module(comp: IdentifiedComponent) -> bool:
+        """Return True if the component is a kernel module."""
+        if comp.type == "kernel-module":
+            return True
+        if "kernel_module" in comp.metadata.get("type", ""):
+            return True
+        if comp.detection_source in ("android_kernel_module", "kernel_module"):
+            return True
+        # Check file paths for .ko extension or /modules/ directory
+        for fp in comp.file_paths:
+            if fp.endswith(".ko") or "/modules/" in fp:
+                return True
+        return False
+
+    @staticmethod
+    def _is_android_component(comp: IdentifiedComponent) -> bool:
+        """Return True if the component looks like an Android APK/app."""
+        if comp.detection_source in ("android_apk", "android_init_service"):
+            return True
+        if comp.metadata.get("source") == "android":
+            return True
+        return False
+
+    def _fuzzy_cpe_lookup(self, name: str, version: str,
+                          comp_type: str) -> str | None:
+        """Attempt fuzzy matching against CPE_VENDOR_MAP.
+
+        Tries multiple normalization strategies:
+          - Strip 'lib' prefix (libfoo -> foo)
+          - Normalize hyphens/underscores
+          - Try common suffixes (libfoo-dev -> libfoo)
+          - Try with/without version suffix in name (openssl-1.1 -> openssl)
+        """
+        candidates: list[str] = []
+        name_lower = name.lower().strip()
+
+        # Strip lib prefix
+        if name_lower.startswith("lib"):
+            candidates.append(name_lower[3:])
+
+        # Normalize hyphens <-> underscores
+        candidates.append(name_lower.replace("-", "_"))
+        candidates.append(name_lower.replace("_", "-"))
+        if name_lower.startswith("lib"):
+            candidates.append(name_lower[3:].replace("-", "_"))
+            candidates.append(name_lower[3:].replace("_", "-"))
+
+        # Strip common suffixes
+        for suffix in ("-dev", "-dbg", "-bin", "-utils", "-tools",
+                       "-client", "-server", "-common", "-core"):
+            if name_lower.endswith(suffix):
+                base = name_lower[:-len(suffix)]
+                candidates.append(base)
+                if base.startswith("lib"):
+                    candidates.append(base[3:])
+
+        # Strip version suffix from name (e.g. "openssl1.1" -> "openssl")
+        stripped = re.sub(r"[\d.]+$", "", name_lower).rstrip("-_")
+        if stripped and stripped != name_lower:
+            candidates.append(stripped)
+            if stripped.startswith("lib"):
+                candidates.append(stripped[3:])
+
+        # Deduplicate while preserving order
+        seen: set[str] = {name_lower}
+        unique_candidates: list[str] = []
+        for c in candidates:
+            if c and c not in seen:
+                seen.add(c)
+                unique_candidates.append(c)
+
+        for candidate in unique_candidates:
+            vendor_product = CPE_VENDOR_MAP.get(candidate)
+            if vendor_product:
+                part = "o" if comp_type == "operating-system" else "a"
+                return self._build_cpe(
+                    vendor_product[0], vendor_product[1], version, part=part
+                )
+
+        return None
 
     # ------------------------------------------------------------------
     # Post-processing: Annotate service risk levels

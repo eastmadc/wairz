@@ -1,0 +1,60 @@
+# Minimal CI image for stateless firmware security scanning.
+# No PostgreSQL, Redis, Ghidra, or frontend — just the scan engine.
+FROM python:3.12-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    binwalk \
+    squashfs-tools \
+    cramfsswap \
+    util-linux-extra \
+    mtd-utils \
+    cpio \
+    p7zip-full \
+    file \
+    libmagic1 \
+    git \
+    wget \
+    curl \
+    libyara-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install unblob for broad firmware extraction support
+RUN pip3 install --no-cache-dir --break-system-packages unblob \
+    || echo "WARN: unblob install failed"
+
+# Install Grype for vulnerability scanning
+ARG GRYPE_VERSION=0.87.0
+RUN ARCH=$(uname -m) && \
+    if [ "$ARCH" = "x86_64" ]; then GOARCH=amd64; \
+    elif [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then GOARCH=arm64; \
+    else echo "Unsupported arch: $ARCH" && exit 1; fi && \
+    curl -sSfL "https://github.com/anchore/grype/releases/download/v${GRYPE_VERSION}/grype_${GRYPE_VERSION}_linux_${GOARCH}.tar.gz" \
+        | tar xz -C /usr/local/bin grype && \
+    chmod +x /usr/local/bin/grype
+
+# Install Syft for SBOM generation
+ARG SYFT_VERSION=1.41.2
+RUN ARCH=$(uname -m) && \
+    if [ "$ARCH" = "x86_64" ]; then GOARCH=amd64; \
+    elif [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then GOARCH=arm64; \
+    else echo "Unsupported arch: $ARCH" && exit 1; fi && \
+    curl -sSfL "https://github.com/anchore/syft/releases/download/v${SYFT_VERSION}/syft_${SYFT_VERSION}_linux_${GOARCH}.tar.gz" \
+        | tar xz -C /usr/local/bin syft && \
+    chmod +x /usr/local/bin/syft
+
+# Install uv and application
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+
+WORKDIR /app
+COPY pyproject.toml uv.lock* ./
+
+# aiosqlite is in pyproject.toml dependencies for stateless temp-DB operation
+RUN uv venv --python /usr/local/bin/python3.12 .venv \
+    && uv sync --no-dev --no-editable 2>/dev/null || uv sync --no-editable
+
+COPY . .
+
+# Activate venv for the entrypoint
+ENV PATH="/app/.venv/bin:$PATH"
+
+ENTRYPOINT ["wairz-scan"]
