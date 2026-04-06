@@ -179,20 +179,21 @@ def create_app() -> Flask:
         ports = []
         for ip in state.guest_ips:
             try:
-                # Fast nmap scan: top 1000 TCP ports with service detection
+                # Targeted nmap scan: common embedded device ports
+                # (top-1000 is too slow inside QEMU cross-arch emulation)
                 result = subprocess.run(
                     [
                         "nmap", "-sT", "-sV",
-                        "--top-ports", "1000",
+                        "-p", "21,22,23,25,53,80,443,554,8080,8443,161,179,1883,5060,8883",
                         "--open",
-                        "-T4",
-                        "--max-retries", "1",
+                        "-T5",
+                        "--max-retries", "0",
                         "-oX", "-",  # XML output to stdout
                         ip,
                     ],
                     capture_output=True,
                     text=True,
-                    timeout=60,
+                    timeout=120,
                 )
 
                 # Parse nmap XML output for open ports

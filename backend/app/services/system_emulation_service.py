@@ -331,7 +331,7 @@ class SystemEmulationService:
             if is_terminal and error:
                 session.status = "error"
                 session.error_message = error
-            elif phase in ("running", "network_check", "web_check"):
+            elif phase in ("running", "checking", "network_check", "web_check"):
                 session.status = "running"
             elif phase in ("done",):
                 session.status = "running"
