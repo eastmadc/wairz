@@ -154,8 +154,8 @@ def register_sbom_tools(registry: ToolRegistry) -> None:
         name="export_sbom",
         description=(
             "Export the SBOM in a standard format. Supports 'cyclonedx-json' "
-            "(CycloneDX 1.5), 'spdx-json' (SPDX 2.3), and 'cyclonedx-vex-json' "
-            "(CycloneDX 1.5 VEX with vulnerability analysis). The VEX format "
+            "(CycloneDX 1.7 / ECMA-424), 'spdx-json' (SPDX 2.3), and 'cyclonedx-vex-json' "
+            "(CycloneDX 1.7 VEX with vulnerability analysis). The VEX format "
             "includes all vulnerabilities with their triage state, justifications, "
             "and adjusted severity. Requires generate_sbom to have been run first."
         ),
@@ -762,11 +762,11 @@ async def _handle_export_sbom(input: dict, context: ToolContext) -> str:
         doc = json.loads(resp.body.decode())
         return json.dumps(doc, indent=2)[:30000]
 
-    # Default: CycloneDX SBOM
+    # Default: CycloneDX 1.7 SBOM
     from datetime import datetime, timezone
     bom = {
         "bomFormat": "CycloneDX",
-        "specVersion": "1.5",
+        "specVersion": "1.7",
         "version": 1,
         "components": [],
     }
@@ -805,7 +805,7 @@ async def _handle_push_to_dependency_track(
     if not comp_count:
         return "No SBOM generated yet. Run generate_sbom first."
 
-    # Build CycloneDX JSON
+    # Build CycloneDX 1.7 JSON
     stmt = select(SbomComponent).where(
         SbomComponent.firmware_id == context.firmware_id
     )
@@ -814,7 +814,7 @@ async def _handle_push_to_dependency_track(
 
     bom = {
         "bomFormat": "CycloneDX",
-        "specVersion": "1.5",
+        "specVersion": "1.7",
         "version": 1,
         "components": [
             {

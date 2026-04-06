@@ -1,0 +1,108 @@
+goal: >
+  Replace the broken pyelftools size-only binary comparison in Wairz with a
+  3-tier diffing system (LIEF body hashing → Capstone instruction diff →
+  radiff2 graph analysis) that detects all code changes in firmware binaries
+  and displays instruction-level diffs in the comparison UI — without requiring
+  MCP or Ghidra.
+
+task_type: build
+seed_id: seed_bindiff_20260406
+interview_id: interview_20260406_162021
+ambiguity_score: 0.12
+created_at: "2026-04-06T16:20:00Z"
+
+brownfield_context:
+  project_type: brownfield
+  context_references:
+    - path: backend/app/services/comparison_service.py
+      role: primary
+      summary: >
+        Contains diff_binary(), _extract_functions() (pyelftools, size-only),
+        _extract_binary_info(). This is the main file to enhance.
+    - path: backend/app/routers/comparison.py
+      role: primary
+      summary: >
+        REST endpoints: POST /compare/firmware, /compare/binary, /compare/text.
+        Add new /compare/binary/instructions endpoint.
+    - path: backend/app/schemas/comparison.py
+      role: primary
+      summary: >
+        BinaryDiffResponse, FunctionDiffEntryResponse. Extend with hash fields
+        and instruction diff response.
+    - path: frontend/src/pages/ComparisonPage.tsx
+      role: primary
+      summary: >
+        581-line comparison page with tabs. Binary detail tab needs instruction
+        diff display when clicking a modified function.
+    - path: frontend/src/api/comparison.ts
+      role: reference
+      summary: API client for comparison endpoints. Add diffInstructions().
+    - path: backend/app/ai/tools/comparison.py
+      role: reference
+      summary: >
+        MCP diff_binary tool calls comparison_service.diff_binary() — will
+        auto-benefit from the upgrade.
+  existing_patterns:
+    - comparison_service functions return dataclasses, router converts to Pydantic
+    - Frontend uses tab-based navigation in ComparisonPage
+    - Text diff already has unified diff display with color highlighting
+    - Background jobs use arq worker queue (for Tier 3)
+
+constraints:
+  - Tier 1 (LIEF body hash) must complete in < 500ms for typical firmware binaries
+  - Tier 2 (Capstone instruction diff) must complete in < 2s per function
+  - Must not break existing filesystem diff or text diff functionality
+  - Must handle ARM64, ARM, MIPS, MIPSel, x86, x86_64 architectures
+  - Use .symtab first (all functions), fall back to .dynsym (exports only), then section hashing
+  - All dependencies already installed — lief, capstone, radare2, pyelftools
+  - No new Python packages may be added
+  - Frontend TypeScript must pass tsc --noEmit
+  - Backend tests must continue passing (379 tests)
+  - Phase 1 ships Tier 1 + Tier 2 together; Tier 3 deferred to separate intake item
+
+acceptance_criteria:
+  - diff_binary() returns function-level diffs using body hashes, not just sizes
+  - Modified functions include hash_a and hash_b fields for verification
+  - Section-level hashing fallback works for fully stripped binaries (no .symtab or .dynsym)
+  - New POST /compare/binary/instructions endpoint returns Capstone disassembly diff for a specific function
+  - Frontend binary detail tab shows clickable modified functions
+  - Clicking a modified function shows inline instruction-level diff with syntax highlighting
+  - Architecture auto-detection from ELF header maps to correct Capstone CS_ARCH/CS_MODE
+  - Cross-architecture comparison gracefully handled (show metadata only, no instruction diff)
+  - Existing comparison tests still pass
+  - Frontend typecheck clean
+
+ontology_schema:
+  name: BinaryDiffEnhancement
+  fields:
+    function_hash:
+      type: string
+      description: SHA-256 of function body bytes from LIEF
+    function_diff_entry:
+      type: object
+      fields: [name, status, size_a, size_b, hash_a, hash_b, addr_a, addr_b]
+    instruction_diff:
+      type: object
+      fields: [function_name, arch, diff_text, lines_added, lines_removed]
+    section_diff:
+      type: object
+      fields: [name, hash_a, hash_b, size_a, size_b, changed]
+
+evaluation_principles:
+  accuracy: 0.35          # Must detect ALL code changes, not just size changes
+  performance: 0.25       # Tier 1 < 500ms, Tier 2 < 2s — non-negotiable
+  ux_completeness: 0.20   # User can go from "file changed" → function → instructions
+  robustness: 0.20        # Handles stripped, cross-arch, malformed ELF gracefully
+
+exit_conditions:
+  tier1_accuracy: >
+    diff_binary() detects modified functions that have identical sizes but
+    different body hashes (the case pyelftools missed entirely)
+  tier2_display: >
+    Clicking a modified function in the UI shows an instruction-level
+    unified diff with relative offsets
+  no_regression: >
+    All 379 backend tests pass, frontend typecheck clean
+  stripped_fallback: >
+    Comparing a stripped binary shows section-level changes instead of
+    "no symbol-level diff available"

@@ -24,6 +24,7 @@ import FirmwareSelector from '@/components/projects/FirmwareSelector'
 import { CampaignCard } from '@/components/fuzzing/CampaignCard'
 import { CampaignDetail } from '@/components/fuzzing/CampaignDetail'
 import { extractErrorMessage } from '@/utils/error'
+import { useEventStream } from '@/hooks/useEventStream'
 import type {
   FirmwareDetail,
   FuzzingCampaign,
@@ -83,16 +84,28 @@ export default function FuzzingPage() {
     if (projectId) listFirmware(projectId).then(setFirmwareList).catch(() => {})
   }, [loadCampaigns, projectId])
 
-  // Poll for updates while a campaign is running
+  // SSE: listen for fuzzing events and refresh on status changes
+  const hasRunningCampaign = campaigns.some((c) => c.status === 'running')
+  const { lastEvent: fuzzEvent } = useEventStream<{ type: string; status: string }>(
+    projectId,
+    { types: ['fuzzing'], enabled: hasRunningCampaign },
+  )
+
   useEffect(() => {
-    if (!projectId) return
+    if (!fuzzEvent || !projectId) return
+    loadCampaigns()
+    const currentSelectedId = selectedIdRef.current
+    if (currentSelectedId) {
+      listCrashes(projectId, currentSelectedId).then(setCrashes).catch(() => {})
+    }
+  }, [fuzzEvent, projectId, loadCampaigns])
+
+  // Fallback poll while campaigns are running (in case SSE unavailable)
+  useEffect(() => {
+    if (!projectId || !hasRunningCampaign) return
 
     const interval = setInterval(async () => {
-      const hasRunning = campaignsRef.current.some((c) => c.status === 'running')
-      if (!hasRunning) return
-
       await loadCampaigns()
-      // Refresh selected campaign's crashes
       const currentSelectedId = selectedIdRef.current
       if (currentSelectedId) {
         const running = campaignsRef.current.find((c) => c.id === currentSelectedId && c.status === 'running')
@@ -103,9 +116,9 @@ export default function FuzzingPage() {
           } catch { /* ignore */ }
         }
       }
-    }, 5000)
+    }, 10000)
     return () => clearInterval(interval)
-  }, [projectId])
+  }, [projectId, hasRunningCampaign, loadCampaigns])
 
   // Load crashes when selected campaign changes
   useEffect(() => {

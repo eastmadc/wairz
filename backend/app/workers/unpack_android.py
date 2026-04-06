@@ -60,6 +60,13 @@ async def _try_extract_partition(
         try:
             await asyncio.wait_for(proc.communicate(), timeout=300)
             if os.listdir(dest_dir):
+                # EROFS preserves original Android permissions (600, 640) which
+                # break analysis tools.  Add read for all to enable scanning.
+                await asyncio.create_subprocess_exec(
+                    "chmod", "-R", "+r", dest_dir,
+                    stdout=asyncio.subprocess.DEVNULL,
+                    stderr=asyncio.subprocess.DEVNULL,
+                )
                 log_lines.append(f"Extracted {partition_name} as EROFS ({len(os.listdir(dest_dir))} top-level entries)")
                 return True
         except asyncio.TimeoutError:
@@ -75,6 +82,11 @@ async def _try_extract_partition(
         try:
             await asyncio.wait_for(proc.communicate(), timeout=300)
             if os.listdir(dest_dir):
+                await asyncio.create_subprocess_exec(
+                    "chmod", "-R", "+r", dest_dir,
+                    stdout=asyncio.subprocess.DEVNULL,
+                    stderr=asyncio.subprocess.DEVNULL,
+                )
                 log_lines.append(f"Extracted {partition_name} as ext4 ({len(os.listdir(dest_dir))} top-level entries)")
                 return True
         except asyncio.TimeoutError:
@@ -399,6 +411,11 @@ async def _extract_android_ota(firmware_path: str, extraction_dir: str) -> str:
     os.makedirs(rootfs_dir, exist_ok=True)
 
     search_dirs = [extraction_dir, os.path.join(extraction_dir, "partitions")]
+    # Also search any subdirectories created by zip extraction (e.g., MediaTek
+    # scatter-format zips nest everything under a version-named folder)
+    for entry in os.scandir(extraction_dir):
+        if entry.is_dir(follow_symlinks=False) and entry.name not in ("rootfs", "partitions", "boot"):
+            search_dirs.append(entry.path)
 
     for search_dir in search_dirs:
         if not os.path.isdir(search_dir):

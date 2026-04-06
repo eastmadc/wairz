@@ -156,7 +156,7 @@ async def _handle_diff_binary(input: dict, context: ToolContext) -> str:
     if result.functions_added:
         lines.append(f"--- Functions Added ({len(result.functions_added)}) ---")
         for f in result.functions_added[:30]:
-            lines.append(f"  + {f.name} (size: {f.size_b})")
+            lines.append(f"  + {f.name} (size: {f.size_b}, addr: 0x{f.addr_b:x})" if f.addr_b else f"  + {f.name} (size: {f.size_b})")
         if len(result.functions_added) > 30:
             lines.append(f"  ... and {len(result.functions_added) - 30} more")
         lines.append("")
@@ -164,7 +164,7 @@ async def _handle_diff_binary(input: dict, context: ToolContext) -> str:
     if result.functions_removed:
         lines.append(f"--- Functions Removed ({len(result.functions_removed)}) ---")
         for f in result.functions_removed[:30]:
-            lines.append(f"  - {f.name} (size: {f.size_a})")
+            lines.append(f"  - {f.name} (size: {f.size_a}, addr: 0x{f.addr_a:x})" if f.addr_a else f"  - {f.name} (size: {f.size_a})")
         if len(result.functions_removed) > 30:
             lines.append(f"  ... and {len(result.functions_removed) - 30} more")
         lines.append("")
@@ -172,13 +172,48 @@ async def _handle_diff_binary(input: dict, context: ToolContext) -> str:
     if result.functions_modified:
         lines.append(f"--- Functions Modified ({len(result.functions_modified)}) ---")
         for f in result.functions_modified[:30]:
-            lines.append(f"  ~ {f.name} (size: {f.size_a} → {f.size_b})")
+            size_info = f"size: {f.size_a} -> {f.size_b}" if f.size_a != f.size_b else f"size: {f.size_a} (unchanged)"
+            lines.append(f"  ~ {f.name} ({size_info}, hash changed)")
         if len(result.functions_modified) > 30:
             lines.append(f"  ... and {len(result.functions_modified) - 30} more")
+        lines.append("")
 
-    if not result.functions_added and not result.functions_removed and not result.functions_modified:
-        lines.append("No function-level differences detected.")
-        lines.append("(Note: only symbol table functions are compared; stripped binaries may show no differences)")
+    # Import/export changes
+    if result.imports_added or result.imports_removed:
+        lines.append(f"--- Import Changes (added: {len(result.imports_added)}, removed: {len(result.imports_removed)}) ---")
+        for name in result.imports_added[:20]:
+            lines.append(f"  + {name}")
+        for name in result.imports_removed[:20]:
+            lines.append(f"  - {name}")
+        lines.append("")
+
+    if result.exports_added or result.exports_removed:
+        lines.append(f"--- Export Changes (added: {len(result.exports_added)}, removed: {len(result.exports_removed)}) ---")
+        for name in result.exports_added[:20]:
+            lines.append(f"  + {name}")
+        for name in result.exports_removed[:20]:
+            lines.append(f"  - {name}")
+        lines.append("")
+
+    # Section-level fallback for stripped binaries
+    if result.sections_changed:
+        lines.append(f"--- Section Changes ({len(result.sections_changed)}) ---")
+        for s in result.sections_changed:
+            status = s.get("status", "modified")
+            if status == "added":
+                lines.append(f"  + {s['name']} (size: {s.get('size_b', '?')})")
+            elif status == "removed":
+                lines.append(f"  - {s['name']} (size: {s.get('size_a', '?')})")
+            else:
+                lines.append(f"  ~ {s['name']} (size: {s.get('size_a', '?')} -> {s.get('size_b', '?')}, hash changed)")
+        lines.append("")
+
+    if (not result.functions_added and not result.functions_removed
+            and not result.functions_modified and not result.sections_changed
+            and not result.imports_added and not result.imports_removed
+            and not result.exports_added and not result.exports_removed):
+        lines.append("No function-level or section-level differences detected.")
+        lines.append("(Note: only symbol table functions are compared; stripped binaries fall back to section hashing)")
 
     return truncate_output("\n".join(lines))
 

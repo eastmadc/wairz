@@ -1,6 +1,6 @@
-# Plan: WebSocket/SSE Event Bus (5.6)
+# Plan: WebSocket/SSE Event Bus (5.6) — COMPLETED
 
-**Priority:** Medium | **Effort:** Small-Medium (~9h) | **Route:** `/citadel:marshal`
+**Priority:** Medium | **Effort:** Small-Medium | **Status:** completed (2026-04-06)
 
 ## Goal
 

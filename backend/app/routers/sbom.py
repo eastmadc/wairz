@@ -2,8 +2,11 @@
 
 import asyncio
 import json
+import logging
 import uuid
 from datetime import datetime, timezone
+
+logger = logging.getLogger(__name__)
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
@@ -183,25 +186,44 @@ async def export_sbom(
     if format == "spdx-json":
         return _build_spdx_response(components, firmware)
 
-    # Build CycloneDX 1.5 JSON manually
-    bom = {
+    # Build CycloneDX 1.7 (ECMA-424) JSON
+    main_component: dict = {
+        "type": "firmware",
+        "name": firmware.original_filename or "unknown",
+        "version": "1.0",
+    }
+
+    # HBOM: embed device metadata when available
+    if firmware.device_metadata:
+        dm = firmware.device_metadata
+        if dm.get("manufacturer"):
+            main_component["manufacturer"] = {"name": dm["manufacturer"]}
+        if dm.get("model"):
+            main_component["description"] = dm.get("description", dm["model"])
+        props = []
+        for key in ("serial", "sku", "model", "architecture"):
+            if dm.get(key):
+                props.append({"name": f"device:{key}", "value": str(dm[key])})
+        if props:
+            main_component["properties"] = props
+
+    bom: dict = {
         "bomFormat": "CycloneDX",
-        "specVersion": "1.5",
+        "specVersion": "1.7",
         "version": 1,
         "metadata": {
             "timestamp": datetime.now(timezone.utc).isoformat(),
-            "tools": [
-                {
-                    "vendor": "wairz",
-                    "name": "wairz-sbom",
-                    "version": "0.1.0",
-                }
-            ],
-            "component": {
-                "type": "firmware",
-                "name": firmware.original_filename or "unknown",
-                "version": "1.0",
+            "tools": {
+                "components": [
+                    {
+                        "type": "application",
+                        "name": "wairz-sbom",
+                        "version": "0.1.0",
+                        "publisher": "wairz",
+                    }
+                ]
             },
+            "component": main_component,
         },
         "components": [],
     }
@@ -430,11 +452,20 @@ async def push_to_dependency_track(
 
     bom = {
         "bomFormat": "CycloneDX",
-        "specVersion": "1.5",
+        "specVersion": "1.7",
         "version": 1,
         "metadata": {
             "timestamp": datetime.now(timezone.utc).isoformat(),
-            "tools": [{"vendor": "wairz", "name": "wairz-sbom", "version": "0.1.0"}],
+            "tools": {
+                "components": [
+                    {
+                        "type": "application",
+                        "name": "wairz-sbom",
+                        "version": "0.1.0",
+                        "publisher": "wairz",
+                    }
+                ]
+            },
             "component": {
                 "type": "firmware",
                 "name": firmware.original_filename or "unknown",
@@ -533,7 +564,7 @@ def _map_justification_to_vex(vuln) -> str | None:
 def _build_vex_response(
     components: list, vuln_rows: list, firmware
 ) -> Response:
-    """Build a CycloneDX 1.5 VEX document with vulnerability analysis."""
+    """Build a CycloneDX 1.7 VEX document with vulnerability analysis."""
     now = datetime.now(timezone.utc).isoformat()
 
     # Build component bom-refs keyed by component ID
@@ -615,17 +646,20 @@ def _build_vex_response(
 
     bom = {
         "bomFormat": "CycloneDX",
-        "specVersion": "1.5",
+        "specVersion": "1.7",
         "version": 1,
         "metadata": {
             "timestamp": now,
-            "tools": [
-                {
-                    "vendor": "wairz",
-                    "name": "wairz-sbom",
-                    "version": "0.1.0",
-                }
-            ],
+            "tools": {
+                "components": [
+                    {
+                        "type": "application",
+                        "name": "wairz-sbom",
+                        "version": "0.1.0",
+                        "publisher": "wairz",
+                    }
+                ]
+            },
             "component": {
                 "type": "firmware",
                 "name": firmware.original_filename or "unknown",

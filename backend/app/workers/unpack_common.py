@@ -424,6 +424,15 @@ def classify_firmware(firmware_path: str) -> str:
                     return "android_ota"
                 if "payload.bin" in names or "system.img" in names:
                     return "android_ota"
+                # MediaTek scatter format: zip with *_scatter.txt + super.img
+                # (files may be nested under a subdirectory)
+                has_scatter = any(
+                    n.endswith("_scatter.txt") or n.endswith("_Android_scatter.txt")
+                    for n in names
+                )
+                has_super = any(n.endswith("/super.img") or n == "super.img" for n in names)
+                if has_scatter and has_super:
+                    return "android_scatter"
                 # Check for UEFI capsule inside ZIP (e.g., Framework BIOS updates)
                 uefi_zip_markers = {".cap", ".rom", ".fd", ".bin"}
                 for name in names:

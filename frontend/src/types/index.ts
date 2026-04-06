@@ -617,6 +617,19 @@ export interface FunctionDiffEntry {
   status: 'added' | 'removed' | 'modified'
   size_a: number | null
   size_b: number | null
+  hash_a?: string | null
+  hash_b?: string | null
+  addr_a?: number | null
+  addr_b?: number | null
+}
+
+export interface SectionDiffEntry {
+  name: string
+  hash_a: string
+  hash_b: string
+  size_a: number
+  size_b: number
+  changed: boolean
 }
 
 export interface BinaryDiff {
@@ -626,6 +639,20 @@ export interface BinaryDiff {
   functions_modified: FunctionDiffEntry[]
   info_a: Record<string, unknown>
   info_b: Record<string, unknown>
+  sections_changed?: SectionDiffEntry[]
+  imports_added?: string[]
+  imports_removed?: string[]
+  exports_added?: string[]
+  exports_removed?: string[]
+}
+
+export interface InstructionDiff {
+  function_name: string
+  arch: string
+  diff_text: string
+  lines_added: number
+  lines_removed: number
+  error: string | null
 }
 
 export interface TextDiff {

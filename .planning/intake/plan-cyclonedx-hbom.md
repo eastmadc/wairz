@@ -1,6 +1,6 @@
-# Plan: CycloneDX v1.7 / HBOM Upgrade (5.5)
+# Plan: CycloneDX v1.7 / HBOM Upgrade (5.5) — COMPLETED
 
-**Priority:** Low | **Effort:** Small (~7h) | **Route:** `/do` direct or `/citadel:marshal`
+**Priority:** Low | **Effort:** Small | **Status:** completed (2026-04-06)
 
 ## Goal
 

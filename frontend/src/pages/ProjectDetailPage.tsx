@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useParams, useNavigate, Link } from 'react-router-dom'
 import {
   ArrowLeft,
@@ -20,6 +20,8 @@ import {
   Check,
   X,
   Shield,
+  ChevronDown,
+  Terminal,
 } from 'lucide-react'
 import { useProjectStore } from '@/stores/projectStore'
 import { listFirmware, deleteFirmware, updateFirmware, uploadRootfs } from '@/api/firmware'
@@ -35,6 +37,7 @@ import FirmwareMetadataCard from '@/components/projects/FirmwareMetadataCard'
 import DocumentsCard from '@/components/projects/DocumentsCard'
 import McpConnectionCard from '@/components/projects/McpConnectionCard'
 import { exportProject } from '@/api/exportImport'
+import { useEventStream } from '@/hooks/useEventStream'
 
 const STATUS_VARIANT: Record<string, 'default' | 'secondary' | 'destructive' | 'outline'> = {
   ready: 'default',
@@ -68,6 +71,7 @@ export default function ProjectDetailPage() {
   const [auditResult, setAuditResult] = useState<SecurityAuditResult | null>(null)
   const [yaraScanning, setYaraScanning] = useState(false)
   const [yaraResult, setYaraResult] = useState<YaraScanResult | null>(null)
+  const [expandedLogs, setExpandedLogs] = useState<Set<string>>(new Set())
   const versionInputRef = useRef<HTMLInputElement>(null)
   const rootfsInputRef = useRef<HTMLInputElement>(null)
 
@@ -84,15 +88,30 @@ export default function ProjectDetailPage() {
     }
   }, [projectId, project?.id, project?.status])
 
-  // Poll for status updates while unpacking (matches EmulationPage pattern)
+  // SSE: listen for unpacking events and refresh on status changes
+  const isUnpacking = project?.status === 'unpacking'
+  const { lastEvent: unpackEvent } = useEventStream<{ type: string; status: string }>(
+    projectId,
+    { types: ['unpacking'], enabled: isUnpacking },
+  )
+
+  const refreshProject = useCallback(() => {
+    if (!projectId) return
+    fetchProject(projectId)
+    listFirmware(projectId).then(setFirmwareList).catch(() => {})
+  }, [projectId, fetchProject])
+
+  // When an SSE event arrives, refresh data
   useEffect(() => {
-    if (!projectId || project?.status !== 'unpacking') return
-    const interval = setInterval(() => {
-      fetchProject(projectId)
-      listFirmware(projectId).then(setFirmwareList).catch(() => {})
-    }, 2000)
+    if (unpackEvent) refreshProject()
+  }, [unpackEvent, refreshProject])
+
+  // Fallback poll while unpacking (in case SSE is unavailable)
+  useEffect(() => {
+    if (!projectId || !isUnpacking) return
+    const interval = setInterval(refreshProject, 5000)
     return () => clearInterval(interval)
-  }, [projectId, project?.status, fetchProject])
+  }, [projectId, isUnpacking, refreshProject])
 
   if (loading || !project) {
     return (
@@ -327,9 +346,8 @@ export default function ProjectDetailPage() {
                       )}
                     </CardTitle>
                     <div className="flex gap-1">
-                      {!isUnpacked && !hasError && (
-                        <Button size="sm" onClick={() => handleUnpack(fw.id)} disabled={unpacking}>
-                          {unpacking && <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />}
+                      {!isUnpacked && !hasError && !unpacking && !fwDetail?.unpack_stage && status !== 'unpacking' && (
+                        <Button size="sm" onClick={() => handleUnpack(fw.id)}>
                           Unpack
                         </Button>
                       )}
@@ -426,9 +444,9 @@ export default function ProjectDetailPage() {
                           size="sm"
                           variant="outline"
                           onClick={() => handleUnpack(fw.id)}
-                          disabled={unpacking}
+                          disabled={unpacking || status === 'unpacking'}
                         >
-                          {unpacking && <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />}
+                          {(unpacking || status === 'unpacking') && <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />}
                           Retry
                         </Button>
                         <Button
@@ -458,6 +476,30 @@ export default function ProjectDetailPage() {
                       </div>
                       {rootfsError && uploadingRootfs === null && (
                         <p className="text-xs text-destructive mt-1">{rootfsError}</p>
+                      )}
+                    </div>
+                  )}
+
+                  {isUnpacked && fwDetail?.unpack_log && (
+                    <div className="mt-3">
+                      <button
+                        type="button"
+                        className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
+                        onClick={() => setExpandedLogs((prev) => {
+                          const next = new Set(prev)
+                          if (next.has(fw.id)) next.delete(fw.id)
+                          else next.add(fw.id)
+                          return next
+                        })}
+                      >
+                        <ChevronDown className={`h-3.5 w-3.5 transition-transform ${expandedLogs.has(fw.id) ? '' : '-rotate-90'}`} />
+                        <Terminal className="h-3.5 w-3.5" />
+                        Unpack Log
+                      </button>
+                      {expandedLogs.has(fw.id) && (
+                        <pre className="mt-2 max-h-48 overflow-auto rounded bg-muted/50 border p-3 text-xs">
+                          {fwDetail.unpack_log}
+                        </pre>
                       )}
                     </div>
                   )}

@@ -103,6 +103,9 @@ async def scan_with_grype(
             cdx_comp["purl"] = comp.purl
         cdx_components.append(cdx_comp)
 
+    # Use specVersion 1.5 for Grype input — Grype 0.87 doesn't support 1.7.
+    # User-facing exports use 1.7, but the internal scan SBOM must be
+    # compatible with the installed Grype version.
     cdx_sbom = {
         "bomFormat": "CycloneDX",
         "specVersion": "1.5",

@@ -12,10 +12,17 @@ from app.schemas.comparison import (
     BinaryDiffResponse,
     FirmwareDiffRequest,
     FirmwareDiffResponse,
+    InstructionDiffRequest,
+    InstructionDiffResponse,
     TextDiffRequest,
     TextDiffResponse,
 )
-from app.services.comparison_service import diff_binary, diff_filesystems, diff_text_file
+from app.services.comparison_service import (
+    diff_binary,
+    diff_filesystems,
+    diff_function_instructions,
+    diff_text_file,
+)
 from app.services.firmware_service import FirmwareService
 from app.utils.sandbox import validate_path
 
@@ -99,6 +106,13 @@ async def compare_binary(
         functions_modified=[_func_to_dict(f) for f in result.functions_modified],
         info_a=result.info_a,
         info_b=result.info_b,
+        sections_a=result.sections_a,
+        sections_b=result.sections_b,
+        sections_changed=result.sections_changed,
+        imports_added=result.imports_added,
+        imports_removed=result.imports_removed,
+        exports_added=result.exports_added,
+        exports_removed=result.exports_removed,
     )
 
 
@@ -141,6 +155,38 @@ async def compare_text_file(
     return TextDiffResponse(**result)
 
 
+@router.post("/instructions", response_model=InstructionDiffResponse)
+async def compare_instructions(
+    project_id: uuid.UUID,
+    body: InstructionDiffRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Compare a specific function's disassembly between two firmware versions.
+
+    Returns a unified diff of the Capstone-disassembled instructions.
+    """
+    fw_a = await _get_firmware(body.firmware_a_id, project_id, db)
+    fw_b = await _get_firmware(body.firmware_b_id, project_id, db)
+
+    # Validate the binary path exists in both firmware
+    try:
+        path_a = validate_path(fw_a.extracted_path, body.binary_path)
+    except Exception:
+        raise HTTPException(404, f"Binary not found in firmware A: {body.binary_path}")
+
+    try:
+        path_b = validate_path(fw_b.extracted_path, body.binary_path)
+    except Exception:
+        raise HTTPException(404, f"Binary not found in firmware B: {body.binary_path}")
+
+    loop = asyncio.get_running_loop()
+    result = await loop.run_in_executor(
+        None, diff_function_instructions, path_a, path_b, body.function_name,
+    )
+
+    return InstructionDiffResponse(**result)
+
+
 def _entry_to_dict(entry) -> dict:
     return {
         "path": entry.path,
@@ -158,4 +204,8 @@ def _func_to_dict(entry) -> dict:
         "status": entry.status,
         "size_a": entry.size_a,
         "size_b": entry.size_b,
+        "hash_a": entry.hash_a,
+        "hash_b": entry.hash_b,
+        "addr_a": entry.addr_a,
+        "addr_b": entry.addr_b,
     }

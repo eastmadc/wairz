@@ -1,5 +1,7 @@
 # Plan: Frontend Gaps (F1-F4)
 
+**F3 completed 2026-04-06** — Collapsible unpack log viewer added to ProjectDetailPage for all firmware.
+
 ## F1: CVE Triage Workflow UI
 
 **Priority:** Medium | **Effort:** Medium | **Route:** `/citadel:marshal`

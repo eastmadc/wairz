@@ -40,6 +40,10 @@ class FunctionDiffEntryResponse(BaseModel):
     status: str
     size_a: int | None = None
     size_b: int | None = None
+    hash_a: str | None = None
+    hash_b: str | None = None
+    addr_a: int | None = None
+    addr_b: int | None = None
 
 
 class BinaryInfoResponse(BaseModel):
@@ -56,6 +60,13 @@ class BinaryDiffResponse(BaseModel):
     functions_modified: list[FunctionDiffEntryResponse] = []
     info_a: dict = {}
     info_b: dict = {}
+    sections_a: list[dict] = []
+    sections_b: list[dict] = []
+    sections_changed: list[dict] = []
+    imports_added: list[str] = []
+    imports_removed: list[str] = []
+    exports_added: list[str] = []
+    exports_removed: list[str] = []
 
 
 class TextDiffRequest(BaseModel):
@@ -70,4 +81,20 @@ class TextDiffResponse(BaseModel):
     lines_added: int = 0
     lines_removed: int = 0
     truncated: bool = False
+    error: str | None = None
+
+
+class InstructionDiffRequest(BaseModel):
+    firmware_a_id: uuid.UUID
+    firmware_b_id: uuid.UUID
+    binary_path: str
+    function_name: str
+
+
+class InstructionDiffResponse(BaseModel):
+    function_name: str
+    arch: str = ""
+    diff_text: str = ""
+    lines_added: int = 0
+    lines_removed: int = 0
     error: str | None = None

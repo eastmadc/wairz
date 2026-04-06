@@ -8,14 +8,19 @@ import {
   FileEdit,
   Lock,
   Binary,
+  ChevronDown,
+  ChevronRight,
+  AlertTriangle,
+  Package,
+  ArrowRightLeft,
 } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { listFirmware } from '@/api/firmware'
-import { diffFirmware, diffBinary, diffTextFile } from '@/api/comparison'
+import { diffFirmware, diffBinary, diffTextFile, diffInstructions } from '@/api/comparison'
 import { formatFileSize } from '@/utils/format'
-import type { FirmwareDetail, FirmwareDiff, BinaryDiff, TextDiff, FileDiffEntry } from '@/types'
+import type { FirmwareDetail, FirmwareDiff, BinaryDiff, TextDiff, InstructionDiff, FileDiffEntry } from '@/types'
 
 type Tab = 'files' | 'binaries' | 'binary-detail' | 'text-diff'
 
@@ -34,6 +39,11 @@ export default function ComparisonPage() {
   const [tab, setTab] = useState<Tab>('files')
   const [error, setError] = useState<string | null>(null)
   const [statusFilter, setStatusFilter] = useState<string>('all')
+  const [expandedFunc, setExpandedFunc] = useState<string | null>(null)
+  const [instrDiff, setInstrDiff] = useState<InstructionDiff | null>(null)
+  const [instrLoading, setInstrLoading] = useState(false)
+  const [importsExpanded, setImportsExpanded] = useState(false)
+  const [exportsExpanded, setExportsExpanded] = useState(false)
 
   useEffect(() => {
     if (projectId) {
@@ -70,6 +80,10 @@ export default function ComparisonPage() {
     if (!projectId || !fwAId || !fwBId) return
     setBinLoading(true)
     setBinDiff(null)
+    setExpandedFunc(null)
+    setInstrDiff(null)
+    setImportsExpanded(false)
+    setExportsExpanded(false)
     setTab('binary-detail')
     try {
       const result = await diffBinary(projectId, fwAId, fwBId, path)
@@ -93,6 +107,26 @@ export default function ComparisonPage() {
       // ignore
     } finally {
       setTextLoading(false)
+    }
+  }
+
+  const handleInstrDiff = async (functionName: string) => {
+    if (expandedFunc === functionName) {
+      setExpandedFunc(null)
+      setInstrDiff(null)
+      return
+    }
+    if (!projectId || !fwAId || !fwBId || !binDiff) return
+    setExpandedFunc(functionName)
+    setInstrDiff(null)
+    setInstrLoading(true)
+    try {
+      const result = await diffInstructions(projectId, fwAId, fwBId, binDiff.binary_path, functionName)
+      setInstrDiff(result)
+    } catch {
+      setInstrDiff({ function_name: functionName, arch: '', diff_text: '', lines_added: 0, lines_removed: 0, error: 'Failed to load instruction diff' })
+    } finally {
+      setInstrLoading(false)
     }
   }
 
@@ -499,11 +533,71 @@ export default function ComparisonPage() {
                         <h4 className="text-sm font-medium text-yellow-600 mb-1">Functions Modified</h4>
                         <div className="space-y-0.5">
                           {binDiff.functions_modified.map((f, i) => (
-                            <div key={i} className="flex justify-between text-xs font-mono px-2 py-0.5 hover:bg-muted/50 rounded">
-                              <span>{f.name}</span>
-                              <span className="text-muted-foreground">
-                                {f.size_a} &rarr; {f.size_b} bytes
-                              </span>
+                            <div key={i}>
+                              <div
+                                className="flex justify-between items-center text-xs font-mono px-2 py-1 hover:bg-muted/50 rounded cursor-pointer"
+                                onClick={() => handleInstrDiff(f.name)}
+                              >
+                                <span className="flex items-center gap-1.5">
+                                  {expandedFunc === f.name
+                                    ? <ChevronDown className="h-3 w-3 text-muted-foreground" />
+                                    : <ChevronRight className="h-3 w-3 text-muted-foreground" />}
+                                  {f.name}
+                                </span>
+                                <span className="text-muted-foreground">
+                                  {f.size_a} &rarr; {f.size_b} bytes
+                                </span>
+                              </div>
+                              {expandedFunc === f.name && (
+                                <div className="ml-5 mt-1 mb-2 border rounded bg-muted/20 p-3">
+                                  {instrLoading && (
+                                    <div className="flex items-center gap-2 py-2 text-xs text-muted-foreground">
+                                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                      Loading instruction diff...
+                                    </div>
+                                  )}
+                                  {instrDiff && !instrLoading && (
+                                    <div className="space-y-2">
+                                      {instrDiff.error ? (
+                                        <p className="text-xs text-destructive">{instrDiff.error}</p>
+                                      ) : (
+                                        <>
+                                          <div className="flex items-center gap-3 text-xs">
+                                            <span className="font-medium">{instrDiff.function_name}</span>
+                                            {instrDiff.arch && (
+                                              <Badge variant="outline" className="text-[10px]">{instrDiff.arch}</Badge>
+                                            )}
+                                            <Badge variant="outline" className="text-green-600 text-[10px]">
+                                              +{instrDiff.lines_added}
+                                            </Badge>
+                                            <Badge variant="outline" className="text-red-600 text-[10px]">
+                                              -{instrDiff.lines_removed}
+                                            </Badge>
+                                          </div>
+                                          {instrDiff.diff_text ? (
+                                            <pre className="max-h-[400px] overflow-auto rounded border bg-muted/30 p-2 text-[11px] font-mono leading-relaxed">
+                                              {instrDiff.diff_text.split('\n').map((line, li) => {
+                                                let className = ''
+                                                if (line.startsWith('+++') || line.startsWith('---')) className = 'text-muted-foreground font-bold'
+                                                else if (line.startsWith('@@')) className = 'text-blue-500'
+                                                else if (line.startsWith('+')) className = 'text-green-600 bg-green-500/10'
+                                                else if (line.startsWith('-')) className = 'text-red-600 bg-red-500/10'
+                                                return (
+                                                  <div key={li} className={className}>
+                                                    {line}
+                                                  </div>
+                                                )
+                                              })}
+                                            </pre>
+                                          ) : (
+                                            <p className="text-xs text-muted-foreground">No instruction-level diff available.</p>
+                                          )}
+                                        </>
+                                      )}
+                                    </div>
+                                  )}
+                                </div>
+                              )}
                             </div>
                           ))}
                         </div>
@@ -540,6 +634,75 @@ export default function ComparisonPage() {
                         )}
                       </div>
                     )}
+
+                    {/* Section diff fallback for stripped binaries */}
+                    {binDiff.sections_changed && binDiff.sections_changed.length > 0 &&
+                     binDiff.functions_added.length === 0 &&
+                     binDiff.functions_removed.length === 0 &&
+                     binDiff.functions_modified.length === 0 && (
+                      <div className="space-y-2">
+                        <div className="flex items-center gap-2 rounded bg-yellow-500/10 border border-yellow-500/30 px-3 py-2">
+                          <AlertTriangle className="h-4 w-4 text-yellow-600 shrink-0" />
+                          <p className="text-xs text-yellow-700 dark:text-yellow-400">
+                            Binary is stripped — showing section-level changes
+                          </p>
+                        </div>
+                        <div className="overflow-x-auto">
+                          <table className="w-full text-xs">
+                            <thead>
+                              <tr className="border-b text-left text-muted-foreground">
+                                <th className="pb-2 pr-3 font-medium">Section</th>
+                                <th className="pb-2 pr-3 font-medium w-24 text-right">Size A</th>
+                                <th className="pb-2 pr-3 font-medium w-24 text-right">Size B</th>
+                                <th className="pb-2 font-medium w-20 text-center">Changed</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {binDiff.sections_changed.map((sec, i) => (
+                                <tr key={i} className="border-b border-border/30 hover:bg-muted/50">
+                                  <td className="py-1.5 pr-3 font-mono">{sec.name}</td>
+                                  <td className="py-1.5 pr-3 text-right">{formatFileSize(sec.size_a)}</td>
+                                  <td className="py-1.5 pr-3 text-right">{formatFileSize(sec.size_b)}</td>
+                                  <td className="py-1.5 text-center">
+                                    {sec.changed ? (
+                                      <span className="text-yellow-600 font-medium">Yes</span>
+                                    ) : (
+                                      <span className="text-muted-foreground">No</span>
+                                    )}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Import changes */}
+                    {((binDiff.imports_added && binDiff.imports_added.length > 0) ||
+                      (binDiff.imports_removed && binDiff.imports_removed.length > 0)) && (
+                      <ImportExportSection
+                        title="Import Changes"
+                        icon={<Package className="h-3.5 w-3.5" />}
+                        added={binDiff.imports_added || []}
+                        removed={binDiff.imports_removed || []}
+                        expanded={importsExpanded}
+                        onToggle={() => setImportsExpanded(!importsExpanded)}
+                      />
+                    )}
+
+                    {/* Export changes */}
+                    {((binDiff.exports_added && binDiff.exports_added.length > 0) ||
+                      (binDiff.exports_removed && binDiff.exports_removed.length > 0)) && (
+                      <ImportExportSection
+                        title="Export Changes"
+                        icon={<ArrowRightLeft className="h-3.5 w-3.5" />}
+                        added={binDiff.exports_added || []}
+                        removed={binDiff.exports_removed || []}
+                        expanded={exportsExpanded}
+                        onToggle={() => setExportsExpanded(!exportsExpanded)}
+                      />
+                    )}
                   </div>
                 )}
               </CardContent>
@@ -557,6 +720,97 @@ export default function ComparisonPage() {
             <p className="text-xs mt-2">
               Upload at least two firmware versions from the project overview to use this feature
             </p>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+const SECURITY_SENSITIVE_IMPORTS = new Set([
+  'system', 'exec', 'execl', 'execle', 'execlp', 'execv', 'execve', 'execvp',
+  'popen', 'dlopen', 'dlsym', 'socket', 'connect', 'bind', 'listen', 'accept',
+])
+
+function isSecuritySensitive(name: string): boolean {
+  const base = name.replace(/^_+/, '').split('@')[0]
+  return SECURITY_SENSITIVE_IMPORTS.has(base)
+}
+
+function ImportExportSection({
+  title,
+  icon,
+  added,
+  removed,
+  expanded,
+  onToggle,
+}: {
+  title: string
+  icon: React.ReactNode
+  added: string[]
+  removed: string[]
+  expanded: boolean
+  onToggle: () => void
+}) {
+  return (
+    <div className="border rounded">
+      <button
+        type="button"
+        className="flex items-center justify-between w-full px-3 py-2 text-xs font-medium hover:bg-muted/50"
+        onClick={onToggle}
+      >
+        <span className="flex items-center gap-2">
+          {icon}
+          {title}
+          <Badge variant="outline" className="text-[10px]">
+            {added.length + removed.length}
+          </Badge>
+        </span>
+        {expanded
+          ? <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
+          : <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />}
+      </button>
+      {expanded && (
+        <div className="border-t px-3 py-2 space-y-2">
+          {added.length > 0 && (
+            <div>
+              <p className="text-[10px] font-medium text-green-600 mb-1">Added ({added.length})</p>
+              <div className="flex flex-wrap gap-1">
+                {added.map((name, i) => (
+                  <span
+                    key={i}
+                    className={`inline-block rounded px-1.5 py-0.5 text-[11px] font-mono ${
+                      isSecuritySensitive(name)
+                        ? 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400 ring-1 ring-red-300 dark:ring-red-700'
+                        : 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400'
+                    }`}
+                    title={isSecuritySensitive(name) ? 'Security-sensitive function' : undefined}
+                  >
+                    {name}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+          {removed.length > 0 && (
+            <div>
+              <p className="text-[10px] font-medium text-red-600 mb-1">Removed ({removed.length})</p>
+              <div className="flex flex-wrap gap-1">
+                {removed.map((name, i) => (
+                  <span
+                    key={i}
+                    className={`inline-block rounded px-1.5 py-0.5 text-[11px] font-mono ${
+                      isSecuritySensitive(name)
+                        ? 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400 ring-1 ring-red-300 dark:ring-red-700'
+                        : 'bg-red-50 text-red-700 dark:bg-red-900/20 dark:text-red-400'
+                    }`}
+                    title={isSecuritySensitive(name) ? 'Security-sensitive function' : undefined}
+                  >
+                    {name}
+                  </span>
+                ))}
+              </div>
+            </div>
           )}
         </div>
       )}
