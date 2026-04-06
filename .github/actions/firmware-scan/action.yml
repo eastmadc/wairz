@@ -1,0 +1,47 @@
+name: 'Wairz Firmware Scan'
+description: 'Scan firmware for security vulnerabilities using the Wairz assessment engine'
+inputs:
+  firmware-path:
+    description: 'Path to firmware file or extracted directory'
+    required: true
+  fail-on-critical:
+    description: 'Fail the action if critical vulnerabilities are found'
+    required: false
+    default: 'true'
+  format:
+    description: 'Output format (json or markdown)'
+    required: false
+    default: 'json'
+  skip-phases:
+    description: 'Comma-separated list of assessment phases to skip'
+    required: false
+    default: ''
+  output-file:
+    description: 'Write report to this file (default: stdout only)'
+    required: false
+    default: ''
+runs:
+  using: 'composite'
+  steps:
+    - name: Build CI scanner image
+      shell: bash
+      run: docker build -t wairz-scan -f backend/Dockerfile.ci backend/
+
+    - name: Run firmware scan
+      shell: bash
+      run: |
+        ARGS="${{ inputs.firmware-path }}"
+        ARGS="$ARGS --format=${{ inputs.format }}"
+        if [ -n "${{ inputs.skip-phases }}" ]; then
+          ARGS="$ARGS --skip-phases=${{ inputs.skip-phases }}"
+        fi
+        if [ "${{ inputs.fail-on-critical }}" = "true" ]; then
+          ARGS="$ARGS --fail-on-critical"
+        fi
+        if [ -n "${{ inputs.output-file }}" ]; then
+          ARGS="$ARGS --output=/work/${{ inputs.output-file }}"
+        fi
+        docker run --rm \
+          -v "${{ github.workspace }}:/work" \
+          -w /work \
+          wairz-scan $ARGS

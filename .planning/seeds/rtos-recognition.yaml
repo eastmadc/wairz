@@ -1,0 +1,265 @@
+id: seed_rtos_recognition_20260406
+name: "RTOS/Bare-Metal Firmware Recognition"
+goal: >
+  Detect FreeRTOS, Zephyr, VxWorks, ThreadX/Azure RTOS, QNX, SafeRTOS, and
+  uC/OS (II & III) from binary firmware images. Extract versions, companion
+  components (network stacks, filesystems, crypto libraries), and generate
+  SBOM entries. Component-level detection (per-binary, not per-firmware).
+
+interview_decisions:
+  scan_method: "tiered — magic bytes on raw binary first (fast reject), then strings extraction on candidates"
+  analysis_tools: "LIEF for ELF/PE parsing, Capstone for disassembly patterns, cpu_rec for raw architecture detection, custom byte/string scanning. No Ghidra in hot path."
+  multi_os_handling: "component-level — each binary gets its own RTOS classification, stored per-binary not per-firmware"
+  rtos_scope: "FreeRTOS, Zephyr, VxWorks, ThreadX/Azure RTOS, QNX, SafeRTOS, uC/OS-II, uC/OS-III"
+  metadata_depth: "deep extraction — RTOS name+version, architecture, task/thread names, build config, peripheral drivers, network stack, filesystem, crypto library"
+
+ambiguity_score: 0.08
+
+phases:
+  - name: "RTOS Detection Engine"
+    description: >
+      Create backend/app/services/rtos_detection_service.py with tiered detection:
+      1. Magic byte scan (raw binary, fast — Zephyr MCUboot 0x96f3b83d, Zephyr bindesc
+         0xb9863e5a7ea46046, QNX IFS "imagefs", VxWorks MemFS "OWOWOWOW", U-Boot OS type 14)
+      2. String pattern scan (first 1MB — version strings for all 7+1 RTOS targets)
+      3. Symbol/function name scan (LIEF ELF symbol tables — tx_, k_, OS, taskSpawn, etc.)
+      4. ELF section scan (.QNX_info, .device_handles, _k_sem_area, .init_PRE_KERNEL_1)
+      5. VxWorks symbol table heuristic (try entry sizes 0x0E, 0x10, 0x14, 0x18)
+      Each detection method returns confidence: high/medium/low.
+    files:
+      - backend/app/services/rtos_detection_service.py (NEW ~600 lines)
+    acceptance_criteria:
+      - Detects FreeRTOS from "FreeRTOS V10.5.1" string + xTaskCreate symbol
+      - Detects Zephyr from MCUboot header magic 0x96f3b83d
+      - Detects VxWorks from "VxWorks" string + taskSpawn symbol
+      - Detects ThreadX from tx_kernel_enter + tx_thread_create symbols
+      - Detects QNX from "imagefs" magic or .QNX_info ELF section
+      - Detects SafeRTOS distinct from FreeRTOS (no pvPortMalloc + "Wittenstein")
+      - Detects uC/OS from OSInit + OSTaskCreate symbols
+      - Returns structured result with rtos_name, version, confidence, detection_methods
+
+  - name: "Deep Metadata Extraction"
+    description: >
+      Extend detection to extract companion components and metadata:
+      1. Network stack detection — lwIP (pbuf_alloc, netconn_), FreeRTOS+TCP, NetX Duo (nx_),
+         VxWorks END, QNX io-pkt, uIP, Zephyr native (net_if_)
+      2. Filesystem detection — LittleFS ("littlefs" magic), SPIFFS, FatFS (f_mount),
+         FileX (fx_), VxWorks dosFs, QNX fs-qnx6
+      3. Crypto library detection — wolfSSL, mbedTLS, tinycrypt, BearSSL
+      4. Task/thread name extraction from .rodata strings
+      5. Build config indicators (debug/release, optimization level)
+      6. Architecture + endianness via LIEF + cpu_rec fallback
+    files:
+      - backend/app/services/rtos_detection_service.py (extend)
+    acceptance_criteria:
+      - Identifies lwIP from pbuf_alloc + tcp_write symbols
+      - Identifies wolfSSL from wolfSSL_Init + version string
+      - Identifies LittleFS from on-disk magic "littlefs"
+      - Identifies FatFS from f_mount + f_open symbols
+      - Returns companion_components list with name, version, type, confidence
+
+  - name: "Firmware Classifier + SBOM Integration"
+    description: >
+      1. Extend classify_firmware() in unpack_common.py — insert RTOS check after
+         ELF detection (line 471) before linux_blob fallback (line 480).
+         New return values: freertos_elf, zephyr_elf, vxworks_elf, threadx_elf,
+         qnx_elf, safertos_elf, ucos_elf, rtos_blob (non-ELF RTOS binary)
+      2. For RTOS firmware: skip find_filesystem_root(), use string extraction instead
+      3. Generate SbomComponent entries from detected RTOS + companion components
+         using existing SbomComponentData model. Source: "rtos_detection".
+      4. Store RTOS metadata in firmware.os_info JSONB field:
+         {rtos: {name, version, confidence}, architecture, companion_components: [...]}
+      5. Component-level: when walking a Linux filesystem, scan individual binaries
+         for embedded RTOS (e.g., coprocessor firmware blobs in /lib/firmware/)
+      6. Add MCP tool: detect_rtos(path?) — on-demand RTOS analysis of any binary
+    files:
+      - backend/app/workers/unpack_common.py (extend classify_firmware)
+      - backend/app/services/sbom_service.py (add RTOS SBOM generation strategy)
+      - backend/app/ai/tools/binary.py (add detect_rtos MCP tool)
+      - backend/app/ai/__init__.py (register if new category needed)
+    acceptance_criteria:
+      - classify_firmware() returns "freertos_elf" for a FreeRTOS ELF binary
+      - classify_firmware() returns "zephyr_elf" for MCUboot-wrapped Zephyr image
+      - RTOS firmware generates SBOM with RTOS + companion components
+      - firmware.os_info populated with RTOS metadata
+      - detect_rtos MCP tool works on individual binaries within a firmware
+      - All 379+ existing backend tests still pass
+      - No new Python dependencies required (LIEF, Capstone, cpu_rec already available)
+
+detection_signatures:
+  freertos:
+    magic_bytes: null
+    version_strings:
+      - pattern: 'FreeRTOS\s+V(\d+\.\d+\.\d+)'
+        confidence: high
+      - pattern: 'Amazon FreeRTOS'
+        confidence: high
+    symbols:
+      high: [xTaskCreate, vTaskStartScheduler, pvPortMalloc, vPortFree, xPortSysTickHandler]
+      medium: [xQueueCreate, xSemaphoreCreateBinary, xTimerCreate]
+    strings: ["IDLE", "Tmr Svc"]
+    heap_variants:
+      heap_5: "vPortDefineHeapRegions present"
+      heap_1: "pvPortMalloc present, vPortFree is no-op"
+
+  zephyr:
+    magic_bytes:
+      - value: "0xb9863e5a7ea46046"
+        size: 8
+        confidence: high
+        description: "Binary descriptor header"
+      - value: "0x96f3b83d"
+        size: 4
+        offset: 0
+        confidence: high
+        description: "MCUboot image header"
+    version_strings:
+      - pattern: 'Booting Zephyr OS build\s+(\S+)'
+        confidence: high
+      - pattern: 'zephyr-v(\d+\.\d+\.\d+)'
+        confidence: high
+    symbols:
+      high: [k_thread_create, k_sem_init, z_cstart, z_main_thread]
+      medium: [k_mutex_init, k_msgq_init, k_work_init]
+    elf_sections: [".device_handles", "_k_sem_area", ".init_PRE_KERNEL_1"]
+
+  vxworks:
+    magic_bytes:
+      - value: "OWOWOWOW"
+        size: 8
+        confidence: high
+        description: "MemFS filesystem magic"
+    version_strings:
+      - pattern: "VxWorks.*version\\s+'(\\d+\\.\\d+)"
+        confidence: high
+      - pattern: "WIND version\\s+(\\d+\\.\\d+)"
+        confidence: high
+      - pattern: "Copyright Wind River"
+        confidence: medium
+    symbols:
+      high: [taskSpawn, semBCreate, msgQCreate, kernelVersion, tickAnnounce]
+      medium: [muxDevLoad, intConnect, sysClkRateGet]
+    boot_line_regex: '\\w+\\(\\d+,\\d+\\)\\S+:\\S+\\s+[ehbgufst]\\w*='
+    symbol_table_entry_sizes: [0x0E, 0x10, 0x14, 0x18]
+    valid_sym_types: [2,3,4,5,6,7,8,9,0x10,0x11,0x12,0x13,0x20,0x21,0x40,0x41]
+
+  threadx:
+    magic_bytes: null
+    version_strings:
+      - pattern: 'Azure RTOS ThreadX\s+\w+\s+(\d+\.\d+[\.\d]*)'
+        confidence: high
+      - pattern: 'Eclipse ThreadX\s+\w+\s+(\d+\.\d+)'
+        confidence: high
+      - pattern: 'Express Logic.*ThreadX'
+        confidence: medium
+    symbols:
+      high: [tx_kernel_enter, tx_thread_create, tx_application_define]
+      medium: [tx_semaphore_create, tx_mutex_create, tx_queue_create, tx_timer_create]
+    companion_prefixes:
+      netx_duo: "nx_"
+      filex: "fx_"
+      guix: "gx_"
+      usbx: "ux_"
+      levelx: "lx_"
+
+  qnx:
+    magic_bytes:
+      - value: "imagefs"
+        size: 7
+        offset: 0
+        confidence: high
+        description: "QNX IFS header"
+      - value: "sfegami"
+        size: 7
+        offset: 0
+        confidence: high
+        description: "QNX IFS reversed endian"
+      - value: "0x00ff7eeb"
+        size: 4
+        offset: 0
+        confidence: high
+        description: "QNX startup header"
+    version_strings:
+      - pattern: 'QNX Neutrino\\s+(\\d+\\.\\d+)'
+        confidence: high
+    symbols:
+      high: [ChannelCreate, ConnectAttach, MsgSend, MsgReceive, MsgReply]
+      medium: [resmgr_attach, dispatch_create, pulse_attach]
+    elf_sections: [".QNX_info", ".QNX_usage"]
+    elf_section_marker: "TARGET_OS=QNX"
+
+  safertos:
+    magic_bytes: null
+    version_strings:
+      - pattern: 'SafeRTOS\\s+V(\\d+)'
+        confidence: high
+      - pattern: 'SAFERTOS'
+        confidence: high
+      - pattern: 'Wittenstein|WITTENSTEIN'
+        confidence: high
+    differentiation_from_freertos:
+      present: [xTaskCreate, xQueueSend]
+      absent: [pvPortMalloc, vPortFree]
+      unique: [xTaskInitializeScheduler]
+
+  ucos:
+    magic_bytes: null
+    version_strings:
+      - pattern: 'uC/OS-II\\s+V(\\d+\\.\\d+\\.\\d+)'
+        confidence: high
+      - pattern: 'uC/OS-III\\s+V(\\d+\\.\\d+\\.\\d+)'
+        confidence: high
+      - pattern: 'Micrium'
+        confidence: medium
+      - pattern: 'Jean J\\. Labrosse'
+        confidence: medium
+    symbols:
+      high: [OSInit, OSStart, OSTaskCreate, OSTimeDly, OSVersion]
+      medium: [OSSemCreate, OSMutexCreate, OSQCreate, OSFlagCreate]
+    ucos3_only: [OSTaskQPend, OSTaskQPost, OSTaskSemPend, OSTaskSemPost]
+
+companion_detection:
+  network_stacks:
+    lwip:
+      symbols: [pbuf_alloc, tcp_write, udp_send, netconn_new, netif_add, lwip_socket]
+      version_pattern: 'lwIP\s+(\d+\.\d+\.\d+)'
+    freertos_tcp:
+      symbols: [FreeRTOS_socket, FreeRTOS_sendto, FreeRTOS_IPInit]
+    uip:
+      symbols: [uip_init, uip_input, uip_send]
+    zephyr_native:
+      symbols: [net_if_get_default, net_context_connect, net_pkt_alloc]
+  filesystems:
+    littlefs:
+      magic: "littlefs"
+      symbols: [lfs_mount, lfs_file_open, lfs_format]
+    fatfs:
+      symbols: [f_mount, f_open, f_read, f_write]
+      strings: ["FatFs", "ChaN"]
+    spiffs:
+      symbols: [SPIFFS_mount, SPIFFS_open]
+      magic: "0x20011008"
+  crypto:
+    wolfssl:
+      symbols: [wolfSSL_Init, wolfSSL_CTX_new, wc_InitSha256]
+      version_pattern: 'wolfSSL\s+(\d+\.\d+\.\d+)'
+    mbedtls:
+      symbols: [mbedtls_ssl_init, mbedtls_sha256_init, mbedtls_aes_init]
+      version_pattern: 'Mbed TLS\s+(\d+\.\d+\.\d+)'
+    tinycrypt:
+      symbols: [tc_sha256_init, tc_aes128_set_encrypt_key]
+    bearssl:
+      symbols: [br_ssl_client_init_full, br_sha256_init]
+
+tools_to_use:
+  - lief: "ELF/PE header parsing, symbol tables, sections — already in pyproject.toml"
+  - capstone: "Disassembly for function prologue patterns if needed — already available"
+  - cpu_rec: "Raw binary architecture detection for non-ELF — installed at /opt/cpu_rec/"
+  - python_bytes: "Magic byte scanning — no dependency"
+  - custom_strings: "Reuse _extract_printable_strings pattern from sbom_service.py"
+
+insertion_point:
+  file: "backend/app/workers/unpack_common.py"
+  after_line: 471  # ELF check: if magic[:4] == b"\x7fELF"
+  before_line: 480  # linux_blob fallback
+  new_classifications: [freertos_elf, zephyr_elf, vxworks_elf, threadx_elf, qnx_elf, safertos_elf, ucos_elf, rtos_blob]

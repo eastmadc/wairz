@@ -1,6 +1,7 @@
 services:
   postgres:
     image: postgres:16-alpine
+    restart: unless-stopped
     environment:
       POSTGRES_USER: wairz
       POSTGRES_PASSWORD: wairz
@@ -17,6 +18,7 @@ services:
 
   redis:
     image: redis:7-alpine
+    restart: unless-stopped
     ports:
       - "127.0.0.1:6379:6379"
     volumes:
@@ -35,6 +37,7 @@ services:
         kernels: ./emulation/kernels
       args:
         DOCKER_GID: "${DOCKER_GID:-999}"
+    restart: unless-stopped
     ports:
       - "0.0.0.0:8000:8000"
     env_file:
@@ -76,6 +79,7 @@ services:
         kernels: ./emulation/kernels
       args:
         DOCKER_GID: "${DOCKER_GID:-999}"
+    restart: unless-stopped
     env_file:
       - .env
     environment:
@@ -158,6 +162,7 @@ services:
 
   vulhunt:
     image: ghcr.io/vulhunt-re/vulhunt:latest
+    restart: unless-stopped
     entrypoint: ["vulhunt-ce", "mcp", "--host", "0.0.0.0", "--port", "8080"]
     volumes:
       - firmware_data:/data/firmware:ro
@@ -171,6 +176,7 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+    restart: unless-stopped
     ports:
       - "0.0.0.0:3000:3000"
     env_file:
