@@ -1,18 +1,42 @@
 # Wairz Master Plan
 
 > Created: 2026-04-01
-> Updated: 2026-04-06 (session 11 — CycloneDX 1.7, SSE event bus, unpack log viewer)
+> Updated: 2026-04-06 (session 12 — CPE enrichment, CI/CD action, Playwright E2E, RTOS seed)
 > Resume with: /do continue
 > Plans: .planning/intake/plan-*.md (6 detailed plans for all remaining items)
 
 ---
 
+## Session 12 Handoff (2026-04-06)
+
+**What was built (commit b26930f):**
+1. **CPE Enrichment** — 50+ new vendor mappings, multi-partition Android scanning, 4-strategy enrichment post-processor (sbom_service.py +348 lines)
+2. **CI/CD GitHub Action** — `wairz-scan` CLI + Dockerfile.ci + composite Action + example workflow (backend/app/cli/scan.py, backend/Dockerfile.ci, .github/)
+3. **Playwright E2E Tests** — 20 tests across 4 spec files + helpers (frontend/tests/e2e/)
+4. **RTOS Recognition Seed** — Crystallized detection signatures for 7 RTOS + companion libraries (.planning/seeds/rtos-recognition.yaml)
+5. **Docker autostart** — All services now have restart: unless-stopped
+
+**What to do next (priority order):**
+1. `/citadel:archon .planning/seeds/rtos-recognition.yaml` — Build RTOS detection from crystallized seed (largest remaining feature)
+2. `/citadel:marshal` — Network Protocol Analysis (pcap capture + scapy dissection)
+3. `/citadel:marshal` — Frontend F2: Security Tools Page (listTools API exists, needs UI)
+4. Housekeeping: Update plan-binary-diff-enhancement.md, plan-cyclonedx-hbom.md, plan-websocket-eventbus.md, plan-frontend-gaps.md to mark completed items
+
+**Blocked:** UEFI Phase 4 (needs firmware images), Device Acq v2 Phase 10 (needs hardware)
+
+**Key learnings (see .planning/knowledge/session12-*):**
+- Always audit actual code before trusting intake plan descriptions
+- Ouroboros MCP interview doesn't work from agent context — use AskUserQuestion
+- Fleet works great with zero-overlap scope partitioning
+
+---
+
 ## Status Overview
 
-**Campaigns:** 8 completed, 1 blocked (Device Acq v2 — needs hardware), 1 blocked (UEFI Phase 4 — needs firmware images)
+**Campaigns:** 8 completed + 3 delivered this session, 1 blocked (Device Acq v2), 1 blocked (UEFI Phase 4)
 **Architecture Review:** Complete. 6 critical fixed, 9 warnings fixed, 23 backlog.
 **Roadmap:** Phases 1-4 fully implemented. Phase 5 (expansion) is the remaining frontier.
-**Tests:** 379 backend, 0 frontend. All passing.
+**Tests:** 379 backend (353 pass + 1 pre-existing failure), 20 frontend E2E (Playwright). TypeScript clean.
 
 ---
 
