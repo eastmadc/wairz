@@ -187,8 +187,10 @@ async def _run_unpack_background(
     storage_path: str,
 ) -> None:
     """Run firmware unpacking in the background with its own DB session."""
+    from app.services.event_service import event_service
+
     async def _update_progress(stage: str, progress: int) -> None:
-        """Update firmware progress fields in the database."""
+        """Update firmware progress fields in the database and push SSE event."""
         async with async_session_factory() as db:
             fw_result = await db.execute(
                 select(Firmware).where(Firmware.id == firmware_id)
@@ -198,6 +200,15 @@ async def _run_unpack_background(
                 firmware.unpack_stage = stage
                 firmware.unpack_progress = progress
                 await db.commit()
+        try:
+            await event_service.publish_progress(
+                str(project_id), "unpacking",
+                status="unpacking",
+                progress=progress / 100.0,
+                message=stage,
+            )
+        except Exception:
+            pass  # SSE is best-effort
 
     try:
         output_base = os.path.dirname(storage_path)
@@ -237,21 +248,52 @@ async def _run_unpack_background(
                     project.status = "error"
 
                 await db.commit()
+
+                # Push SSE completion/error event
+                try:
+                    await event_service.publish_progress(
+                        str(project_id), "unpacking",
+                        status="completed" if result.success else "error",
+                        progress=1.0 if result.success else None,
+                        message="Extraction complete" if result.success else "Extraction failed",
+                        extra={"architecture": result.architecture} if result.success else None,
+                    )
+                except Exception:
+                    pass
             except Exception:
                 await db.rollback()
                 raise
     except Exception:
         logger.exception("Background firmware unpack failed for firmware %s", firmware_id)
     finally:
-        # Guarantee project status is never stuck at "unpacking"
+        # Guarantee project/firmware state is never stuck at "unpacking"
         try:
             async with async_session_factory() as db:
                 proj_result = await db.execute(
                     select(Project).where(Project.id == project_id)
                 )
                 project = proj_result.scalar_one_or_none()
+                fw_result = await db.execute(
+                    select(Firmware).where(Firmware.id == firmware_id)
+                )
+                fw = fw_result.scalar_one_or_none()
+
+                changed = False
                 if project and project.status == "unpacking":
                     project.status = "error"
+                    changed = True
+                if fw and (fw.unpack_stage is not None or fw.unpack_progress is not None):
+                    if not fw.extracted_path:
+                        if not fw.unpack_log:
+                            fw.unpack_log = (
+                                f"Extraction failed or was interrupted at stage: "
+                                f"{fw.unpack_stage or 'unknown'} "
+                                f"({fw.unpack_progress or 0}% complete)."
+                            )
+                        fw.unpack_stage = None
+                        fw.unpack_progress = None
+                        changed = True
+                if changed:
                     await db.commit()
         except Exception:
             logger.exception("Failed to reset status for project %s", project_id)

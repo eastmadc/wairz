@@ -34,6 +34,7 @@ import { SessionCard } from '@/components/emulation/SessionCard'
 import { EmulationTerminal } from '@/components/emulation/EmulationTerminal'
 import { SystemEmulationPanel } from '@/components/emulation/SystemEmulationPanel'
 import { extractErrorMessage } from '@/utils/error'
+import { useEventStream } from '@/hooks/useEventStream'
 import type {
   EmulationSession,
   EmulationMode,
@@ -152,15 +153,23 @@ export default function EmulationPage() {
       .catch(() => {})
   }, [projectId, selectedFirmwareId])
 
-  // Poll for status updates (faster during active sessions)
-  useEffect(() => {
-    if (!projectId) return
-    const hasActive = sessions.some((s) => s.status === 'running' || s.status === 'starting')
-    if (!hasActive) return
+  // SSE: listen for emulation events and refresh on status changes
+  const hasActiveSession = sessions.some((s) => s.status === 'running' || s.status === 'starting')
+  const { lastEvent: emulationEvent } = useEventStream<{ type: string; status: string }>(
+    projectId,
+    { types: ['emulation'], enabled: hasActiveSession },
+  )
 
-    const interval = setInterval(loadSessions, 2000)
+  useEffect(() => {
+    if (emulationEvent) loadSessions()
+  }, [emulationEvent, loadSessions])
+
+  // Fallback poll during active sessions (in case SSE unavailable)
+  useEffect(() => {
+    if (!projectId || !hasActiveSession) return
+    const interval = setInterval(loadSessions, 5000)
     return () => clearInterval(interval)
-  }, [projectId, sessions, loadSessions])
+  }, [projectId, hasActiveSession, loadSessions])
 
   const handleStart = async () => {
     if (!projectId) return

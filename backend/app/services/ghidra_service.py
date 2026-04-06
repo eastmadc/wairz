@@ -231,7 +231,7 @@ class GhidraAnalysisCache:
             AnalysisCache.firmware_id == firmware_id,
             AnalysisCache.binary_sha256 == binary_sha256,
             AnalysisCache.operation == "ghidra_full_analysis",
-        )
+        ).limit(1)
         result = await db.execute(stmt)
         return result.scalar_one_or_none() is not None
 

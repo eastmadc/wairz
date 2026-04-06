@@ -37,7 +37,7 @@ async def get_component_map(
     stmt = select(AnalysisCache).where(
         AnalysisCache.firmware_id == firmware.id,
         AnalysisCache.operation == "component_map",
-    )
+    ).limit(1)
     result = await db.execute(stmt)
     cached = result.scalar_one_or_none()
 

@@ -260,7 +260,7 @@ async def unpack_firmware(
         result.success = True
         return result
 
-    if fw_type in ("android_ota", "android_sparse", "android_boot"):
+    if fw_type in ("android_ota", "android_sparse", "android_boot", "android_scatter"):
         await _report("Extracting Android firmware", 15)
         try:
             if fw_type == "android_boot":

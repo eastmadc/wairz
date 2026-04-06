@@ -53,6 +53,12 @@ async def unpack_firmware_job(
     pid = uuid.UUID(project_id)
     fid = uuid.UUID(firmware_id)
 
+    from app.services.event_service import event_service
+    try:
+        await event_service.connect()
+    except Exception:
+        pass  # SSE is best-effort
+
     async def _update_progress(stage: str, progress: int) -> None:
         async with async_session_factory() as db:
             fw_result = await db.execute(
@@ -63,6 +69,15 @@ async def unpack_firmware_job(
                 firmware.unpack_stage = stage
                 firmware.unpack_progress = progress
                 await db.commit()
+        try:
+            await event_service.publish_progress(
+                project_id, "unpacking",
+                status="unpacking",
+                progress=progress / 100.0,
+                message=stage,
+            )
+        except Exception:
+            pass
 
     try:
         output_base = os.path.dirname(storage_path)
@@ -102,6 +117,16 @@ async def unpack_firmware_job(
                     project.status = "error"
 
                 await db.commit()
+
+                try:
+                    await event_service.publish_progress(
+                        project_id, "unpacking",
+                        status="completed" if result.success else "error",
+                        progress=1.0 if result.success else None,
+                        message="Extraction complete" if result.success else "Extraction failed",
+                    )
+                except Exception:
+                    pass
             except Exception:
                 await db.rollback()
                 raise
@@ -114,8 +139,31 @@ async def unpack_firmware_job(
                     select(Project).where(Project.id == pid)
                 )
                 project = proj_result.scalar_one_or_none()
+                fw_result = await db.execute(
+                    select(Firmware).where(Firmware.id == fid)
+                )
+                firmware = fw_result.scalar_one_or_none()
+
+                changed = False
                 if project and project.status == "unpacking":
                     project.status = "error"
+                    changed = True
+                # Always clean up stuck firmware fields
+                if firmware and (firmware.unpack_stage is not None or firmware.unpack_progress is not None):
+                    if not firmware.extracted_path:
+                        # Extraction never completed — record a useful log
+                        if not firmware.unpack_log:
+                            firmware.unpack_log = (
+                                f"Extraction timed out or was interrupted at stage: "
+                                f"{firmware.unpack_stage or 'unknown'} "
+                                f"({firmware.unpack_progress or 0}% complete).\n"
+                                f"The firmware may be too large for the current timeout. "
+                                f"Try uploading a smaller image or increasing the worker timeout."
+                            )
+                        firmware.unpack_stage = None
+                        firmware.unpack_progress = None
+                        changed = True
+                if changed:
                     await db.commit()
         except Exception:
             logger.exception("Failed to reset status for project %s", project_id)
@@ -286,7 +334,10 @@ class WorkerSettings:
 
     redis_settings = get_redis_settings()
 
-    # Sensible defaults — long timeout for firmware unpacking / Ghidra
-    job_timeout = 600  # 10 minutes
+    # Must exceed the longest extraction pipeline (Android sparse → simg2img →
+    # super partition scan → EROFS/ext4 extract → unblob fallback).  On RPi
+    # hardware with multi-GB images the Android pipeline alone can take 15-20
+    # minutes, and unblob's own timeout is 1200s.
+    job_timeout = 1800  # 30 minutes
     max_jobs = 4
     poll_delay = 0.5  # seconds between Redis polls

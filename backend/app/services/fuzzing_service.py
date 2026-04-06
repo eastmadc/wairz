@@ -90,6 +90,18 @@ class FuzzingService:
         return docker.from_env()
 
     @staticmethod
+    async def _emit_event(project_id: UUID, status: str, message: str = "", extra: dict | None = None) -> None:
+        """Best-effort SSE event for fuzzing status changes."""
+        try:
+            from app.services.event_service import event_service
+            await event_service.publish_progress(
+                str(project_id), "fuzzing",
+                status=status, message=message, extra=extra,
+            )
+        except Exception:
+            pass
+
+    @staticmethod
     def _write_file_to_container(
         container: "docker.models.containers.Container",
         dest_path: str,
@@ -525,11 +537,13 @@ class FuzzingService:
             campaign.container_id = container.id
             campaign.status = "running"
             campaign.started_at = datetime.now(timezone.utc)
+            await self._emit_event(campaign.project_id, "running", "Fuzzing campaign started")
 
         except Exception as exc:
             logger.exception("Failed to start fuzzing container")
             campaign.status = "error"
             campaign.error_message = str(exc)
+            await self._emit_event(campaign.project_id, "error", str(exc))
 
         await self.db.flush()
         return campaign
@@ -567,6 +581,7 @@ class FuzzingService:
 
         campaign.status = "stopped"
         campaign.stopped_at = datetime.now(timezone.utc)
+        await self._emit_event(campaign.project_id, "stopped", "Fuzzing campaign stopped")
         await self.db.flush()
         return campaign
 

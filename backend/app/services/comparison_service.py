@@ -1,7 +1,10 @@
 """Service for comparing firmware versions — filesystem and binary diffing."""
 
+import hashlib
 import os
 from dataclasses import dataclass, field
+
+import lief
 
 from app.utils.hashing import compute_file_sha256
 from app.utils.sandbox import safe_walk
@@ -43,6 +46,10 @@ class FunctionDiffEntry:
     status: str  # "added", "removed", "modified"
     size_a: int | None = None
     size_b: int | None = None
+    hash_a: str | None = None
+    hash_b: str | None = None
+    addr_a: int | None = None
+    addr_b: int | None = None
 
 
 @dataclass
@@ -55,6 +62,13 @@ class BinaryDiff:
     functions_modified: list[FunctionDiffEntry] = field(default_factory=list)
     info_a: dict = field(default_factory=dict)
     info_b: dict = field(default_factory=dict)
+    sections_a: list[dict] = field(default_factory=list)
+    sections_b: list[dict] = field(default_factory=list)
+    sections_changed: list[dict] = field(default_factory=list)
+    imports_added: list[str] = field(default_factory=list)
+    imports_removed: list[str] = field(default_factory=list)
+    exports_added: list[str] = field(default_factory=list)
+    exports_removed: list[str] = field(default_factory=list)
 
 
 def _file_sha256(path: str) -> str | None:
@@ -163,11 +177,10 @@ def diff_filesystems(root_a: str, root_b: str) -> FirmwareDiff:
 def diff_binary(binary_a_path: str, binary_b_path: str, binary_rel_path: str) -> BinaryDiff:
     """Compare two versions of the same ELF binary at the function level.
 
-    Uses pyelftools to extract function symbols and compare sets.
+    Uses LIEF to extract function symbols with body hashes, detecting same-size
+    code changes that pure size comparison misses.  Falls back to section-level
+    hashing for stripped binaries.
     """
-    from elftools.elf.elffile import ELFFile
-    from elftools.elf.sections import SymbolTableSection
-
     result = BinaryDiff(binary_path=binary_rel_path)
 
     # Always extract basic info (file size, arch, etc.)
@@ -181,12 +194,62 @@ def diff_binary(binary_a_path: str, binary_b_path: str, binary_rel_path: str) ->
     result.info_b["sha256"] = sha_b
     result.info_a["identical"] = sha_a == sha_b
 
-    funcs_a = _extract_functions(binary_a_path)
-    funcs_b = _extract_functions(binary_b_path)
+    # Extract import/export sets using LIEF and compare them
+    imports_a = _extract_imports(binary_a_path)
+    imports_b = _extract_imports(binary_b_path)
+    if imports_a is not None and imports_b is not None:
+        result.imports_added = sorted(imports_b - imports_a)
+        result.imports_removed = sorted(imports_a - imports_b)
+
+    exports_a = _extract_exports(binary_a_path)
+    exports_b = _extract_exports(binary_b_path)
+    if exports_a is not None and exports_b is not None:
+        result.exports_added = sorted(exports_b - exports_a)
+        result.exports_removed = sorted(exports_a - exports_b)
+
+    # Function-level diff using body hashes
+    funcs_a = _extract_function_hashes(binary_a_path)
+    funcs_b = _extract_function_hashes(binary_b_path)
 
     if funcs_a is None or funcs_b is None:
-        result.info_a["stripped"] = funcs_a is None or len(funcs_a) == 0
-        result.info_b["stripped"] = funcs_b is None or len(funcs_b) == 0
+        result.info_a["stripped"] = funcs_a is None or (funcs_a is not None and len(funcs_a) == 0)
+        result.info_b["stripped"] = funcs_b is None or (funcs_b is not None and len(funcs_b) == 0)
+
+        # Fall back to section-level hashing for stripped binaries
+        secs_a = _extract_section_hashes(binary_a_path)
+        secs_b = _extract_section_hashes(binary_b_path)
+        if secs_a is not None:
+            result.sections_a = secs_a
+        if secs_b is not None:
+            result.sections_b = secs_b
+        if secs_a and secs_b:
+            map_a = {s["name"]: s for s in secs_a}
+            map_b = {s["name"]: s for s in secs_b}
+            for name in sorted(set(map_a) | set(map_b)):
+                sa = map_a.get(name)
+                sb = map_b.get(name)
+                if sa and sb and sa["hash"] != sb["hash"]:
+                    result.sections_changed.append({
+                        "name": name,
+                        "size_a": sa["size"],
+                        "size_b": sb["size"],
+                        "hash_a": sa["hash"],
+                        "hash_b": sb["hash"],
+                    })
+                elif sa and not sb:
+                    result.sections_changed.append({
+                        "name": name,
+                        "status": "removed",
+                        "size_a": sa["size"],
+                        "hash_a": sa["hash"],
+                    })
+                elif sb and not sa:
+                    result.sections_changed.append({
+                        "name": name,
+                        "status": "added",
+                        "size_b": sb["size"],
+                        "hash_b": sb["hash"],
+                    })
         return result
 
     names_a = set(funcs_a.keys())
@@ -194,23 +257,30 @@ def diff_binary(binary_a_path: str, binary_b_path: str, binary_rel_path: str) ->
 
     # Added functions
     for name in sorted(names_b - names_a):
+        fb = funcs_b[name]
         result.functions_added.append(FunctionDiffEntry(
-            name=name, status="added", size_b=funcs_b[name],
+            name=name, status="added",
+            size_b=fb["size"], hash_b=fb["hash"], addr_b=fb["addr"],
         ))
 
     # Removed functions
     for name in sorted(names_a - names_b):
+        fa = funcs_a[name]
         result.functions_removed.append(FunctionDiffEntry(
-            name=name, status="removed", size_a=funcs_a[name],
+            name=name, status="removed",
+            size_a=fa["size"], hash_a=fa["hash"], addr_a=fa["addr"],
         ))
 
-    # Modified functions (size changed)
+    # Modified functions (different hash — catches same-size code changes)
     for name in sorted(names_a & names_b):
-        size_a = funcs_a[name]
-        size_b = funcs_b[name]
-        if size_a != size_b:
+        fa = funcs_a[name]
+        fb = funcs_b[name]
+        if fa["hash"] != fb["hash"]:
             result.functions_modified.append(FunctionDiffEntry(
-                name=name, status="modified", size_a=size_a, size_b=size_b,
+                name=name, status="modified",
+                size_a=fa["size"], size_b=fb["size"],
+                hash_a=fa["hash"], hash_b=fb["hash"],
+                addr_a=fa["addr"], addr_b=fb["addr"],
             ))
 
     return result
@@ -316,9 +386,245 @@ def diff_text_file(path_a: str, path_b: str, rel_path: str) -> dict:
     return result
 
 
-def _extract_functions(binary_path: str) -> dict[str, int] | None:
-    """Extract function names and sizes from an ELF binary.
+def _extract_function_hashes(binary_path: str) -> dict[str, dict] | None:
+    """Extract function names, sizes, addresses, and body hashes from ELF binary.
 
+    Tries .symtab first (all functions), falls back to .dynsym (exports only).
+    Returns {name: {size, hash, addr}} or None if parsing fails.
+    """
+    try:
+        binary = lief.parse(binary_path)
+        if binary is None:
+            return None
+
+        functions: dict[str, dict] = {}
+
+        # Try all symbols first (.symtab + .dynsym), fall back to dynamic only
+        # LIEF exposes .symbols (all) and .dynamic_symbols; .static_symbols
+        # doesn't exist in all versions.
+        symbol_sources = [binary.symbols]
+        if hasattr(binary, "dynamic_symbols"):
+            symbol_sources.append(binary.dynamic_symbols)
+
+        for symbols in symbol_sources:
+            for sym in symbols:
+                if (sym.is_function
+                        and sym.name and sym.size > 0 and sym.value > 0
+                        and sym.name not in functions):
+                    content = binary.get_content_from_virtual_address(sym.value, sym.size)
+                    if content and len(content) == sym.size:
+                        h = hashlib.sha256(bytes(content)).hexdigest()
+                        functions[sym.name] = {
+                            "size": sym.size,
+                            "hash": h,
+                            "addr": sym.value,
+                        }
+            if functions:
+                break  # Got functions, don't try next source
+
+        return functions if functions else None
+    except Exception:
+        return None
+
+
+def _extract_section_hashes(binary_path: str) -> list[dict] | None:
+    """Extract hashes for key sections — fallback for stripped binaries."""
+    try:
+        binary = lief.parse(binary_path)
+        if binary is None:
+            return None
+
+        sections: list[dict] = []
+        for name in (".text", ".rodata", ".data", ".init", ".fini", ".plt"):
+            section = binary.get_section(name)
+            if section and section.size > 0:
+                content = bytes(section.content)
+                sections.append({
+                    "name": name,
+                    "size": section.size,
+                    "hash": hashlib.sha256(content).hexdigest(),
+                })
+        return sections if sections else None
+    except Exception:
+        return None
+
+
+def _extract_imports(binary_path: str) -> set[str] | None:
+    """Extract imported function names from an ELF binary using LIEF."""
+    try:
+        binary = lief.parse(binary_path)
+        if binary is None:
+            return None
+        imports: set[str] = set()
+        for sym in binary.dynamic_symbols:
+            if sym.is_function and sym.name and sym.is_imported:
+                imports.add(sym.name)
+        return imports
+    except Exception:
+        return None
+
+
+def _extract_exports(binary_path: str) -> set[str] | None:
+    """Extract exported function names from an ELF binary using LIEF."""
+    try:
+        binary = lief.parse(binary_path)
+        if binary is None:
+            return None
+        exports: set[str] = set()
+        for sym in binary.dynamic_symbols:
+            if sym.is_function and sym.name and sym.is_exported:
+                exports.add(sym.name)
+        return exports
+    except Exception:
+        return None
+
+
+def diff_function_instructions(
+    binary_a_path: str,
+    binary_b_path: str,
+    function_name: str,
+) -> dict:
+    """Disassemble a function from both binaries and produce a unified diff.
+
+    Uses LIEF to locate the function symbol and read its bytes, then Capstone
+    to disassemble.  Returns a dict with function_name, arch, diff_text,
+    lines_added, lines_removed, and error.
+    """
+    import difflib
+
+    import capstone
+
+    result: dict = {
+        "function_name": function_name,
+        "arch": "",
+        "diff_text": "",
+        "lines_added": 0,
+        "lines_removed": 0,
+        "error": None,
+    }
+
+    # Architecture mapping from LIEF ELF machine type to Capstone
+    _ARCH_MAP = {
+        lief.ELF.ARCH.AARCH64: (capstone.CS_ARCH_ARM64, capstone.CS_MODE_ARM, "aarch64"),
+        lief.ELF.ARCH.ARM: (capstone.CS_ARCH_ARM, capstone.CS_MODE_ARM, "arm"),
+        lief.ELF.ARCH.MIPS: (capstone.CS_ARCH_MIPS, capstone.CS_MODE_MIPS32, "mips"),
+        lief.ELF.ARCH.I386: (capstone.CS_ARCH_X86, capstone.CS_MODE_32, "x86"),
+        lief.ELF.ARCH.X86_64: (capstone.CS_ARCH_X86, capstone.CS_MODE_64, "x86_64"),
+    }
+
+    def _parse_and_disassemble(binary_path: str, label: str):
+        """Parse a binary, find the function, and disassemble it.
+
+        Returns (lines, arch_info, error_string).
+        """
+        binary = lief.ELF.parse(binary_path)
+        if binary is None:
+            return None, None, f"Failed to parse {label} as ELF"
+
+        # Find the function symbol (iterates both .symtab and .dynsym)
+        sym = None
+        for s in binary.symbols:
+            if (
+                s.name == function_name
+                and s.is_function
+                and s.value > 0
+            ):
+                sym = s
+                break
+
+        if sym is None:
+            return None, None, f"Function '{function_name}' not found in {label}"
+
+        if sym.size == 0:
+            return None, None, f"Function '{function_name}' has size 0 in {label}"
+
+        # Determine architecture
+        machine = binary.header.machine_type
+        if machine not in _ARCH_MAP:
+            return None, None, f"Unsupported architecture in {label}: {machine}"
+
+        cs_arch, cs_mode, arch_name = _ARCH_MAP[machine]
+
+        # Handle endianness for MIPS
+        if machine == lief.ELF.ARCH.MIPS:
+            if binary.header.identity_data == lief.ELF.Header.ELF_DATA.MSB:
+                cs_mode |= capstone.CS_MODE_BIG_ENDIAN
+            else:
+                cs_mode |= capstone.CS_MODE_LITTLE_ENDIAN
+
+        # Read function bytes
+        try:
+            func_bytes = bytes(binary.get_content_from_virtual_address(
+                sym.value, sym.size,
+            ))
+        except Exception as e:
+            return None, None, f"Failed to read function bytes in {label}: {e}"
+
+        if not func_bytes:
+            return None, None, f"Empty function body in {label}"
+
+        # Disassemble
+        try:
+            md = capstone.Cs(cs_arch, cs_mode)
+            instructions = list(md.disasm(func_bytes, sym.value))
+        except capstone.CsError as e:
+            return None, None, f"Capstone disassembly failed for {label}: {e}"
+
+        # Format as lines with offset relative to function start
+        base = sym.value
+        lines = []
+        for insn in instructions:
+            offset = insn.address - base
+            lines.append(f"+{offset:#06x}: {insn.mnemonic} {insn.op_str}")
+
+        return lines, (machine, arch_name), None
+
+    # Disassemble both binaries
+    lines_a, arch_a, err_a = _parse_and_disassemble(binary_a_path, "firmware A")
+    if err_a and lines_a is None:
+        result["error"] = err_a
+        return result
+
+    lines_b, arch_b, err_b = _parse_and_disassemble(binary_b_path, "firmware B")
+    if err_b and lines_b is None:
+        result["error"] = err_b
+        return result
+
+    # Check architecture match
+    if arch_a[0] != arch_b[0]:
+        result["error"] = (
+            f"Architecture mismatch: firmware A is {arch_a[1]}, "
+            f"firmware B is {arch_b[1]}"
+        )
+        return result
+
+    result["arch"] = arch_a[1]
+
+    # Produce unified diff
+    diff_lines = list(difflib.unified_diff(
+        lines_a,
+        lines_b,
+        fromfile=f"a/{function_name}",
+        tofile=f"b/{function_name}",
+        lineterm="",
+    ))
+
+    # Count additions and removals (skip header lines)
+    for line in diff_lines[2:]:
+        if line.startswith("+") and not line.startswith("+++"):
+            result["lines_added"] += 1
+        elif line.startswith("-") and not line.startswith("---"):
+            result["lines_removed"] += 1
+
+    result["diff_text"] = "\n".join(diff_lines)
+
+    return result
+
+
+def _extract_functions(binary_path: str) -> dict[str, int] | None:
+    """Extract function names and sizes from an ELF binary (legacy, pyelftools).
+
+    Kept for backward compatibility. Use _extract_function_hashes() instead.
     Returns {function_name: size} or None if parsing fails.
     """
     from elftools.elf.elffile import ELFFile
@@ -345,19 +651,20 @@ def _extract_functions(binary_path: str) -> dict[str, int] | None:
 
 
 def _extract_binary_info(binary_path: str) -> dict:
-    """Extract basic binary metadata."""
-    from elftools.elf.elffile import ELFFile
-
+    """Extract basic binary metadata using LIEF."""
     try:
         info: dict = {}
         stat = os.stat(binary_path)
         info["file_size"] = stat.st_size
 
-        with open(binary_path, "rb") as f:
-            elf = ELFFile(f)
-            info["arch"] = elf.header.e_machine
-            info["bits"] = elf.elfclass
-            info["endian"] = "little" if elf.little_endian else "big"
+        binary = lief.parse(binary_path)
+        if binary is not None:
+            header = binary.header
+            info["arch"] = str(header.machine_type).split(".")[-1]
+            info["bits"] = 64 if header.identity_class == lief.ELF.Header.CLASS.ELF64 else 32
+            info["endian"] = (
+                "little" if header.identity_data == lief.ELF.Header.ELF_DATA.LSB else "big"
+            )
 
         return info
     except Exception:

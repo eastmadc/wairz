@@ -169,7 +169,7 @@ async def _handle_save_code_cleanup(
         AnalysisCache.firmware_id == context.firmware_id,
         AnalysisCache.binary_sha256 == binary_sha256,
         AnalysisCache.operation == operation,
-    )
+    ).limit(1)
     existing = (await context.db.execute(stmt)).scalar_one_or_none()
 
     if existing:

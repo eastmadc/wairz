@@ -196,7 +196,7 @@ async def _handle_get_component_map(input: dict, context: ToolContext) -> str:
     stmt = select(AnalysisCache).where(
         AnalysisCache.firmware_id == context.firmware_id,
         AnalysisCache.operation == "component_map",
-    )
+    ).limit(1)
     result = await context.db.execute(stmt)
     cached = result.scalar_one_or_none()
 

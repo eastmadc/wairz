@@ -916,14 +916,15 @@ class SbomService:
 
     def _scan_kernel_version(self) -> None:
         """Detect Linux kernel version from modules directory and release files."""
-        # Check /lib/modules/*/
+        kernel_found = False
+
+        # Check /lib/modules/*/ (standard Linux)
         modules_dir = self._abs_path("/lib/modules")
         if os.path.isdir(modules_dir):
             try:
                 for entry in os.listdir(modules_dir):
                     entry_path = os.path.join(modules_dir, entry)
                     if os.path.isdir(entry_path) and re.match(r"\d+\.\d+", entry):
-                        # Extract base kernel version (strip local version suffix)
                         match = re.match(r"(\d+\.\d+\.\d+)", entry)
                         version = match.group(1) if match else entry
                         comp = IdentifiedComponent(
@@ -939,15 +940,89 @@ class SbomService:
                             metadata={"full_version": entry},
                         )
                         self._add_component(comp)
-                        break  # Usually only one kernel version
+                        kernel_found = True
+                        break
             except OSError:
                 pass
+
+        # Fallback: extract kernel version from .ko vermagic strings.
+        # Android puts modules in vendor/lib/modules or sibling partitions.
+        if not kernel_found:
+            kernel_found = self._scan_kernel_from_vermagic()
 
         # Check /etc/os-release, /etc/openwrt_release for distro info
         for rel_file in ["/etc/os-release", "/etc/openwrt_release"]:
             abs_path = self._abs_path(rel_file)
             if os.path.isfile(abs_path):
                 self._parse_os_release(abs_path, rel_file)
+
+    def _scan_kernel_from_vermagic(self) -> bool:
+        """Extract kernel version from .ko module vermagic strings.
+
+        Searches the extracted root AND sibling partitions (Android puts
+        kernel modules in vendor or other partitions, not the system root).
+        Returns True if a kernel version was identified.
+        """
+        import subprocess
+
+        # Search dirs: extracted root + sibling partition dirs
+        search_dirs = [self.extracted_root]
+        parent = os.path.dirname(self.extracted_root)
+        if os.path.isdir(parent):
+            try:
+                for entry in os.listdir(parent):
+                    sibling = os.path.join(parent, entry)
+                    if os.path.isdir(sibling) and sibling != self.extracted_root:
+                        search_dirs.append(sibling)
+            except OSError:
+                pass
+
+        for search_dir in search_dirs:
+            # Find the first .ko file
+            ko_path = None
+            for dirpath, _, filenames in os.walk(search_dir):
+                for fn in filenames:
+                    if fn.endswith(".ko"):
+                        ko_path = os.path.join(dirpath, fn)
+                        break
+                if ko_path:
+                    break
+
+            if not ko_path:
+                continue
+
+            # Extract vermagic string
+            try:
+                result = subprocess.run(
+                    ["strings", ko_path],
+                    capture_output=True, text=True, timeout=10,
+                )
+                for line in result.stdout.splitlines():
+                    if line.startswith("vermagic="):
+                        # vermagic=6.6.102-android15-8-g... SMP preempt ...
+                        ver_str = line.split("=", 1)[1].split()[0]
+                        match = re.match(r"(\d+\.\d+\.\d+)", ver_str)
+                        if match:
+                            version = match.group(1)
+                            rel_path = ko_path.replace(self.extracted_root, "")
+                            comp = IdentifiedComponent(
+                                name="linux-kernel",
+                                version=version,
+                                type="operating-system",
+                                cpe=f"cpe:2.3:o:linux:linux_kernel:{version}:*:*:*:*:*:*:*",
+                                purl=self._build_purl("linux", version),
+                                supplier="linux",
+                                detection_source="kernel_vermagic",
+                                detection_confidence="high",
+                                file_paths=[rel_path],
+                                metadata={"full_version": ver_str},
+                            )
+                            self._add_component(comp)
+                            return True
+            except (subprocess.TimeoutExpired, OSError):
+                continue
+
+        return False
 
     def _parse_os_release(self, abs_path: str, rel_path: str) -> None:
         """Parse os-release or openwrt_release for distro identification."""

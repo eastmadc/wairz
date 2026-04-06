@@ -127,11 +127,11 @@ class FirmwareMetadataService:
         Checks cache first. If not cached, runs binwalk scan, U-Boot header/env
         parsing, and MTD partition detection. Caches the result.
         """
-        # Check cache
+        # Check cache (use .first() since duplicate entries can exist)
         stmt = select(AnalysisCache).where(
             AnalysisCache.firmware_id == firmware_id,
             AnalysisCache.operation == "firmware_metadata",
-        )
+        ).limit(1)
         result = await db.execute(stmt)
         cached = result.scalar_one_or_none()
         if cached and cached.result:

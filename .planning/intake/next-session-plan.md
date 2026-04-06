@@ -1,7 +1,7 @@
 # Wairz Master Plan
 
 > Created: 2026-04-01
-> Updated: 2026-04-06 (session 10 — system emulation E2E complete, all items planned)
+> Updated: 2026-04-06 (session 11 — CycloneDX 1.7, SSE event bus, unpack log viewer)
 > Resume with: /do continue
 > Plans: .planning/intake/plan-*.md (6 detailed plans for all remaining items)
 
@@ -12,7 +12,7 @@
 **Campaigns:** 8 completed, 1 blocked (Device Acq v2 — needs hardware), 1 blocked (UEFI Phase 4 — needs firmware images)
 **Architecture Review:** Complete. 6 critical fixed, 9 warnings fixed, 23 backlog.
 **Roadmap:** Phases 1-4 fully implemented. Phase 5 (expansion) is the remaining frontier.
-**Tests:** 355+ backend, 0 frontend. All passing.
+**Tests:** 379 backend, 0 frontend. All passing.
 
 ---
 
@@ -55,7 +55,7 @@ All of these are implemented and in the codebase. Do NOT re-implement.
 |---|------|--------|-------|
 | F1 | **CVE triage workflow UI** | Medium | Expandable vuln rows, inline VEX status buttons, bulk triage. Backend VEX tools exist, frontend doesn't expose them. |
 | F2 | **Expose MCP tools in UI** | Large | "Security Tools" page with buttons to trigger scans (kernel config, secure boot, capa, SELinux, Semgrep, ETSI, full assessment). All backend tools exist. |
-| F3 | **Show unpack log for successful extractions** | Small | Currently only shows on error. Add collapsible log section. (Review backlog R11) |
+| F3 | ~~**Show unpack log for successful extractions**~~ | ~~Small~~ | **COMPLETE** (session 11). Collapsible log viewer for all firmware in ProjectDetailPage. |
 | F4 | **Frontend E2E tests (Playwright)** | Medium | No frontend tests exist. Basic smoke test: create project → upload → explore → scan → findings. |
 
 ### Phase 5: Emulation + Expansion (2-3 sessions)
@@ -68,8 +68,8 @@ All of these are implemented and in the codebase. Do NOT re-implement.
 | 5.2 | **CI/CD pipeline integration** | Medium | GitHub Action `wairz-scan`. Inputs: firmware URL or artifact. Outputs: SBOM, findings, compliance status, pass/fail gate. |
 | 5.3 | **RTOS/bare-metal recognition** | Large | Detect FreeRTOS, Zephyr, VxWorks, ThreadX from binary patterns. Version extraction. Basic SBOM generation. |
 | 5.4 | **Network protocol analysis** | Large | Capture pcap from emulated firmware. Service fingerprinting. Depends on 5.1. |
-| 5.5 | **CycloneDX v1.7 / HBOM** | Small | Upgrade export to CycloneDX v1.7 (ECMA-424). Add HBOM fields for device metadata. |
-| 5.6 | **WebSocket/SSE event bus** | Small | Replace polling with push for: unpacking progress, emulation status, fuzzing stats, assessment progress. Redis pub/sub. |
+| 5.5 | ~~**CycloneDX v1.7 / HBOM**~~ | ~~Small~~ | **COMPLETE** (session 11). Upgraded all exports to CycloneDX 1.7 (ECMA-424). HBOM device metadata in main component. Tools format updated. |
+| 5.6 | ~~**WebSocket/SSE event bus**~~ | ~~Small~~ | **COMPLETE** (session 11). SSE push for unpacking/fuzzing/emulation events. useEventStream hook. Polling reduced to 5-10s fallback. |
 
 ---
 
