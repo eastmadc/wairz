@@ -37,17 +37,26 @@ class PipelinePhase(str, Enum):
 
 # Patterns matched against FirmAE stdout/stderr to detect phase transitions.
 # Order matters: we match top-down and take the first hit.
+# Matched against FirmAE's run.sh output markers:
+#   "[*] <file> emulation start!!!" → EXTRACTING
+#   "[*] Extract done!!!"           → DETECTING_ARCH
+#   "[+] Start emulation!!!"        → PREPARING_IMAGE
+#   "[*] infer network start!!!"    → BOOTING
+#   "[+] Network reachable on <IP>" → CHECKING
+#   "[+] Web service on <IP>"       → RUNNING
 _PHASE_PATTERNS: list[tuple[re.Pattern, PipelinePhase]] = [
-    (re.compile(r"running firmware", re.IGNORECASE), PipelinePhase.RUNNING),
-    (re.compile(r"check(ing)?\s+(network|emulation)", re.IGNORECASE), PipelinePhase.CHECKING),
-    (re.compile(r"(booting|starting qemu|qemu-system)", re.IGNORECASE), PipelinePhase.BOOTING),
-    (re.compile(r"(creating|preparing)\s+(image|disk)", re.IGNORECASE), PipelinePhase.PREPARING_IMAGE),
-    (re.compile(r"(inferring|detecting)\s+(architecture|arch)", re.IGNORECASE), PipelinePhase.DETECTING_ARCH),
-    (re.compile(r"(extracting|unpacking|binwalk)", re.IGNORECASE), PipelinePhase.EXTRACTING),
+    (re.compile(r"Web service on", re.IGNORECASE), PipelinePhase.RUNNING),
+    (re.compile(r"Network reachable on", re.IGNORECASE), PipelinePhase.CHECKING),
+    (re.compile(r"infer network start", re.IGNORECASE), PipelinePhase.BOOTING),
+    (re.compile(r"Start emulation|architecture done", re.IGNORECASE), PipelinePhase.PREPARING_IMAGE),
+    (re.compile(r"Extract done", re.IGNORECASE), PipelinePhase.DETECTING_ARCH),
+    (re.compile(r"emulation start|extractor|extracting|unpacking|binwalk", re.IGNORECASE), PipelinePhase.EXTRACTING),
 ]
 
 # Pattern to extract guest IP from FirmAE output
 _IP_PATTERN = re.compile(r"(?:guest|target|ip)\s*(?:ip|address)?[:\s]+(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})", re.IGNORECASE)
+# FirmAE prints "[+] Network reachable on <IP>!" and "[+] Web service on <IP>"
+_IP_ON_PATTERN = re.compile(r"(?:reachable|service)\s+on\s+(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})", re.IGNORECASE)
 _IP_GENERIC_PATTERN = re.compile(r"(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})")
 
 # Pattern to extract architecture from FirmAE output
@@ -277,6 +286,8 @@ class PipelineManager:
                 if pattern.search(line):
                     if self._phase_order(phase) > self._phase_order(state.phase):
                         self._set_phase(state, phase)
+                        # On phase transitions, poll filesystem for arch/IP
+                        self._discover_from_filesystem(state)
                     break
 
             # Extract architecture
@@ -285,26 +296,28 @@ class PipelineManager:
                 state.arch = arch_match.group(2).lower()
                 logger.info("Detected arch: %s (session=%s)", state.arch, state.session_id[:8])
 
-            # Extract guest IP
-            ip_match = _IP_PATTERN.search(line)
+            # Extract guest IP — try specific patterns first, then "on <IP>"
+            ip_match = _IP_PATTERN.search(line) or _IP_ON_PATTERN.search(line)
             if ip_match:
                 ip = ip_match.group(1)
                 if ip not in state.guest_ips and not ip.startswith("0.") and not ip.startswith("255."):
                     state.guest_ips.append(ip)
                     logger.info("Discovered guest IP: %s (session=%s)", ip, state.session_id[:8])
 
-            # Detect network reachability from FirmAE's check output
-            if re.search(r"network\s*(is\s*)?reachable|ping\s*ok|network.*success", line, re.IGNORECASE):
+            # Detect network reachability from FirmAE's run.sh output
+            # FirmAE prints "[+] Network reachable on <IP>!"
+            if re.search(r"network\s*(is\s*)?reachable|ping\s*ok|network.*success|Network reachable on", line, re.IGNORECASE):
                 state.network_reachable = True
 
-            if re.search(r"web\s*(is\s*)?reachable|http.*ok|web.*success|web.*running", line, re.IGNORECASE):
+            # FirmAE prints "[+] Web service on <IP>"
+            if re.search(r"web\s*(is\s*)?reachable|web\s+service\s+on|http.*ok|web.*success|web.*running", line, re.IGNORECASE):
                 state.web_reachable = True
 
         # After output ends, try to discover QEMU PID and guest IPs from filesystem
         self._discover_from_filesystem(state)
 
     def _discover_from_filesystem(self, state: PipelineState) -> None:
-        """Discover QEMU PID and guest IPs from FirmAE's filesystem state."""
+        """Discover QEMU PID, guest IPs, and architecture from FirmAE's filesystem state."""
         scratch_dir = self.firmae_dir / "scratch"
 
         # Find QEMU PID from process table
@@ -321,11 +334,38 @@ class PipelineManager:
         except (subprocess.TimeoutExpired, ValueError, OSError):
             pass
 
-        # Discover guest IPs from FirmAE scratch directory
-        if not state.guest_ips:
-            for state_file in scratch_dir.glob("*/run.sh"):
+        # Discover architecture and guest IPs from FirmAE scratch directory
+        for iid_dir in scratch_dir.glob("*"):
+            if not iid_dir.is_dir():
+                continue
+
+            # Read architecture
+            if not state.arch:
+                arch_file = iid_dir / "architecture"
                 try:
-                    content = state_file.read_text()
+                    arch = arch_file.read_text().strip().lower()
+                    if arch:
+                        state.arch = arch
+                        logger.info("Discovered arch from filesystem: %s (session=%s)", arch, state.session_id[:8])
+                except OSError:
+                    pass
+
+            # Read IP from FirmAE's ip file
+            if not state.guest_ips:
+                ip_file = iid_dir / "ip"
+                try:
+                    ip = ip_file.read_text().strip()
+                    if ip and ip not in state.guest_ips:
+                        state.guest_ips.append(ip)
+                        logger.info("Discovered IP from filesystem: %s (session=%s)", ip, state.session_id[:8])
+                except OSError:
+                    pass
+
+            # Fallback: scan run.sh for IPs
+            if not state.guest_ips:
+                run_sh = iid_dir / "run.sh"
+                try:
+                    content = run_sh.read_text()
                     for match in _IP_GENERIC_PATTERN.finditer(content):
                         ip = match.group(1)
                         if (
@@ -339,11 +379,40 @@ class PipelineManager:
                 except OSError:
                     continue
 
+            # Read network/web reachability from result files
+            ping_file = iid_dir / "ping"
+            try:
+                if ping_file.read_text().strip().lower() == "true":
+                    state.network_reachable = True
+            except OSError:
+                pass
+
+            web_file = iid_dir / "web"
+            try:
+                if web_file.read_text().strip().lower() == "true":
+                    state.web_reachable = True
+            except OSError:
+                pass
+
     def _timeout_watchdog(self, state: PipelineState) -> None:
-        """Kill the pipeline if it exceeds the timeout."""
+        """Kill the pipeline if startup phases exceed the timeout.
+
+        Once the pipeline reaches RUNNING or CHECKING phase, the timeout no
+        longer applies — QEMU is alive and the user interacts until explicit
+        stop. The backend manages idle-timeout separately.
+        """
         deadline = (state.start_time or time.time()) + state.timeout
 
         while not state.is_terminal:
+            # Running/checking = firmware is booted and network-reachable.
+            # Stop enforcing the startup timeout.
+            if state.phase in (PipelinePhase.RUNNING, PipelinePhase.CHECKING):
+                logger.info(
+                    "Pipeline reached '%s' — startup timeout watchdog exiting (session=%s)",
+                    state.phase.value, state.session_id[:8],
+                )
+                return
+
             if time.time() > deadline:
                 logger.warning(
                     "Pipeline timeout (%ds): session=%s phase=%s",

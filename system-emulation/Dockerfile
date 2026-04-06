@@ -41,7 +41,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     qemu-system-arm qemu-system-mips qemu-system-x86 \
     qemu-utils \
     # Networking tools
-    nmap socat iproute2 iptables bridge-utils net-tools iputils-ping \
+    nmap socat iproute2 iptables bridge-utils net-tools iputils-ping tcpdump \
     busybox-static \
     # FirmAE dependencies
     binwalk \

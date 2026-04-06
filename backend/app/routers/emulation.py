@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisco
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import get_settings
 from app.database import async_session_factory, get_db
 from app.models.emulation_preset import EmulationPreset
 from app.models.emulation_session import EmulationSession
@@ -343,13 +344,16 @@ async def start_system_emulation(
     db: AsyncSession = Depends(get_db),
 ):
     """Start FirmAE full system emulation for the project's firmware."""
+    settings = get_settings()
+    # Use config timeout unless client explicitly overrides (schema default is 600)
+    timeout = request.timeout if request.timeout != 600 else settings.system_emulation_pipeline_timeout
     svc = SystemEmulationService(db)
     try:
         session = await svc.start_system_emulation(
             firmware=firmware,
             project_id=project_id,
             brand=request.brand,
-            timeout=request.timeout,
+            timeout=timeout,
         )
     except ValueError as exc:
         raise HTTPException(400, str(exc))

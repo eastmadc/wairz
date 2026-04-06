@@ -1,6 +1,6 @@
 # Campaign: Automated System Emulation (FirmAE)
 
-**Status:** active
+**Status:** completed
 **Created:** 2026-04-05
 **Seed:** `.planning/seeds/system-emulation-firmae.yaml`
 **Estimated Sessions:** 3-4
@@ -137,7 +137,7 @@ browser with no manual steps.
 
 ### Phase 5: Verify — End-to-End Testing with Real Firmware
 **Type:** verify
-**Status:** pending
+**Status:** completed
 **Estimated effort:** 1 sub-agent (may be blocked on firmware images)
 
 **Scope:**
@@ -192,9 +192,32 @@ browser with no manual steps.
 | Frontend mode toggle | 4 | completed | User Mode / System Mode tabs on EmulationPage |
 | Service discovery UI | 4 | completed | FirmwareServicesPanel with clickable links + connect buttons |
 | xterm.js SSH/telnet | 4 | completed | Connect via backend WS proxy, reuses EmulationTerminal |
-| E2E firmware testing | 5 | pending | |
+| E2E firmware testing | 5 | done | OpenWrt Archer C7 MIPS: booted, LuCI web reachable, SSH/HTTPS open |
 
 ## Active Context
+
+Phase 5 E2E verification complete:
+- Tested with OpenWrt 23.05.5 Archer C7 (MIPS big-endian, 16MB)
+- Pipeline progressed through all stages: extracting → detecting_arch → preparing_image → booting → checking → running
+- Firmware booted with IP 192.168.1.1, network_reachable=true, web_reachable=true
+- LuCI web interface responding on port 80 (HTTP 200, redirects to /cgi-bin/luci/)
+- SSH (22), HTTP (80), HTTPS (443) open
+- run_command_in_firmware: works (curl inside sidecar reaches firmware)
+- get_nvram_state: works (empty for OpenWrt, expected — uses UCI not NVRAM)
+- stop_system_emulation: works (container removed cleanly)
+- capture_network_traffic: fixed (added tcpdump to Dockerfile)
+
+Bugs fixed during Phase 5:
+1. Stage detection patterns completely wrong — none of the 6 patterns matched FirmAE's actual stdout markers. All rewritten.
+2. IP extraction pattern didn't match "Network reachable on <IP>" format. Added _IP_ON_PATTERN.
+3. web_reachable detection missed "Web service on" output. Fixed regex.
+4. Timeout watchdog killed QEMU even in RUNNING phase — now exits when phase reaches RUNNING/CHECKING.
+5. Pipeline timeout default (600s schema) didn't use config value (1800s). Router now uses config.
+6. Backend status mapping missed "checking" phase (fell to "starting"). Added to running-phase list.
+7. nmap port scan too slow (top 1000 ports) for QEMU cross-arch. Targeted 15 common embedded ports.
+8. tcpdump missing from Dockerfile. Added.
+9. _discover_from_filesystem now reads architecture/ip/ping/web files from FirmAE scratch dir.
+10. Filesystem discovery now runs on phase transitions (not just at output end).
 
 Phase 1 complete. Research produced:
 - FirmAE pipeline map (4-phase: extract → arch detect → image prep → QEMU launch)
@@ -234,7 +257,7 @@ Phases 1-4 all complete. Phase 5 (E2E verification) requires running Docker and 
 
 ```
 current-phase: 5
-current-step: blocked-on-runtime
+current-step: complete
 checkpoint-phase-4: none
 ```
 
