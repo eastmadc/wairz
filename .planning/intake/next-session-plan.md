@@ -1,8 +1,9 @@
 # Wairz Master Plan
 
 > Created: 2026-04-01
-> Updated: 2026-04-04 (session 9 — full roadmap audit, all prior phases verified complete)
+> Updated: 2026-04-06 (session 10 — system emulation E2E complete, all items planned)
 > Resume with: /do continue
+> Plans: .planning/intake/plan-*.md (6 detailed plans for all remaining items)
 
 ---
 
@@ -63,7 +64,7 @@ All of these are implemented and in the codebase. Do NOT re-implement.
 
 | # | Item | Effort | Notes |
 |---|------|--------|-------|
-| 5.1 | **Automated system emulation** | Large | FirmAE integration or auto-config pipeline. Detect arch + kernel, select QEMU machine type + kernel, configure network, start automatically. Target: 50%+ success rate on common router firmware. |
+| 5.1 | ~~**Automated system emulation**~~ | ~~Large~~ | **COMPLETE** (session 10). FirmAE sidecar, Flask shim, 8 MCP tools, mode toggle UI. E2E verified with OpenWrt Archer C7 MIPS. |
 | 5.2 | **CI/CD pipeline integration** | Medium | GitHub Action `wairz-scan`. Inputs: firmware URL or artifact. Outputs: SBOM, findings, compliance status, pass/fail gate. |
 | 5.3 | **RTOS/bare-metal recognition** | Large | Detect FreeRTOS, Zephyr, VxWorks, ThreadX from binary patterns. Version extraction. Basic SBOM generation. |
 | 5.4 | **Network protocol analysis** | Large | Capture pcap from emulated firmware. Service fingerprinting. Depends on 5.1. |
