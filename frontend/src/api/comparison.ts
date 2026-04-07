@@ -1,5 +1,5 @@
 import apiClient from './client'
-import type { BinaryDiff, FirmwareDiff, InstructionDiff, TextDiff } from '@/types'
+import type { BinaryDiff, DecompilationDiff, FirmwareDiff, InstructionDiff, TextDiff } from '@/types'
 
 export async function diffFirmware(
   projectId: string,
@@ -53,6 +53,21 @@ export async function diffInstructions(
     `/projects/${projectId}/compare/instructions`,
     { firmware_a_id: firmwareAId, firmware_b_id: firmwareBId, binary_path: binaryPath, function_name: functionName },
     { timeout: 30_000 },
+  )
+  return data
+}
+
+export async function diffDecompilation(
+  projectId: string,
+  firmwareAId: string,
+  firmwareBId: string,
+  binaryPath: string,
+  functionName: string,
+): Promise<DecompilationDiff> {
+  const { data } = await apiClient.post<DecompilationDiff>(
+    `/projects/${projectId}/compare/decompilation`,
+    { firmware_a_id: firmwareAId, firmware_b_id: firmwareBId, binary_path: binaryPath, function_name: functionName },
+    { timeout: 120_000 },
   )
   return data
 }

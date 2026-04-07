@@ -69,6 +69,7 @@ class BinaryDiff:
     imports_removed: list[str] = field(default_factory=list)
     exports_added: list[str] = field(default_factory=list)
     exports_removed: list[str] = field(default_factory=list)
+    basic_block_stats: dict | None = None
 
 
 def _file_sha256(path: str) -> str | None:
@@ -250,6 +251,27 @@ def diff_binary(binary_a_path: str, binary_b_path: str, binary_rel_path: str) ->
                         "size_b": sb["size"],
                         "hash_b": sb["hash"],
                     })
+
+        # Basic block hashing for deeper stripped binary comparison
+        bb_a = _extract_basic_blocks(binary_a_path)
+        bb_b = _extract_basic_blocks(binary_b_path)
+        if bb_a is not None and bb_b is not None:
+            hashes_a = set(bb_a["unique_hashes"])
+            hashes_b = set(bb_b["unique_hashes"])
+            common = hashes_a & hashes_b
+            added = hashes_b - hashes_a
+            removed = hashes_a - hashes_b
+            total_unique = len(hashes_a | hashes_b)
+            unchanged_pct = round(len(common) / total_unique * 100, 1) if total_unique > 0 else 100.0
+            result.basic_block_stats = {
+                "blocks_a": bb_a["block_count"],
+                "blocks_b": bb_b["block_count"],
+                "common_count": len(common),
+                "added_count": len(added),
+                "removed_count": len(removed),
+                "unchanged_pct": unchanged_pct,
+            }
+
         return result
 
     names_a = set(funcs_a.keys())
@@ -669,3 +691,201 @@ def _extract_binary_info(binary_path: str) -> dict:
         return info
     except Exception:
         return {"file_size": os.path.getsize(binary_path) if os.path.exists(binary_path) else 0}
+
+
+def _extract_basic_blocks(binary_path: str) -> dict | None:
+    """Extract basic block hashes from .text section for stripped binary comparison.
+
+    Splits .text section at branch/jump/return instructions to identify basic blocks,
+    then hashes each block's normalized instruction sequence.
+    Returns {block_count, unique_hashes: list, blocks: list[{offset, size, hash}]} or None.
+    """
+    import capstone
+
+    try:
+        binary = lief.ELF.parse(binary_path)
+        if binary is None:
+            return None
+
+        text_section = binary.get_section(".text")
+        if text_section is None or text_section.size == 0:
+            return None
+
+        text_bytes = bytes(text_section.content)
+        base_addr = text_section.virtual_address
+
+        # Architecture mapping (same as diff_function_instructions)
+        _ARCH_MAP = {
+            lief.ELF.ARCH.AARCH64: (capstone.CS_ARCH_ARM64, capstone.CS_MODE_ARM),
+            lief.ELF.ARCH.ARM: (capstone.CS_ARCH_ARM, capstone.CS_MODE_ARM),
+            lief.ELF.ARCH.MIPS: (capstone.CS_ARCH_MIPS, capstone.CS_MODE_MIPS32),
+            lief.ELF.ARCH.I386: (capstone.CS_ARCH_X86, capstone.CS_MODE_32),
+            lief.ELF.ARCH.X86_64: (capstone.CS_ARCH_X86, capstone.CS_MODE_64),
+        }
+
+        machine = binary.header.machine_type
+        if machine not in _ARCH_MAP:
+            return None
+
+        cs_arch, cs_mode = _ARCH_MAP[machine]
+
+        # Handle endianness for MIPS
+        if machine == lief.ELF.ARCH.MIPS:
+            if binary.header.identity_data == lief.ELF.Header.ELF_DATA.MSB:
+                cs_mode |= capstone.CS_MODE_BIG_ENDIAN
+            else:
+                cs_mode |= capstone.CS_MODE_LITTLE_ENDIAN
+
+        md = capstone.Cs(cs_arch, cs_mode)
+        md.detail = True
+        instructions = list(md.disasm(text_bytes, base_addr))
+
+        if not instructions:
+            return None
+
+        # Branch/jump/return instruction sets by architecture
+        _BRANCH_MNEMONICS: set[str] = set()
+        if cs_arch == capstone.CS_ARCH_ARM64:
+            _BRANCH_MNEMONICS = {"b", "bl", "br", "blr", "ret", "cbz", "cbnz", "tbz", "tbnz"}
+        elif cs_arch == capstone.CS_ARCH_ARM:
+            _BRANCH_MNEMONICS = {
+                "b", "bl", "bx", "blx", "bxj",
+                "beq", "bne", "bcs", "bcc", "bmi", "bpl", "bvs", "bvc",
+                "bhi", "bls", "bge", "blt", "bgt", "ble",
+            }
+        elif cs_arch == capstone.CS_ARCH_MIPS:
+            _BRANCH_MNEMONICS = {
+                "j", "jr", "jal", "jalr",
+                "beq", "bne", "bgtz", "blez", "bltz", "bgez",
+                "beqz", "bnez",
+            }
+        elif cs_arch == capstone.CS_ARCH_X86:
+            _BRANCH_MNEMONICS = {
+                "jmp", "je", "jne", "jz", "jnz", "jg", "jge", "jl", "jle",
+                "ja", "jae", "jb", "jbe", "jo", "jno", "js", "jns", "jp", "jnp",
+                "call", "ret", "retf", "retn", "iret",
+                "loop", "loope", "loopne",
+            }
+
+        # Split into basic blocks at branch instructions
+        blocks: list[dict] = []
+        current_block_insns: list[str] = []
+        block_start_offset = 0
+
+        for insn in instructions:
+            # Normalize: mnemonic + operand types (strip absolute addresses)
+            # Replace hex addresses with a placeholder to ignore relocation differences
+            op_str = insn.op_str
+            # Normalize absolute addresses (hex values) to a placeholder
+            normalized_ops = []
+            for part in op_str.replace(",", " ").split():
+                if part.startswith("0x") or part.startswith("#0x"):
+                    normalized_ops.append("ADDR")
+                else:
+                    normalized_ops.append(part)
+            normalized = f"{insn.mnemonic} {' '.join(normalized_ops)}".strip()
+            current_block_insns.append(normalized)
+
+            if insn.mnemonic.lower() in _BRANCH_MNEMONICS:
+                # End of basic block
+                if current_block_insns:
+                    block_text = "\n".join(current_block_insns)
+                    block_hash = hashlib.sha256(block_text.encode()).hexdigest()
+                    block_offset = insn.address - base_addr
+                    blocks.append({
+                        "offset": block_start_offset,
+                        "size": int(block_offset - block_start_offset + insn.size),
+                        "hash": block_hash,
+                    })
+                    current_block_insns = []
+                    block_start_offset = int(block_offset + insn.size)
+
+        # Handle trailing instructions (final block without a branch at the end)
+        if current_block_insns:
+            block_text = "\n".join(current_block_insns)
+            block_hash = hashlib.sha256(block_text.encode()).hexdigest()
+            last_insn = instructions[-1]
+            end_offset = last_insn.address - base_addr + last_insn.size
+            blocks.append({
+                "offset": block_start_offset,
+                "size": int(end_offset - block_start_offset),
+                "hash": block_hash,
+            })
+
+        unique_hashes = list(set(b["hash"] for b in blocks))
+        return {
+            "block_count": len(blocks),
+            "unique_hashes": unique_hashes,
+            "blocks": blocks,
+        }
+    except Exception:
+        return None
+
+
+async def diff_decompilation(
+    path_a: str,
+    path_b: str,
+    binary_path: str,
+    function_name: str,
+    firmware_a_id,
+    firmware_b_id,
+    db,
+    context_lines: int = 5,
+) -> dict:
+    """Decompile a function from both binaries and produce a unified diff.
+
+    Uses the Ghidra analysis cache for decompilation (results are cached by
+    binary hash + function name).  Returns a dict with source_a, source_b,
+    diff_text, lines_added, lines_removed, and error.
+    """
+    import difflib
+
+    from app.services.ghidra_service import get_analysis_cache
+
+    result: dict = {
+        "function_name": function_name,
+        "binary_path": binary_path,
+        "source_a": "",
+        "source_b": "",
+        "diff_text": "",
+        "lines_added": 0,
+        "lines_removed": 0,
+        "error": None,
+    }
+
+    cache = get_analysis_cache()
+
+    try:
+        code_a = await cache.decompile_function(path_a, function_name, firmware_a_id, db)
+    except Exception as exc:
+        result["error"] = f"Error decompiling from firmware A: {exc}"
+        return result
+
+    try:
+        code_b = await cache.decompile_function(path_b, function_name, firmware_b_id, db)
+    except Exception as exc:
+        result["error"] = f"Error decompiling from firmware B: {exc}"
+        return result
+
+    result["source_a"] = code_a
+    result["source_b"] = code_b
+
+    lines_a = code_a.splitlines(keepends=True)
+    lines_b = code_b.splitlines(keepends=True)
+
+    diff_lines = list(difflib.unified_diff(
+        lines_a, lines_b,
+        fromfile=f"a/{binary_path}:{function_name}",
+        tofile=f"b/{binary_path}:{function_name}",
+        n=context_lines,
+    ))
+
+    for line in diff_lines[2:]:
+        if line.startswith("+") and not line.startswith("+++"):
+            result["lines_added"] += 1
+        elif line.startswith("-") and not line.startswith("---"):
+            result["lines_removed"] += 1
+
+    result["diff_text"] = "".join(diff_lines)
+
+    return result

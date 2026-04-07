@@ -36,6 +36,11 @@
 - **Evidence:** All 20 tests written with dialog handling. Tests would fail without it.
 - **Applies when:** Writing any new E2E tests. The disclaimer uses sessionStorage — must be handled per-browser context.
 
+### 7. Always Rebuild and Smoke Test Docker After Backend Changes
+- **Description:** After building backend features, rebuild the Docker image, restart the container, and hit actual API endpoints with curl. Don't just verify imports or compile checks — exercise the new code path via HTTP against the running service.
+- **Evidence:** CPE enrichment compiled fine locally but SBOM was still returning cached results. Only discovered by actually calling `POST /sbom/generate?force_rescan=true` against running Docker. Also discovered the query param was `force_rescan` not `force` — only visible by reading the actual router code.
+- **Applies when:** Any backend service change. Especially when modifying services that interact with Syft, Grype, or database state.
+
 ## Key Decisions
 
 | Decision | Rationale | Outcome |

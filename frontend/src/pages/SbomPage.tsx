@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import {
   Package,
@@ -11,15 +11,13 @@ import {
   RefreshCw,
   Download,
   Search,
-  ExternalLink,
   ChevronDown,
   ChevronRight,
-  Bot,
-  MoreHorizontal,
   X,
   ArrowUpDown,
   ArrowUp,
   ArrowDown,
+  Keyboard,
 } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -36,6 +34,7 @@ import { listFirmware } from '@/api/firmware'
 import { useVulnerabilityStore } from '@/stores/vulnerabilityStore'
 import { useProjectStore } from '@/stores/projectStore'
 import FirmwareSelector from '@/components/projects/FirmwareSelector'
+import VulnerabilityRow from '@/components/sbom/VulnerabilityRow'
 import type {
   SbomComponent,
   SbomVulnerability,
@@ -66,13 +65,6 @@ const CONFIDENCE_DESCRIPTION: Record<string, string> = {
   high: 'High confidence — identified from package manager database, ELF SONAME, or kernel module directory',
   medium: 'Medium confidence — identified from version strings found in the binary',
   low: 'Low confidence — identified from config files or heuristic matching',
-}
-
-const RESOLUTION_CONFIG: Record<VulnerabilityResolutionStatus, { label: string; className: string }> = {
-  open: { label: 'Open', className: 'bg-blue-500/10 text-blue-500 border-blue-500/30' },
-  resolved: { label: 'Resolved', className: 'bg-green-500/10 text-green-500 border-green-500/30' },
-  ignored: { label: 'Ignored', className: 'bg-gray-500/10 text-gray-400 border-gray-500/30' },
-  false_positive: { label: 'False Positive', className: 'bg-purple-500/10 text-purple-500 border-purple-500/30' },
 }
 
 type ResolutionFilter = VulnerabilityResolutionStatus | 'all'
@@ -574,6 +566,18 @@ function parseCveId(cveId: string): [number, number] {
   return m ? [parseInt(m[1]), parseInt(m[2])] : [9999, 9999]
 }
 
+// ── Keyboard Shortcut Hints ──
+
+const KEYBOARD_SHORTCUTS = [
+  { key: 'j / k', desc: 'Navigate down / up' },
+  { key: 'x', desc: 'Toggle selection' },
+  { key: 'Enter', desc: 'Expand / collapse' },
+  { key: 'r', desc: 'Resolve' },
+  { key: 'i', desc: 'Ignore' },
+  { key: 'f', desc: 'False positive' },
+  { key: 'Esc', desc: 'Clear / collapse' },
+]
+
 // ── Vulnerabilities Tab ──
 
 function VulnerabilitiesTab({ projectId, vulnerabilities }: {
@@ -583,9 +587,9 @@ function VulnerabilitiesTab({ projectId, vulnerabilities }: {
   const {
     sevFilter, setSevFilter: onSevFilter,
     resolutionFilter, setResolutionFilter: onResolutionFilter,
-    actionMenuId, setActionMenuId: onActionMenu,
     justificationDialog, setJustificationDialog: onJustificationDialog,
     justificationText, setJustificationText: onJustificationText,
+    selectedIds, toggleSelected, selectAll, clearSelection,
     hasMore, loadingMore,
     resolve, bulkResolve, loadMore,
   } = useVulnerabilityStore()
@@ -597,12 +601,14 @@ function VulnerabilitiesTab({ projectId, vulnerabilities }: {
   const onLoadMore = useCallback(() => {
     loadMore(projectId)
   }, [projectId, loadMore])
-  const [selectedVuln, setSelectedVuln] = useState<string | null>(null)
+
   const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set())
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [bulkAction, setBulkAction] = useState<VulnerabilityResolutionStatus | null>(null)
   const [sortColumn, setSortColumn] = useState<SortColumn>('severity')
   const [sortDirection, setSortDirection] = useState<SortDirection>('asc')
+  const [focusedIndex, setFocusedIndex] = useState<number>(-1)
+  const [showShortcuts, setShowShortcuts] = useState(false)
+  const containerRef = useRef<HTMLDivElement>(null)
 
   const handleSort = (col: SortColumn) => {
     if (sortColumn === col) {
@@ -672,52 +678,133 @@ function VulnerabilitiesTab({ projectId, vulnerabilities }: {
       : <ArrowDown className="h-3 w-3" />
   }
 
-  const toggleExpand = (id: string) => {
+  const toggleExpand = useCallback((id: string) => {
     setExpandedRows((prev) => {
       const next = new Set(prev)
       if (next.has(id)) next.delete(id)
       else next.add(id)
       return next
     })
-  }
+  }, [])
 
-  const toggleSelect = (id: string) => {
-    setSelectedIds((prev) => {
-      const next = new Set(prev)
-      if (next.has(id)) next.delete(id)
-      else next.add(id)
-      return next
-    })
-  }
-
-  const toggleSelectAll = () => {
+  const toggleSelectAll = useCallback(() => {
     if (selectedIds.size === sortedVulns.length) {
-      setSelectedIds(new Set())
+      clearSelection()
     } else {
-      setSelectedIds(new Set(sortedVulns.map((v) => v.id)))
+      selectAll(sortedVulns.map((v) => v.id))
     }
-  }
+  }, [selectedIds.size, sortedVulns, clearSelection, selectAll])
 
-  const handleBulkAction = (status: VulnerabilityResolutionStatus) => {
+  const handleBulkAction = useCallback((status: VulnerabilityResolutionStatus) => {
     if (status === 'open') {
       bulkResolve(projectId, [...selectedIds], 'open')
-      setSelectedIds(new Set())
       return
     }
     setBulkAction(status)
-  }
+  }, [projectId, selectedIds, bulkResolve])
 
-  const confirmBulkAction = () => {
+  const confirmBulkAction = useCallback(() => {
     if (!bulkAction) return
     bulkResolve(projectId, [...selectedIds], bulkAction, justificationText || undefined)
-    setSelectedIds(new Set())
     setBulkAction(null)
     onJustificationText('')
-  }
+  }, [bulkAction, projectId, selectedIds, bulkResolve, justificationText, onJustificationText])
+
+  // Keyboard shortcuts
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Don't capture when typing in inputs
+      const tag = (e.target as HTMLElement).tagName
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return
+
+      // Don't interfere with modifier keys
+      if (e.ctrlKey || e.metaKey || e.altKey) return
+
+      switch (e.key) {
+        case 'j': {
+          e.preventDefault()
+          setFocusedIndex((prev) => {
+            const next = Math.min(prev + 1, sortedVulns.length - 1)
+            return next
+          })
+          break
+        }
+        case 'k': {
+          e.preventDefault()
+          setFocusedIndex((prev) => Math.max(prev - 1, 0))
+          break
+        }
+        case 'x': {
+          e.preventDefault()
+          if (focusedIndex >= 0 && focusedIndex < sortedVulns.length) {
+            toggleSelected(sortedVulns[focusedIndex].id)
+          }
+          break
+        }
+        case 'Enter':
+        case ' ': {
+          e.preventDefault()
+          if (focusedIndex >= 0 && focusedIndex < sortedVulns.length) {
+            toggleExpand(sortedVulns[focusedIndex].id)
+          }
+          break
+        }
+        case 'r': {
+          e.preventDefault()
+          if (focusedIndex >= 0 && focusedIndex < sortedVulns.length) {
+            const v = sortedVulns[focusedIndex]
+            if (v.resolution_status !== 'resolved') {
+              onResolve(v.id, 'resolved')
+            }
+          }
+          break
+        }
+        case 'i': {
+          e.preventDefault()
+          if (focusedIndex >= 0 && focusedIndex < sortedVulns.length) {
+            const v = sortedVulns[focusedIndex]
+            if (v.resolution_status !== 'ignored') {
+              onResolve(v.id, 'ignored')
+            }
+          }
+          break
+        }
+        case 'f': {
+          e.preventDefault()
+          if (focusedIndex >= 0 && focusedIndex < sortedVulns.length) {
+            const v = sortedVulns[focusedIndex]
+            if (v.resolution_status !== 'false_positive') {
+              onResolve(v.id, 'false_positive')
+            }
+          }
+          break
+        }
+        case 'Escape': {
+          e.preventDefault()
+          clearSelection()
+          setExpandedRows(new Set())
+          setFocusedIndex(-1)
+          break
+        }
+      }
+    }
+
+    document.addEventListener('keydown', handleKeyDown)
+    return () => document.removeEventListener('keydown', handleKeyDown)
+  }, [sortedVulns, focusedIndex, toggleSelected, toggleExpand, clearSelection, onResolve])
+
+  // Scroll focused row into view
+  useEffect(() => {
+    if (focusedIndex < 0 || !containerRef.current) return
+    const rows = containerRef.current.querySelectorAll('[data-vuln-row]')
+    if (rows[focusedIndex]) {
+      rows[focusedIndex].scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+    }
+  }, [focusedIndex])
 
   return (
-    <div className="space-y-4">
-      {/* Resolution status filter */}
+    <div className="space-y-4" ref={containerRef}>
+      {/* Resolution status filter + shortcut hint */}
       <div className="flex flex-wrap items-center gap-2">
         <span className="text-xs text-muted-foreground">Status:</span>
         {(['open', 'resolved', 'ignored', 'false_positive', 'all'] as ResolutionFilter[]).map((f) => {
@@ -737,6 +824,31 @@ function VulnerabilitiesTab({ projectId, vulnerabilities }: {
             </button>
           )
         })}
+        <div className="ml-auto relative">
+          <TooltipProvider>
+            <Tooltip open={showShortcuts} onOpenChange={setShowShortcuts}>
+              <TooltipTrigger asChild>
+                <button
+                  className="rounded p-1 text-muted-foreground/50 hover:text-muted-foreground hover:bg-accent transition-colors"
+                  onClick={() => setShowShortcuts((s) => !s)}
+                >
+                  <Keyboard className="h-3.5 w-3.5" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom" align="end" className="w-52 p-3">
+                <p className="text-xs font-medium mb-2">Keyboard Shortcuts</p>
+                <div className="space-y-1">
+                  {KEYBOARD_SHORTCUTS.map((s) => (
+                    <div key={s.key} className="flex items-center justify-between text-xs">
+                      <kbd className="rounded border border-border bg-muted px-1.5 py-0.5 font-mono text-[10px]">{s.key}</kbd>
+                      <span className="text-muted-foreground">{s.desc}</span>
+                    </div>
+                  ))}
+                </div>
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+        </div>
       </div>
 
       {/* Severity filter */}
@@ -762,15 +874,26 @@ function VulnerabilitiesTab({ projectId, vulnerabilities }: {
         <span className="ml-auto text-xs text-muted-foreground">{vulnerabilities.length} vulnerability(ies)</span>
       </div>
 
-      {/* Bulk action bar */}
+      {/* Bulk triage toolbar */}
       {selectedIds.size > 0 && (
-        <div className="flex items-center gap-3 rounded-lg border border-primary/30 bg-primary/5 px-4 py-2.5">
-          <span className="text-sm font-medium">{selectedIds.size} selected</span>
+        <div className="sticky bottom-0 z-20 flex items-center gap-3 rounded-lg border border-primary/30 bg-background shadow-lg px-4 py-2.5">
+          <span className="text-sm font-medium">
+            {selectedIds.size} of {sortedVulns.length} selected
+          </span>
           <div className="flex items-center gap-2 ml-auto">
-            <Button variant="outline" size="sm" onClick={() => handleBulkAction('resolved')}>Resolve</Button>
-            <Button variant="outline" size="sm" onClick={() => handleBulkAction('ignored')}>Ignore</Button>
-            <Button variant="outline" size="sm" onClick={() => handleBulkAction('false_positive')}>False Positive</Button>
-            <Button variant="ghost" size="sm" onClick={() => setSelectedIds(new Set())} className="text-muted-foreground">
+            <Button variant="outline" size="sm" onClick={() => handleBulkAction('open')}>
+              Mark as Open
+            </Button>
+            <Button variant="outline" size="sm" onClick={() => handleBulkAction('resolved')}>
+              Mark as Resolved
+            </Button>
+            <Button variant="outline" size="sm" onClick={() => handleBulkAction('ignored')}>
+              Mark as Ignored
+            </Button>
+            <Button variant="outline" size="sm" onClick={() => handleBulkAction('false_positive')}>
+              Mark as False Positive
+            </Button>
+            <Button variant="ghost" size="sm" onClick={clearSelection} className="text-muted-foreground">
               <X className="h-3.5 w-3.5" />
             </Button>
           </div>
@@ -785,7 +908,7 @@ function VulnerabilitiesTab({ projectId, vulnerabilities }: {
               <h3 className="text-sm font-medium">
                 {(() => {
                   const status = bulkAction ?? justificationDialog?.status
-                  const prefix = bulkAction ? `Bulk (${selectedIds.size}) — ` : ''
+                  const prefix = bulkAction ? `Bulk (${selectedIds.size}) \u2014 ` : ''
                   if (status === 'resolved') return `${prefix}Resolve Vulnerability`
                   if (status === 'ignored') return `${prefix}Ignore Vulnerability`
                   return `${prefix}Mark as False Positive`
@@ -855,254 +978,21 @@ function VulnerabilitiesTab({ projectId, vulnerabilities }: {
                 </th>
                 <th className="py-2 pr-4 font-medium">Status</th>
                 <th className="py-2 pr-4 font-medium">Description</th>
-                <th className="py-2 font-medium w-10"></th>
               </tr>
             </thead>
             <tbody>
-              {sortedVulns.map((v) => {
-                const effectiveSev = v.effective_severity ?? v.severity
-                const sevConfig = SEVERITY_CONFIG[effectiveSev] ?? SEVERITY_CONFIG.medium
-                const Icon = sevConfig.icon
-                const hasAdjustment = v.adjusted_severity && v.adjusted_severity !== v.severity
-                const hasScoreAdjustment = v.adjusted_cvss_score != null && v.adjusted_cvss_score !== v.cvss_score
-                const resConfig = RESOLUTION_CONFIG[v.resolution_status] ?? RESOLUTION_CONFIG.open
-                const isExpanded = expandedRows.has(v.id)
-                return (
-                  <React.Fragment key={v.id}>
-                  <tr className={`border-b border-border/50 hover:bg-accent/30 cursor-pointer ${isExpanded ? 'bg-accent/20' : ''}`} onClick={() => toggleExpand(v.id)}>
-                    <td className="py-2 pr-2" onClick={(e) => e.stopPropagation()}>
-                      <input
-                        type="checkbox"
-                        checked={selectedIds.has(v.id)}
-                        onChange={() => toggleSelect(v.id)}
-                        className="h-3.5 w-3.5 rounded border-border accent-primary cursor-pointer"
-                      />
-                    </td>
-                    <td className="py-2 pr-2">
-                      {isExpanded ? (
-                        <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
-                      ) : (
-                        <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />
-                      )}
-                    </td>
-                    <td className="py-2 pr-4">
-                      <a
-                        href={`https://nvd.nist.gov/vuln/detail/${v.cve_id}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="inline-flex items-center gap-1 font-mono text-xs text-primary hover:underline"
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        {v.cve_id}
-                        <ExternalLink className="h-2.5 w-2.5" />
-                      </a>
-                    </td>
-                    <td className="py-2 pr-4">
-                      <span className="font-medium">{v.component_name}</span>
-                      {v.component_version && (
-                        <span className="ml-1 font-mono text-muted-foreground">{v.component_version}</span>
-                      )}
-                    </td>
-                    <td className="py-2 pr-4 font-mono">
-                      {hasScoreAdjustment ? (
-                        <TooltipProvider>
-                          <Tooltip>
-                            <TooltipTrigger asChild>
-                              <span>
-                                {v.effective_cvss_score != null ? v.effective_cvss_score.toFixed(1) : '—'}
-                                <span className="ml-1 text-muted-foreground/50 line-through text-[10px]">
-                                  {v.cvss_score != null ? v.cvss_score.toFixed(1) : ''}
-                                </span>
-                              </span>
-                            </TooltipTrigger>
-                            <TooltipContent side="top" className="max-w-72 text-xs">
-                              {v.adjustment_rationale ?? 'AI-adjusted score'}
-                            </TooltipContent>
-                          </Tooltip>
-                        </TooltipProvider>
-                      ) : (
-                        v.cvss_score != null ? v.cvss_score.toFixed(1) : '—'
-                      )}
-                    </td>
-                    <td className="py-2 pr-4">
-                      {hasAdjustment ? (
-                        <TooltipProvider>
-                          <Tooltip>
-                            <TooltipTrigger asChild>
-                              <span className="inline-flex items-center gap-1">
-                                <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium ${sevConfig.bg}`}>
-                                  <Icon className="h-2.5 w-2.5" />
-                                  {effectiveSev}
-                                </span>
-                                <span className="text-[10px] text-muted-foreground/50 line-through">{v.severity}</span>
-                              </span>
-                            </TooltipTrigger>
-                            <TooltipContent side="top" className="max-w-72 text-xs">
-                              {v.adjustment_rationale ?? 'AI-adjusted severity'}
-                            </TooltipContent>
-                          </Tooltip>
-                        </TooltipProvider>
-                      ) : (
-                        <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium ${sevConfig.bg}`}>
-                          <Icon className="h-2.5 w-2.5" />
-                          {effectiveSev}
-                        </span>
-                      )}
-                    </td>
-                    <td className="py-2 pr-4">
-                      <span className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium ${resConfig.className}`}>
-                        {v.resolved_by === 'ai' && <Bot className="h-2.5 w-2.5" />}
-                        {resConfig.label}
-                      </span>
-                    </td>
-                    <td className="max-w-sm truncate py-2 text-xs text-muted-foreground">
-                      {v.description ?? '—'}
-                    </td>
-                    <td className="py-2 relative" onClick={(e) => e.stopPropagation()}>
-                      <button
-                        onClick={() => onActionMenu(actionMenuId === v.id ? null : v.id)}
-                        className="rounded p-1 hover:bg-accent text-muted-foreground hover:text-foreground"
-                      >
-                        <MoreHorizontal className="h-3.5 w-3.5" />
-                      </button>
-                      {actionMenuId === v.id && (
-                        <div className="absolute right-0 top-full z-10 mt-1 w-44 rounded-md border border-border bg-popover p-1 shadow-md">
-                          <button
-                            onClick={() => { onActionMenu(null); setSelectedVuln(v.id) }}
-                            className="w-full rounded-sm px-2 py-1.5 text-left text-xs hover:bg-accent"
-                          >
-                            View Details
-                          </button>
-                          {v.resolution_status === 'open' ? (
-                            <>
-                              <button
-                                onClick={() => { onActionMenu(null); onJustificationDialog({ vulnId: v.id, status: 'resolved' }) }}
-                                className="w-full rounded-sm px-2 py-1.5 text-left text-xs hover:bg-accent"
-                              >
-                                Mark as Resolved
-                              </button>
-                              <button
-                                onClick={() => { onActionMenu(null); onJustificationDialog({ vulnId: v.id, status: 'ignored' }) }}
-                                className="w-full rounded-sm px-2 py-1.5 text-left text-xs hover:bg-accent"
-                              >
-                                Mark as Ignored
-                              </button>
-                              <button
-                                onClick={() => { onActionMenu(null); onJustificationDialog({ vulnId: v.id, status: 'false_positive' }) }}
-                                className="w-full rounded-sm px-2 py-1.5 text-left text-xs hover:bg-accent"
-                              >
-                                Mark as False Positive
-                              </button>
-                            </>
-                          ) : (
-                            <button
-                              onClick={() => onResolve(v.id, 'open')}
-                              className="w-full rounded-sm px-2 py-1.5 text-left text-xs hover:bg-accent"
-                            >
-                              Reopen
-                            </button>
-                          )}
-                        </div>
-                      )}
-                    </td>
-                  </tr>
-                  {/* Inline expanded detail row */}
-                  {isExpanded && (
-                    <tr className="border-b border-border/50">
-                      <td colSpan={9} className="bg-muted/30 px-4 py-3">
-                        <div className="space-y-3 text-xs">
-                          {/* Description */}
-                          <div>
-                            <p className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">Description</p>
-                            <p className="text-sm leading-relaxed">{v.description ?? 'No description available.'}</p>
-                          </div>
-
-                          {/* Details grid */}
-                          <div className="grid grid-cols-2 gap-x-8 gap-y-2 sm:grid-cols-4">
-                            <div>
-                              <span className="text-muted-foreground">CVSS Score</span>
-                              <p className="font-mono font-medium">
-                                {v.effective_cvss_score != null ? v.effective_cvss_score.toFixed(1) : v.cvss_score != null ? v.cvss_score.toFixed(1) : '—'}
-                                {hasScoreAdjustment && (
-                                  <span className="ml-1 text-muted-foreground/50 line-through text-[10px]">
-                                    {v.cvss_score != null ? v.cvss_score.toFixed(1) : ''}
-                                  </span>
-                                )}
-                              </p>
-                            </div>
-                            <div>
-                              <span className="text-muted-foreground">Component</span>
-                              <p className="font-medium">
-                                {v.component_name}
-                                {v.component_version && <span className="ml-1 font-mono text-muted-foreground">{v.component_version}</span>}
-                              </p>
-                            </div>
-                            <div>
-                              <span className="text-muted-foreground">Published</span>
-                              <p>{v.published_date ? formatDate(v.published_date) : '—'}</p>
-                            </div>
-                            <div>
-                              <span className="text-muted-foreground">Status</span>
-                              <p>
-                                <span className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium ${resConfig.className}`}>
-                                  {v.resolved_by === 'ai' && <Bot className="h-2.5 w-2.5" />}
-                                  {resConfig.label}
-                                </span>
-                              </p>
-                            </div>
-                          </div>
-
-                          {/* CVSS Vector */}
-                          {v.cvss_vector && (
-                            <div>
-                              <span className="text-muted-foreground">CVSS Vector</span>
-                              <p className="font-mono text-muted-foreground break-all mt-0.5">{v.cvss_vector}</p>
-                            </div>
-                          )}
-
-                          {/* AI Assessment */}
-                          {(hasAdjustment || hasScoreAdjustment || v.adjustment_rationale) && (
-                            <div className="rounded-md border border-border bg-background/50 p-3">
-                              <div className="flex items-center gap-2 mb-1.5">
-                                <Bot className="h-3 w-3 text-muted-foreground" />
-                                <span className="font-medium">AI Assessment</span>
-                              </div>
-                              {(hasAdjustment || hasScoreAdjustment) && (
-                                <div className="flex flex-wrap gap-3 mb-1.5">
-                                  {hasAdjustment && (
-                                    <span>Severity: <span className="line-through text-muted-foreground">{v.severity}</span> {' -> '} <span className="font-medium">{v.adjusted_severity}</span></span>
-                                  )}
-                                  {hasScoreAdjustment && (
-                                    <span>CVSS: <span className="line-through text-muted-foreground">{v.cvss_score?.toFixed(1)}</span> {' -> '} <span className="font-medium">{v.adjusted_cvss_score?.toFixed(1)}</span></span>
-                                  )}
-                                </div>
-                              )}
-                              {v.adjustment_rationale && (
-                                <p className="text-muted-foreground leading-relaxed">{v.adjustment_rationale}</p>
-                              )}
-                            </div>
-                          )}
-
-                          {/* Resolution details */}
-                          {v.resolution_status !== 'open' && v.resolution_justification && (
-                            <div className="rounded-md border border-border bg-background/50 p-3">
-                              <span className="font-medium">Resolution Justification</span>
-                              <p className="mt-1 text-muted-foreground leading-relaxed">{v.resolution_justification}</p>
-                              {v.resolved_by && (
-                                <p className="mt-1 text-muted-foreground">
-                                  Resolved by {v.resolved_by === 'ai' ? 'AI Assistant' : 'User'}
-                                  {v.resolved_at && ` on ${formatDate(v.resolved_at)}`}
-                                </p>
-                              )}
-                            </div>
-                          )}
-                        </div>
-                      </td>
-                    </tr>
-                  )}
-                  </React.Fragment>
-                )
-              })}
+              {sortedVulns.map((v, idx) => (
+                <VulnerabilityRow
+                  key={v.id}
+                  vuln={v}
+                  isSelected={selectedIds.has(v.id)}
+                  isExpanded={expandedRows.has(v.id)}
+                  isFocused={focusedIndex === idx}
+                  onToggleSelect={() => toggleSelected(v.id)}
+                  onToggleExpand={() => toggleExpand(v.id)}
+                  onResolve={(status, justification) => onResolve(v.id, status, justification)}
+                />
+              ))}
             </tbody>
           </table>
         </div>
@@ -1117,250 +1007,7 @@ function VulnerabilitiesTab({ projectId, vulnerabilities }: {
         )}
         </>
       )}
-
-      {/* Detail modal */}
-      {selectedVuln && (() => {
-        const v = sortedVulns.find(x => x.id === selectedVuln)
-        if (!v) return null
-        return (
-          <VulnerabilityDetailModal
-            vuln={v}
-            onClose={() => setSelectedVuln(null)}
-            onResolve={onResolve}
-          />
-        )
-      })()}
     </div>
   )
 }
 
-// ── Vulnerability Detail Modal ──
-
-function VulnerabilityDetailModal({ vuln: v, onClose, onResolve }: {
-  vuln: SbomVulnerability
-  onClose: () => void
-  onResolve: (vulnId: string, status: VulnerabilityResolutionStatus, justification?: string) => void
-}) {
-  const [pendingAction, setPendingAction] = useState<VulnerabilityResolutionStatus | null>(null)
-  const [justification, setJustification] = useState('')
-
-  const effectiveSev = v.effective_severity ?? v.severity
-  const sevConfig = SEVERITY_CONFIG[effectiveSev] ?? SEVERITY_CONFIG.medium
-  const Icon = sevConfig.icon
-  const hasAdjustment = v.adjusted_severity && v.adjusted_severity !== v.severity
-  const hasScoreAdjustment = v.adjusted_cvss_score != null && v.adjusted_cvss_score !== v.cvss_score
-  const resConfig = RESOLUTION_CONFIG[v.resolution_status] ?? RESOLUTION_CONFIG.open
-
-  const handleAction = (status: VulnerabilityResolutionStatus) => {
-    if (status === 'open') {
-      onResolve(v.id, 'open')
-      return
-    }
-    setPendingAction(status)
-  }
-
-  const confirmAction = () => {
-    if (!pendingAction) return
-    onResolve(v.id, pendingAction, justification || undefined)
-    setPendingAction(null)
-    setJustification('')
-  }
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={onClose}>
-      <div
-        className="mx-4 w-full max-w-2xl max-h-[80vh] overflow-y-auto rounded-lg border border-border bg-background shadow-lg"
-        onClick={(e) => e.stopPropagation()}
-      >
-        {/* Header */}
-        <div className="sticky top-0 z-10 flex items-center justify-between border-b border-border bg-background px-5 py-3">
-          <div className="flex items-center gap-3">
-            <a
-              href={`https://nvd.nist.gov/vuln/detail/${v.cve_id}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center gap-1.5 font-mono text-sm font-semibold text-primary hover:underline"
-            >
-              {v.cve_id}
-              <ExternalLink className="h-3 w-3" />
-            </a>
-            <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium ${sevConfig.bg}`}>
-              <Icon className="h-2.5 w-2.5" />
-              {effectiveSev}
-            </span>
-            {hasAdjustment && (
-              <span className="text-[10px] text-muted-foreground/60 line-through">{v.severity}</span>
-            )}
-          </div>
-          <button onClick={onClose} className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground">
-            <X className="h-4 w-4" />
-          </button>
-        </div>
-
-        <div className="space-y-5 px-5 py-4">
-          {/* Summary row */}
-          <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-            <div>
-              <p className="text-[10px] uppercase tracking-wide text-muted-foreground">CVSS Score</p>
-              <p className="mt-0.5 font-mono text-sm font-semibold">
-                {v.effective_cvss_score != null ? v.effective_cvss_score.toFixed(1) : v.cvss_score != null ? v.cvss_score.toFixed(1) : '—'}
-                {hasScoreAdjustment && (
-                  <span className="ml-1.5 text-[10px] font-normal text-muted-foreground/50 line-through">
-                    {v.cvss_score != null ? v.cvss_score.toFixed(1) : ''}
-                  </span>
-                )}
-              </p>
-            </div>
-            <div>
-              <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Status</p>
-              <p className="mt-0.5">
-                <span className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium ${resConfig.className}`}>
-                  {v.resolved_by === 'ai' && <Bot className="h-2.5 w-2.5" />}
-                  {resConfig.label}
-                </span>
-              </p>
-            </div>
-            <div>
-              <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Component</p>
-              <p className="mt-0.5 text-sm">
-                <span className="font-medium">{v.component_name}</span>
-                {v.component_version && (
-                  <span className="ml-1 font-mono text-muted-foreground">{v.component_version}</span>
-                )}
-              </p>
-            </div>
-            <div>
-              <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Published</p>
-              <p className="mt-0.5 text-sm text-muted-foreground">
-                {v.published_date ? formatDate(v.published_date) : '—'}
-              </p>
-            </div>
-          </div>
-
-          {/* CVSS Vector */}
-          {v.cvss_vector && (
-            <div>
-              <p className="text-[10px] uppercase tracking-wide text-muted-foreground">CVSS Vector</p>
-              <p className="mt-1 font-mono text-xs text-muted-foreground break-all">{v.cvss_vector}</p>
-            </div>
-          )}
-
-          {/* Description */}
-          <div>
-            <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Description</p>
-            <p className="mt-1 text-sm leading-relaxed">{v.description ?? 'No description available.'}</p>
-          </div>
-
-          {/* AI Assessment */}
-          {(hasAdjustment || hasScoreAdjustment || v.adjustment_rationale) && (
-            <div className="rounded-md border border-border bg-muted/30 p-4">
-              <div className="flex items-center gap-2 mb-2">
-                <Bot className="h-3.5 w-3.5 text-muted-foreground" />
-                <p className="text-xs font-medium">AI Assessment</p>
-              </div>
-              {(hasAdjustment || hasScoreAdjustment) && (
-                <div className="mb-2 flex flex-wrap items-center gap-3 text-xs">
-                  {hasAdjustment && (
-                    <span>
-                      Severity: <span className="line-through text-muted-foreground">{v.severity}</span>
-                      {' → '}
-                      <span className="font-medium">{v.adjusted_severity}</span>
-                    </span>
-                  )}
-                  {hasScoreAdjustment && (
-                    <span>
-                      CVSS: <span className="line-through text-muted-foreground">{v.cvss_score?.toFixed(1)}</span>
-                      {' → '}
-                      <span className="font-medium">{v.adjusted_cvss_score?.toFixed(1)}</span>
-                    </span>
-                  )}
-                </div>
-              )}
-              {v.adjustment_rationale && (
-                <p className="text-sm leading-relaxed text-muted-foreground">{v.adjustment_rationale}</p>
-              )}
-            </div>
-          )}
-
-          {/* Resolution details */}
-          {v.resolution_status !== 'open' && (
-            <div className="rounded-md border border-border bg-muted/30 p-4">
-              <p className="text-xs font-medium mb-2">Resolution</p>
-              <div className="space-y-1.5 text-sm">
-                <div className="flex gap-2">
-                  <span className="text-xs text-muted-foreground w-20 shrink-0">Status:</span>
-                  <span className="text-xs">{resConfig.label}</span>
-                </div>
-                {v.resolved_by && (
-                  <div className="flex gap-2">
-                    <span className="text-xs text-muted-foreground w-20 shrink-0">Resolved by:</span>
-                    <span className="text-xs">{v.resolved_by === 'ai' ? 'AI Assistant' : 'User'}</span>
-                  </div>
-                )}
-                {v.resolved_at && (
-                  <div className="flex gap-2">
-                    <span className="text-xs text-muted-foreground w-20 shrink-0">Resolved at:</span>
-                    <span className="text-xs">{formatDate(v.resolved_at)}</span>
-                  </div>
-                )}
-                {v.resolution_justification && (
-                  <div className="mt-2">
-                    <span className="text-xs text-muted-foreground">Justification:</span>
-                    <p className="mt-1 text-sm leading-relaxed">{v.resolution_justification}</p>
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
-
-          {/* Actions */}
-          <div className="border-t border-border pt-4">
-            {pendingAction ? (
-              <div className="space-y-3">
-                <p className="text-xs font-medium">
-                  {pendingAction === 'resolved' ? 'Resolve Vulnerability' : pendingAction === 'ignored' ? 'Ignore Vulnerability' : 'Mark as False Positive'}
-                </p>
-                <textarea
-                  value={justification}
-                  onChange={(e) => setJustification(e.target.value)}
-                  placeholder="Justification (optional)..."
-                  className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
-                  rows={2}
-                  autoFocus
-                />
-                <div className="flex justify-end gap-2">
-                  <Button variant="outline" size="sm" onClick={() => { setPendingAction(null); setJustification('') }}>
-                    Cancel
-                  </Button>
-                  <Button size="sm" onClick={confirmAction}>
-                    Confirm
-                  </Button>
-                </div>
-              </div>
-            ) : (
-              <div className="flex items-center gap-2">
-                {v.resolution_status === 'open' ? (
-                  <>
-                    <Button variant="outline" size="sm" onClick={() => handleAction('resolved')}>
-                      Mark as Resolved
-                    </Button>
-                    <Button variant="outline" size="sm" onClick={() => handleAction('ignored')}>
-                      Mark as Ignored
-                    </Button>
-                    <Button variant="outline" size="sm" onClick={() => handleAction('false_positive')}>
-                      Mark as False Positive
-                    </Button>
-                  </>
-                ) : (
-                  <Button variant="outline" size="sm" onClick={() => handleAction('open')}>
-                    Reopen
-                  </Button>
-                )}
-              </div>
-            )}
-          </div>
-        </div>
-      </div>
-    </div>
-  )
-}

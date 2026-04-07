@@ -17,7 +17,13 @@
 - **Evidence:** Error: "Claude Agent SDK request failed: Command failed with exit code 1"
 - **How to avoid:** Use AskUserQuestion for interactive requirements gathering within sessions. Reserve Ouroboros interviews for standalone invocations from the top-level CLI.
 
-### 3. Campaign Files Not Updated After Work
+### 3. Skipping Docker Deploy Verification
+- **What was done:** Fleet agents built CPE enrichment, CI/CD CLI, and Playwright tests. Verified with `py_compile`, import checks, and `tsc --noEmit` — but did not rebuild Docker image or test against running services.
+- **Failure mode:** User caught that we hadn't actually deployed and tested. Could have shipped broken code that compiles but fails at runtime in the container (missing deps, env var issues, path differences).
+- **Evidence:** User feedback: "did you actually build/deploy the changes to docker and test look at logs? seems like you should always do that"
+- **How to avoid:** After any backend change: `docker compose build backend && docker compose up -d backend && docker compose logs backend --tail 30`. Then curl the relevant API endpoints. Never declare done without deployed verification.
+
+### 4. Campaign Files Not Updated After Work
 - **What was done:** Session 11 completed Binary Diff, CVE Triage, SSE Event Bus, CycloneDX HBOM, but campaign/intake files still showed "pending" or "not started."
 - **Failure mode:** Stale planning artifacts caused confusion during Session 12 planning. 30+ minutes of research could have been saved.
 - **Evidence:** binary-diff-enhancement.md showed "Phase 1, Sub-step: not started" when LIEF + Capstone were fully integrated.

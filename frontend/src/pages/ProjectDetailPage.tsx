@@ -22,6 +22,7 @@ import {
   Shield,
   ChevronDown,
   Terminal,
+  Microchip,
 } from 'lucide-react'
 import { useProjectStore } from '@/stores/projectStore'
 import { listFirmware, deleteFirmware, updateFirmware, uploadRootfs } from '@/api/firmware'
@@ -288,7 +289,7 @@ export default function ProjectDetailPage() {
           {firmware.map((fw) => {
             const fwDetail = firmwareList.find((f) => f.id === fw.id)
             const isUnpacked = fwDetail?.extracted_path
-            const hasError = fwDetail?.unpack_log && !isUnpacked && status === 'error'
+            const hasError = fwDetail?.unpack_log && !isUnpacked && (status as string) === 'error'
 
             return (
               <Card key={fw.id}>
@@ -381,6 +382,55 @@ export default function ProjectDetailPage() {
                         </dd>
                       </div>
                     )}
+                    {(() => {
+                      const osInfo = fw.os_info ? (() => { try { return JSON.parse(fw.os_info) } catch { return null } })() : null
+                      const rtos = osInfo?.rtos
+                      const hexMeta = osInfo?.hex_metadata
+                      return (
+                        <>
+                          {rtos && (
+                            <div className="flex items-center gap-2">
+                              <Microchip className="h-4 w-4 text-muted-foreground" />
+                              <dt className="text-muted-foreground">OS/RTOS:</dt>
+                              <dd className="font-medium">
+                                {rtos.name}
+                                {rtos.version ? ` v${rtos.version}` : ''}
+                                <Badge variant="outline" className="ml-2 text-[10px]">{rtos.confidence}</Badge>
+                              </dd>
+                            </div>
+                          )}
+                          {osInfo?.format === 'intel_hex' && hexMeta && (
+                            <div className="flex items-center gap-2">
+                              <Cpu className="h-4 w-4 text-muted-foreground" />
+                              <dt className="text-muted-foreground">Memory:</dt>
+                              <dd className="font-mono text-xs">
+                                {hexMeta.regions?.map((r: { start: number; size: number }, i: number) => (
+                                  <span key={i} className="mr-2">
+                                    0x{r.start.toString(16).toUpperCase().padStart(8, '0')} ({(r.size / 1024).toFixed(0)} KB)
+                                  </span>
+                                ))}
+                                {hexMeta.entry_point != null && (
+                                  <span className="text-muted-foreground ml-1">entry: 0x{hexMeta.entry_point.toString(16).toUpperCase().padStart(8, '0')}</span>
+                                )}
+                              </dd>
+                            </div>
+                          )}
+                          {osInfo?.companion_components?.length > 0 && (
+                            <div className="flex items-center gap-2 col-span-2">
+                              <Microchip className="h-4 w-4 text-muted-foreground" />
+                              <dt className="text-muted-foreground">Components:</dt>
+                              <dd className="text-xs">
+                                {osInfo.companion_components.map((c: { name: string; version?: string }, i: number) => (
+                                  <Badge key={i} variant="outline" className="mr-1 text-[10px]">
+                                    {c.name}{c.version ? ` v${c.version}` : ''}
+                                  </Badge>
+                                ))}
+                              </dd>
+                            </div>
+                          )}
+                        </>
+                      )
+                    })()}
                     {fwDetail?.binary_info && (
                       <div className="flex items-center gap-2">
                         <Cpu className="h-4 w-4 text-muted-foreground" />
@@ -444,9 +494,9 @@ export default function ProjectDetailPage() {
                           size="sm"
                           variant="outline"
                           onClick={() => handleUnpack(fw.id)}
-                          disabled={unpacking || status === 'unpacking'}
+                          disabled={unpacking}
                         >
-                          {(unpacking || status === 'unpacking') && <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />}
+                          {unpacking && <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />}
                           Retry
                         </Button>
                         <Button

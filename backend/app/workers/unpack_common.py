@@ -469,13 +469,42 @@ def classify_firmware(firmware_path: str) -> str:
         return "linux_rootfs_tar"
 
     if magic[:4] == b"\x7fELF":
+        # Check if this ELF is an RTOS binary before falling back to generic elf_binary
+        try:
+            from app.services.rtos_detection_service import detect_rtos
+            rtos = detect_rtos(firmware_path)
+            if rtos:
+                rtos_name = rtos["rtos_name"]
+                return f"{rtos_name}_elf"
+        except Exception:
+            pass
         return "elf_binary"
 
     if magic[:1] == b":" and all(c in b"0123456789ABCDEFabcdef:\r\n" for c in magic):
-        return "intel_hex"
+        # Validate more thoroughly: read first line and check record structure
+        try:
+            with open(firmware_path, "r", errors="replace") as fh:
+                first_line = fh.readline().strip()
+            if (
+                first_line.startswith(":")
+                and len(first_line) >= 11
+                and all(c in "0123456789ABCDEFabcdef" for c in first_line[1:])
+            ):
+                return "intel_hex"
+        except OSError:
+            pass
 
     if magic[:2] == b"MZ":
         return "pe_binary"
+
+    # Check for RTOS in raw binaries (non-ELF) via magic bytes and strings
+    try:
+        from app.services.rtos_detection_service import detect_rtos
+        rtos = detect_rtos(firmware_path)
+        if rtos:
+            return "rtos_blob"
+    except Exception:
+        pass
 
     return "linux_blob"
 
@@ -616,3 +645,162 @@ def _is_rootfs_tar(firmware_path: str) -> bool:
         return False
 
     return False
+
+
+def convert_intel_hex_to_binary(hex_path: str, output_path: str) -> dict:
+    """Convert Intel HEX (.hex / .ihex) file to raw binary.
+
+    Parses all standard record types (00-05), resolves extended addresses,
+    and writes the binary image to *output_path*.  Gaps smaller than 4 KB
+    are padded with 0xFF; larger gaps cause a region break.
+
+    Returns metadata dict::
+
+        {
+            "base_address": int,     # lowest address in the file
+            "entry_point": int|None, # from type 05 (start linear address) record
+            "size": int,             # bytes written
+            "regions": [{"start": int, "size": int}, ...],
+        }
+    """
+    _GAP_PAD_LIMIT = 4096  # pad gaps up to 4 KB; split beyond that
+
+    extended_addr = 0  # upper 16 bits from type 02/04 records
+    entry_point: int | None = None
+    # Collect (full_address, data_bytes) tuples
+    data_records: list[tuple[int, bytes]] = []
+
+    with open(hex_path, "r", errors="replace") as fh:
+        for line_no, raw_line in enumerate(fh, 1):
+            line = raw_line.strip()
+            if not line:
+                continue
+            if not line.startswith(":"):
+                continue  # skip non-record lines (comments, blank)
+
+            # Minimum valid record: `:LLAAAATT[DD...]CC` = 11 chars (0 data bytes)
+            if len(line) < 11:
+                continue
+
+            try:
+                payload = bytes.fromhex(line[1:])
+            except ValueError:
+                continue  # malformed hex digits — skip
+
+            if len(payload) < 4:
+                continue
+
+            byte_count = payload[0]
+            address = (payload[1] << 8) | payload[2]
+            record_type = payload[3]
+            data = payload[4: 4 + byte_count]
+
+            # Validate checksum (two's complement of sum of all bytes)
+            if (sum(payload) & 0xFF) != 0:
+                continue  # bad checksum — skip silently
+
+            if record_type == 0x00:
+                # Data record
+                full_addr = extended_addr + address
+                data_records.append((full_addr, data))
+
+            elif record_type == 0x01:
+                # EOF
+                break
+
+            elif record_type == 0x02:
+                # Extended Segment Address — shifts base by (value * 16)
+                if len(data) >= 2:
+                    extended_addr = ((data[0] << 8) | data[1]) << 4
+
+            elif record_type == 0x03:
+                # Start Segment Address (CS:IP) — less common; store as entry
+                if len(data) >= 4 and entry_point is None:
+                    cs = (data[0] << 8) | data[1]
+                    ip = (data[2] << 8) | data[3]
+                    entry_point = (cs << 4) + ip
+
+            elif record_type == 0x04:
+                # Extended Linear Address — upper 16 bits of 32-bit address
+                if len(data) >= 2:
+                    extended_addr = ((data[0] << 8) | data[1]) << 16
+
+            elif record_type == 0x05:
+                # Start Linear Address — 32-bit entry point
+                if len(data) >= 4:
+                    entry_point = (
+                        (data[0] << 24) | (data[1] << 16) |
+                        (data[2] << 8) | data[3]
+                    )
+
+    if not data_records:
+        # Empty / no data records — write an empty file and return
+        with open(output_path, "wb") as out:
+            pass
+        return {
+            "base_address": 0,
+            "entry_point": entry_point,
+            "size": 0,
+            "regions": [],
+        }
+
+    # Sort by address
+    data_records.sort(key=lambda r: r[0])
+
+    # Build contiguous regions from sorted data records, padding small gaps
+    def _build_regions(
+        records: list[tuple[int, bytes]],
+    ) -> list[tuple[int, bytearray]]:
+        """Return list of (start_addr, bytearray) region tuples."""
+        regions: list[tuple[int, bytearray]] = []
+        buf = bytearray()
+        region_start = records[0][0]
+        cursor = region_start
+
+        for addr, data in records:
+            gap = addr - cursor
+            if gap < 0:
+                # Overlapping data — trim overlap
+                overlap = -gap
+                if overlap < len(data):
+                    data = data[overlap:]
+                    addr += overlap
+                    gap = 0
+                else:
+                    continue  # fully overlapping, skip
+            if gap <= _GAP_PAD_LIMIT:
+                buf.extend(b"\xff" * gap)
+                buf.extend(data)
+                cursor = addr + len(data)
+            else:
+                # Large gap — close current region, start new one
+                if buf:
+                    regions.append((region_start, buf))
+                region_start = addr
+                buf = bytearray(data)
+                cursor = addr + len(data)
+
+        if buf:
+            regions.append((region_start, buf))
+        return regions
+
+    region_bufs = _build_regions(data_records)
+
+    # Build metadata regions list
+    regions_meta = [
+        {"start": start, "size": len(buf)} for start, buf in region_bufs
+    ]
+
+    # Pick the largest region for the output binary
+    largest_start, largest_buf = max(region_bufs, key=lambda rb: len(rb[1]))
+    write_data = bytes(largest_buf)
+
+    with open(output_path, "wb") as out:
+        out.write(write_data)
+
+    return {
+        "base_address": largest_start,
+        "entry_point": entry_point,
+        "size": len(write_data),
+        "regions": regions_meta,
+    }

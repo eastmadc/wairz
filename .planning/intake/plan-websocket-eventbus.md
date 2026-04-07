@@ -1,48 +1,59 @@
-# Plan: WebSocket/SSE Event Bus (5.6) — COMPLETED
+# Plan: WebSocket/SSE Event Bus (5.6) -- COMPLETED
 
-**Priority:** Medium | **Effort:** Small-Medium | **Status:** completed (2026-04-06)
+**Priority:** Medium | **Effort:** Small-Medium | **Status:** completed (2026-04-06, session 11)
 
-## Goal
+## Summary
 
-Replace frontend polling with push notifications for: unpacking progress, emulation status, fuzzing stats, assessment progress.
+SSE-based real-time event push implemented. Frontend polling replaced with EventSource connections. Redis pub/sub backbone delivers events from backend services to connected browsers.
 
-## Current State
+This plan is retained for reference. No further work needed.
 
-- **SSE endpoint exists**: `GET /api/v1/projects/{project_id}/events` in `routers/events.py`
-- **Redis pub/sub already wired**: `EventService` publishes to Redis channels
-- **Frontend polls on intervals**:
-  - EmulationPage: 2s interval (line 161)
-  - FuzzingPage: 5s interval (line 106)
-  - ProjectDetailPage: 2s interval (line 91)
-- **WebSocket already used** for terminal proxy in `routers/terminal.py`
+## What Was Delivered
 
-## Approach: Extend SSE (Not WebSocket)
+### Backend
+- `routers/events.py` -- SSE endpoint at `GET /api/v1/projects/{project_id}/events`
+- `services/event_service.py` -- Redis pub/sub event publishing
+- Events published for: unpacking, emulation, fuzzing, device acquisition, assessment, VulHunt
+- Keepalive ping every 15 seconds to prevent proxy/browser timeouts
+- Event type filtering via `?types=unpacking,emulation` query parameter
 
-SSE is simpler and sufficient since data flows server→client only. The existing SSE endpoint + Redis pub/sub backbone just needs:
-1. Frontend to consume SSE instead of polling
-2. Backend to emit events for all state changes (not just emulation)
+### Frontend
+- `hooks/useEventStream.ts` -- React hook wrapping native EventSource API
+- EmulationPage, FuzzingPage, ProjectDetailPage all consume SSE events
+- Polling reduced to 5-10s fallback (for reconnection resilience)
+- TypeScript event payload types
 
-## Changes Required
+## Architecture Notes
 
-### Backend (~3h)
-- Extend `EventService` to publish events for: unpack progress, fuzzing stats, assessment progress
-- Add event types to existing SSE endpoint
-- Emit events from: `unpack_firmware()`, `FuzzingService`, `AssessmentService`
+**Why SSE (not WebSocket):**
+- Data flows server->client only (status updates, progress notifications)
+- SSE auto-reconnects natively (EventSource API handles reconnection)
+- Works through HTTP proxies without upgrade negotiation
+- Simpler than WebSocket for unidirectional data
+- WebSocket already used separately for terminal proxy (`routers/terminal.py`) where bidirectional is needed
 
-### Frontend (~4h)
-- Create `useEventStream` hook (wraps EventSource API)
-- Replace `setInterval` in EmulationPage, FuzzingPage, ProjectDetailPage
-- Type event payloads in TypeScript
+**Event Types:**
+- `unpacking` -- firmware extraction progress/completion
+- `emulation` -- emulation session status changes
+- `fuzzing` -- fuzzing campaign statistics updates
+- `device` -- device acquisition bridge status
+- `assessment` -- security assessment phase progress
+- `vulhunt` -- VulHunt sidecar scan progress
 
-### Testing (~2h)
-- Verify SSE reconnection on disconnect
-- Verify event delivery latency vs polling
+**Redis Pub/Sub Channel Pattern:** `project:{project_id}:events`
 
 ## Key Files
 
-- `backend/app/routers/events.py` — existing SSE endpoint
-- `backend/app/services/event_service.py` — Redis pub/sub
-- `frontend/src/pages/EmulationPage.tsx` (replace setInterval)
-- `frontend/src/pages/FuzzingPage.tsx` (replace setInterval)
-- `frontend/src/pages/ProjectDetailPage.tsx` (replace setInterval)
-- New: `frontend/src/hooks/useEventStream.ts`
+- `backend/app/routers/events.py` -- SSE endpoint
+- `backend/app/services/event_service.py` -- Redis pub/sub publisher
+- `frontend/src/hooks/useEventStream.ts` -- React EventSource hook
+- `frontend/src/pages/EmulationPage.tsx` (uses useEventStream)
+- `frontend/src/pages/FuzzingPage.tsx` (uses useEventStream)
+- `frontend/src/pages/ProjectDetailPage.tsx` (uses useEventStream)
+
+## Future Improvements (not planned)
+
+- **Event replay:** Store last N events in Redis for clients that reconnect (currently they miss events during disconnection)
+- **Typed event schemas:** Generate TypeScript types from Pydantic event schemas (currently manually maintained)
+- **Event batching:** Coalesce rapid-fire events (e.g., 10 fuzzing stats updates/second) into batched updates
+- **Microsoft fetch-event-source:** Replace native EventSource if POST-with-payload SSE is ever needed (native EventSource only supports GET)
