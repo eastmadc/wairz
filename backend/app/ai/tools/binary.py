@@ -1855,6 +1855,53 @@ async def _handle_analyze_raw_binary(input: dict, context: ToolContext) -> str:
     return "\n".join(lines)
 
 
+async def _handle_detect_rtos(input: dict, context: ToolContext) -> str:
+    """Detect RTOS and companion components from a firmware binary."""
+    from app.services.rtos_detection_service import detect_rtos, extract_companion_components
+
+    path_input = input.get("path", "/")
+    path = context.resolve_path(path_input)
+
+    if not os.path.isfile(path):
+        return f"Not a file: {path_input}"
+
+    import asyncio
+    loop = asyncio.get_running_loop()
+    rtos = await loop.run_in_executor(None, detect_rtos, path)
+    companions = await loop.run_in_executor(None, extract_companion_components, path)
+
+    lines = [f"RTOS Detection: {os.path.basename(path)}", ""]
+
+    if rtos:
+        lines.append(f"RTOS: {rtos['rtos_display_name']}")
+        if rtos.get("version"):
+            lines.append(f"Version: {rtos['version']}")
+        lines.append(f"Confidence: {rtos['confidence']}")
+        lines.append(f"Detection methods: {', '.join(rtos['detection_methods'])}")
+        if rtos.get("architecture"):
+            lines.append(f"Architecture: {rtos['architecture']}")
+        if rtos.get("endianness"):
+            lines.append(f"Endianness: {rtos['endianness']}")
+        meta = rtos.get("metadata", {})
+        if meta.get("heap_variant"):
+            lines.append(f"FreeRTOS heap: {meta['heap_variant']}")
+        if meta.get("mcuboot_version"):
+            lines.append(f"MCUboot version: {meta['mcuboot_version']}")
+    else:
+        lines.append("No RTOS detected.")
+
+    if companions:
+        lines.extend(["", "Companion Components:"])
+        for comp in companions:
+            ver = f" {comp['version']}" if comp.get("version") else ""
+            lines.append(
+                f"  - {comp['name']}{ver} ({comp['category']}, "
+                f"{comp['confidence']} confidence via {comp['detection_method']})"
+            )
+
+    return "\n".join(lines)
+
+
 def register_binary_tools(registry: ToolRegistry) -> None:
     """Register all binary analysis tools with the given registry."""
 
@@ -2487,4 +2534,32 @@ def register_binary_tools(registry: ToolRegistry) -> None:
             "required": ["binary_path"],
         },
         handler=_handle_analyze_raw_binary,
+    )
+
+    registry.register(
+        name="detect_rtos",
+        description=(
+            "Detect RTOS (Real-Time Operating System) and companion components "
+            "from a firmware binary. Identifies FreeRTOS, Zephyr, VxWorks, "
+            "ThreadX/Azure RTOS, QNX, SafeRTOS, and uC/OS (II & III). Also "
+            "detects companion libraries: network stacks (lwIP, FreeRTOS+TCP, "
+            "NetX Duo), filesystems (LittleFS, FatFS, SPIFFS), and crypto "
+            "(wolfSSL, mbedTLS, tinycrypt, BearSSL). Uses 5-tier detection: "
+            "magic bytes, string patterns, symbol analysis, ELF sections, and "
+            "VxWorks symbol table heuristics."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": (
+                        "Path to the binary file to analyze. Can be any "
+                        "firmware binary (ELF, PE, raw/flat binary). "
+                        "Defaults to the firmware root if omitted."
+                    ),
+                },
+            },
+        },
+        handler=_handle_detect_rtos,
     )

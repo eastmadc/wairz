@@ -18,6 +18,7 @@ from app.workers.unpack_common import (  # noqa: F401
     check_extraction_limits,
     classify_firmware,
     cleanup_unblob_artifacts,
+    convert_intel_hex_to_binary,
     find_filesystem_root,
     run_binwalk_extraction,
     run_unblob_extraction,
@@ -226,6 +227,183 @@ async def unpack_firmware(
         except Exception as e:
             result.unpack_log += f"\nUEFI extraction failed: {e}\n"
             logger.warning("UEFI fast path failed, falling through to generic extractors", exc_info=True)
+
+    # Intel HEX firmware — convert to raw binary, then run RTOS detection + binary analysis
+    if fw_type == "intel_hex":
+        import json
+        import shutil
+        from app.services.binary_analysis_service import analyze_binary
+        from app.services.rtos_detection_service import detect_rtos, extract_companion_components
+
+        await _report("Converting Intel HEX to binary", 15)
+
+        # Keep original .hex alongside the converted binary
+        orig_dest = os.path.join(extraction_dir, "original.hex")
+        shutil.copy2(firmware_path, orig_dest)
+
+        bin_path = os.path.join(extraction_dir, "firmware.bin")
+        try:
+            hex_meta = convert_intel_hex_to_binary(firmware_path, bin_path)
+        except Exception as e:
+            result.unpack_log += f"Intel HEX conversion failed: {e}\n"
+            logger.warning("Intel HEX conversion failed, falling through", exc_info=True)
+            hex_meta = None
+
+        if hex_meta is not None and hex_meta["size"] > 0:
+            result.extracted_path = extraction_dir
+            result.extraction_dir = extraction_dir
+
+            regions_str = ", ".join(
+                f"0x{r['start']:08X}-0x{r['start'] + r['size'] - 1:08X} ({r['size']} bytes)"
+                for r in hex_meta["regions"]
+            )
+            result.unpack_log += (
+                f"Converted Intel HEX to binary: {hex_meta['size']} bytes.\n"
+                f"Base address: 0x{hex_meta['base_address']:08X}.\n"
+                f"Memory regions: {regions_str}.\n"
+            )
+            if hex_meta.get("entry_point") is not None:
+                result.unpack_log += f"Entry point: 0x{hex_meta['entry_point']:08X}.\n"
+
+            await _report("Analyzing binary", 40)
+
+            # Build os_info from HEX metadata
+            os_info_dict: dict = {
+                "format": "intel_hex",
+                "hex_metadata": {
+                    "base_address": hex_meta["base_address"],
+                    "entry_point": hex_meta.get("entry_point"),
+                    "binary_size": hex_meta["size"],
+                    "regions": hex_meta["regions"],
+                },
+            }
+
+            # Try binary analysis (LIEF — may not recognize raw blobs)
+            binary_info: dict = {}
+            try:
+                binary_info = analyze_binary(bin_path)
+                binary_info["extracted_filename"] = "firmware.bin"
+                result.binary_info = binary_info
+                result.architecture = binary_info.get("architecture")
+                result.endianness = binary_info.get("endianness")
+            except Exception:
+                pass
+
+            # If LIEF didn't detect architecture, try statistical detection
+            if not result.architecture:
+                try:
+                    from app.services.binary_analysis_service import detect_raw_architecture
+                    candidates = detect_raw_architecture(bin_path)
+                    if candidates:
+                        top = candidates[0]
+                        binary_info["architecture"] = top["architecture"]
+                        binary_info["endianness"] = top.get("endianness")
+                        binary_info["arch_candidates"] = candidates
+                        binary_info["arch_detection_method"] = "cpu_rec"
+                        binary_info["extracted_filename"] = "firmware.bin"
+                        result.binary_info = binary_info
+                        result.architecture = top["architecture"]
+                        result.endianness = top.get("endianness")
+                        arch_names = ", ".join(
+                            f"{c['raw_name']} ({c['confidence']})" for c in candidates[:3]
+                        )
+                        result.unpack_log += f"Architecture candidates: {arch_names}\n"
+                except Exception:
+                    pass
+
+            await _report("Running RTOS detection", 60)
+
+            # RTOS detection on the converted binary
+            try:
+                rtos = detect_rtos(bin_path)
+                if rtos:
+                    companions = extract_companion_components(bin_path)
+                    os_info_dict["rtos"] = {
+                        "name": rtos["rtos_display_name"],
+                        "version": rtos.get("version"),
+                        "confidence": rtos["confidence"],
+                    }
+                    os_info_dict["architecture"] = (
+                        rtos.get("architecture") or result.architecture
+                    )
+                    os_info_dict["companion_components"] = companions
+                    result.architecture = rtos.get("architecture") or result.architecture
+                    result.endianness = rtos.get("endianness") or result.endianness
+
+                    companion_str = ", ".join(
+                        f"{c['name']}" + (f" {c['version']}" if c.get('version') else "")
+                        for c in companions
+                    )
+                    result.unpack_log += (
+                        f"RTOS detected: {rtos['rtos_display_name']}"
+                        f"{' v' + rtos['version'] if rtos.get('version') else ''}"
+                        f" ({rtos['confidence']} confidence).\n"
+                    )
+                    if companion_str:
+                        result.unpack_log += f"Companion components: {companion_str}.\n"
+            except Exception as e:
+                result.unpack_log += f"RTOS detection skipped: {e}\n"
+
+            result.os_info = json.dumps(os_info_dict)
+            result.success = True
+            await _report("Extraction complete", 100)
+            return result
+        elif hex_meta is not None:
+            result.unpack_log += "Intel HEX file contains no data records.\n"
+            # Fall through to generic extractors
+
+    # RTOS firmware (ELF or raw blob)
+    if fw_type.endswith("_elf") and fw_type not in ("elf_binary",) or fw_type == "rtos_blob":
+        import json
+        import shutil
+        from app.services.binary_analysis_service import analyze_binary
+        from app.services.rtos_detection_service import detect_rtos, extract_companion_components
+
+        dest = os.path.join(extraction_dir, os.path.basename(firmware_path))
+        shutil.copy2(firmware_path, dest)
+        result.extracted_path = extraction_dir
+        result.extraction_dir = extraction_dir
+
+        binary_info = analyze_binary(firmware_path)
+        binary_info["extracted_filename"] = os.path.basename(dest)
+
+        rtos = detect_rtos(firmware_path)
+        companions = extract_companion_components(firmware_path)
+        if rtos:
+            binary_info["rtos"] = rtos
+            binary_info["companion_components"] = companions
+            rtos_info = {
+                "rtos": {
+                    "name": rtos["rtos_display_name"],
+                    "version": rtos.get("version"),
+                    "confidence": rtos["confidence"],
+                },
+                "architecture": rtos.get("architecture") or binary_info.get("architecture"),
+                "companion_components": companions,
+            }
+            result.os_info = json.dumps(rtos_info)
+            result.architecture = rtos.get("architecture") or binary_info.get("architecture")
+            result.endianness = rtos.get("endianness") or binary_info.get("endianness")
+            companion_str = ", ".join(
+                f"{c['name']}" + (f" {c['version']}" if c.get('version') else "")
+                for c in companions
+            )
+            result.unpack_log += (
+                f"RTOS firmware detected: {rtos['rtos_display_name']}"
+                f"{' v' + rtos['version'] if rtos.get('version') else ''}"
+                f" ({rtos['confidence']} confidence).\n"
+                f"Architecture: {result.architecture or 'unknown'}, "
+                f"Endianness: {result.endianness or 'unknown'}.\n"
+            )
+            if companion_str:
+                result.unpack_log += f"Companion components: {companion_str}.\n"
+        else:
+            result.architecture = binary_info.get("architecture")
+            result.endianness = binary_info.get("endianness")
+
+        result.binary_info = binary_info
+        result.success = True
+        return result
 
     if fw_type in ("elf_binary", "pe_binary"):
         import shutil

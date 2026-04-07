@@ -341,6 +341,44 @@ async def _handle_generate_sbom(input: dict, context: ToolContext) -> str:
     except Exception as e:
         return f"Error generating SBOM: {e}"
 
+    # Inject detected RTOS from firmware os_info
+    from sqlalchemy import select as _select
+    from app.models.firmware import Firmware as _Firmware
+    fw_stmt = _select(_Firmware).where(_Firmware.id == context.firmware_id)
+    fw_result = await context.db.execute(fw_stmt)
+    fw_obj = fw_result.scalar_one_or_none()
+    if fw_obj and fw_obj.os_info:
+        import json as _json
+        try:
+            os_info = _json.loads(fw_obj.os_info) if isinstance(fw_obj.os_info, str) else fw_obj.os_info
+            rtos = os_info.get("rtos")
+            if rtos and rtos.get("name"):
+                rtos_name = rtos["name"].lower().replace("/", "-").replace(" ", "-")
+                component_dicts.append({
+                    "name": rtos["name"],
+                    "version": rtos.get("version"),
+                    "type": "operating-system",
+                    "cpe": f"cpe:2.3:o:{rtos_name}:{rtos_name}:{rtos.get('version', '*')}:*:*:*:*:*:*:*",
+                    "purl": None,
+                    "supplier": "Micrium" if "ucos" in rtos_name.lower() or "uc-os" in rtos_name.lower() else None,
+                    "detection_source": "rtos_detection",
+                    "detection_confidence": rtos.get("confidence", "medium"),
+                    "file_paths": None,
+                    "metadata": {"format": os_info.get("format", "unknown")},
+                })
+            for comp in os_info.get("companion_components", []):
+                component_dicts.append({
+                    "name": comp["name"],
+                    "version": comp.get("version"),
+                    "type": "library",
+                    "cpe": None, "purl": None, "supplier": None,
+                    "detection_source": "rtos_detection",
+                    "detection_confidence": comp.get("confidence", "medium"),
+                    "file_paths": None, "metadata": {},
+                })
+        except Exception:
+            pass
+
     # Persist to database
     for comp_dict in component_dicts:
         db_comp = SbomComponent(

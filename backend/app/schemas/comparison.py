@@ -67,6 +67,7 @@ class BinaryDiffResponse(BaseModel):
     imports_removed: list[str] = []
     exports_added: list[str] = []
     exports_removed: list[str] = []
+    basic_block_stats: dict | None = None
 
 
 class TextDiffRequest(BaseModel):
@@ -94,6 +95,25 @@ class InstructionDiffRequest(BaseModel):
 class InstructionDiffResponse(BaseModel):
     function_name: str
     arch: str = ""
+    diff_text: str = ""
+    lines_added: int = 0
+    lines_removed: int = 0
+    error: str | None = None
+
+
+class DecompilationDiffRequest(BaseModel):
+    firmware_a_id: uuid.UUID
+    firmware_b_id: uuid.UUID
+    binary_path: str
+    function_name: str
+    context_lines: int = 5
+
+
+class DecompilationDiffResponse(BaseModel):
+    function_name: str
+    binary_path: str
+    source_a: str = ""
+    source_b: str = ""
     diff_text: str = ""
     lines_added: int = 0
     lines_removed: int = 0

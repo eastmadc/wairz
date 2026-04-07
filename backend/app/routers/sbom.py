@@ -116,6 +116,45 @@ async def generate_sbom(
     except Exception as e:
         raise HTTPException(500, f"Failed to generate SBOM: {e}")
 
+    # Inject detected RTOS and companion components from os_info
+    import logging as _logging
+    _log = _logging.getLogger(__name__)
+    _log.info("SBOM: component_dicts=%d, firmware.os_info=%s", len(component_dicts), bool(firmware.os_info))
+    if firmware.os_info:
+        import json as _json
+        try:
+            os_info = _json.loads(firmware.os_info) if isinstance(firmware.os_info, str) else firmware.os_info
+            rtos = os_info.get("rtos")
+            if rtos and rtos.get("name"):
+                rtos_name = rtos["name"].lower().replace("/", "-").replace(" ", "-")
+                component_dicts.append({
+                    "name": rtos["name"],
+                    "version": rtos.get("version"),
+                    "type": "operating-system",
+                    "cpe": f"cpe:2.3:o:{rtos_name}:{rtos_name}:{rtos.get('version', '*')}:*:*:*:*:*:*:*",
+                    "purl": None,
+                    "supplier": "Micrium" if "ucos" in rtos_name.lower() or "uc-os" in rtos_name.lower() else None,
+                    "detection_source": "rtos_detection",
+                    "detection_confidence": rtos.get("confidence", "medium"),
+                    "file_paths": None,
+                    "metadata": {"format": os_info.get("format", "unknown")},
+                })
+            for comp in os_info.get("companion_components", []):
+                component_dicts.append({
+                    "name": comp["name"],
+                    "version": comp.get("version"),
+                    "type": "library",
+                    "cpe": None,
+                    "purl": None,
+                    "supplier": None,
+                    "detection_source": "rtos_detection",
+                    "detection_confidence": comp.get("confidence", "medium"),
+                    "file_paths": None,
+                    "metadata": {},
+                })
+        except Exception:
+            pass  # os_info parsing failure is non-fatal
+
     # Persist to database
     for comp_dict in component_dicts:
         db_comp = SbomComponent(
@@ -756,3 +795,4 @@ def _build_spdx_response(components: list, firmware) -> Response:
             "Content-Disposition": f'attachment; filename="sbom-{firmware.id}.spdx.json"'
         },
     )
+# SBOM RTOS injection: 1775525996

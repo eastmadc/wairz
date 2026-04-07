@@ -13,14 +13,15 @@ import {
   AlertTriangle,
   Package,
   ArrowRightLeft,
+  Code,
 } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { listFirmware } from '@/api/firmware'
-import { diffFirmware, diffBinary, diffTextFile, diffInstructions } from '@/api/comparison'
+import { diffFirmware, diffBinary, diffTextFile, diffInstructions, diffDecompilation } from '@/api/comparison'
 import { formatFileSize } from '@/utils/format'
-import type { FirmwareDetail, FirmwareDiff, BinaryDiff, TextDiff, InstructionDiff, FileDiffEntry } from '@/types'
+import type { FirmwareDetail, FirmwareDiff, BinaryDiff, TextDiff, InstructionDiff, DecompilationDiff, FileDiffEntry } from '@/types'
 
 type Tab = 'files' | 'binaries' | 'binary-detail' | 'text-diff'
 
@@ -44,6 +45,9 @@ export default function ComparisonPage() {
   const [instrLoading, setInstrLoading] = useState(false)
   const [importsExpanded, setImportsExpanded] = useState(false)
   const [exportsExpanded, setExportsExpanded] = useState(false)
+  const [decompDiff, setDecompDiff] = useState<DecompilationDiff | null>(null)
+  const [decompLoading, setDecompLoading] = useState(false)
+  const [decompFunc, setDecompFunc] = useState<string | null>(null)
 
   useEffect(() => {
     if (projectId) {
@@ -82,6 +86,8 @@ export default function ComparisonPage() {
     setBinDiff(null)
     setExpandedFunc(null)
     setInstrDiff(null)
+    setDecompFunc(null)
+    setDecompDiff(null)
     setImportsExpanded(false)
     setExportsExpanded(false)
     setTab('binary-detail')
@@ -127,6 +133,26 @@ export default function ComparisonPage() {
       setInstrDiff({ function_name: functionName, arch: '', diff_text: '', lines_added: 0, lines_removed: 0, error: 'Failed to load instruction diff' })
     } finally {
       setInstrLoading(false)
+    }
+  }
+
+  const handleDecompDiff = async (functionName: string) => {
+    if (decompFunc === functionName) {
+      setDecompFunc(null)
+      setDecompDiff(null)
+      return
+    }
+    if (!projectId || !fwAId || !fwBId || !binDiff) return
+    setDecompFunc(functionName)
+    setDecompDiff(null)
+    setDecompLoading(true)
+    try {
+      const result = await diffDecompilation(projectId, fwAId, fwBId, binDiff.binary_path, functionName)
+      setDecompDiff(result)
+    } catch {
+      setDecompDiff({ function_name: functionName, binary_path: binDiff.binary_path, source_a: '', source_b: '', diff_text: '', lines_added: 0, lines_removed: 0, error: 'Failed to load decompilation diff' })
+    } finally {
+      setDecompLoading(false)
     }
   }
 
@@ -544,9 +570,26 @@ export default function ComparisonPage() {
                                     : <ChevronRight className="h-3 w-3 text-muted-foreground" />}
                                   {f.name}
                                 </span>
-                                <span className="text-muted-foreground">
-                                  {f.size_a} &rarr; {f.size_b} bytes
-                                </span>
+                                <div className="flex items-center gap-2">
+                                  <span className="text-muted-foreground">
+                                    {f.size_a} &rarr; {f.size_b} bytes
+                                  </span>
+                                  <Button
+                                    size="sm"
+                                    variant="ghost"
+                                    className="h-5 px-1.5 text-[10px]"
+                                    onClick={(e) => {
+                                      e.stopPropagation()
+                                      handleDecompDiff(f.name)
+                                    }}
+                                    disabled={decompLoading && decompFunc === f.name}
+                                    title="View decompilation diff (Ghidra)"
+                                  >
+                                    {decompLoading && decompFunc === f.name
+                                      ? <Loader2 className="h-3 w-3 animate-spin" />
+                                      : <Code className="h-3 w-3" />}
+                                  </Button>
+                                </div>
                               </div>
                               {expandedFunc === f.name && (
                                 <div className="ml-5 mt-1 mb-2 border rounded bg-muted/20 p-3">
@@ -601,6 +644,60 @@ export default function ComparisonPage() {
                             </div>
                           ))}
                         </div>
+                      </div>
+                    )}
+
+                    {/* Decompilation diff viewer */}
+                    {decompFunc && (
+                      <div className="border rounded bg-muted/10 p-3 space-y-2">
+                        <div className="flex items-center gap-2 text-xs font-medium">
+                          <Code className="h-3.5 w-3.5" />
+                          Decompilation Diff: <span className="font-mono">{decompFunc}</span>
+                        </div>
+                        {decompLoading && (
+                          <div className="flex items-center gap-2 py-3 text-xs text-muted-foreground">
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            Decompiling with Ghidra (this may take 30-120s)...
+                          </div>
+                        )}
+                        {decompDiff && !decompLoading && (
+                          <div className="space-y-2">
+                            {decompDiff.error ? (
+                              <p className="text-xs text-destructive">{decompDiff.error}</p>
+                            ) : (
+                              <>
+                                <div className="flex items-center gap-3 text-xs">
+                                  <Badge variant="outline" className="text-green-600 text-[10px]">
+                                    +{decompDiff.lines_added} added
+                                  </Badge>
+                                  <Badge variant="outline" className="text-red-600 text-[10px]">
+                                    -{decompDiff.lines_removed} removed
+                                  </Badge>
+                                </div>
+                                {decompDiff.diff_text ? (
+                                  <pre className="max-h-[500px] overflow-auto rounded border bg-muted/30 p-2 text-[11px] font-mono leading-relaxed">
+                                    {decompDiff.diff_text.split('\n').map((line, li) => {
+                                      let className = ''
+                                      if (line.startsWith('+++') || line.startsWith('---')) className = 'text-muted-foreground font-bold'
+                                      else if (line.startsWith('@@')) className = 'text-blue-500'
+                                      else if (line.startsWith('+')) className = 'text-green-600 bg-green-500/10'
+                                      else if (line.startsWith('-')) className = 'text-red-600 bg-red-500/10'
+                                      return (
+                                        <div key={li} className={className}>
+                                          {line}
+                                        </div>
+                                      )
+                                    })}
+                                  </pre>
+                                ) : (
+                                  <p className="text-xs text-muted-foreground">
+                                    No decompilation differences found.
+                                  </p>
+                                )}
+                              </>
+                            )}
+                          </div>
+                        )}
                       </div>
                     )}
 
@@ -675,6 +772,26 @@ export default function ComparisonPage() {
                             </tbody>
                           </table>
                         </div>
+
+                        {/* Basic block stats for stripped binaries */}
+                        {binDiff.basic_block_stats && (
+                          <div className="rounded border border-blue-500/30 bg-blue-500/5 p-3 space-y-2">
+                            <p className="text-xs font-medium text-blue-700 dark:text-blue-400">
+                              Basic Block Analysis: {binDiff.basic_block_stats.blocks_a} blocks in A, {binDiff.basic_block_stats.blocks_b} blocks in B, {binDiff.basic_block_stats.unchanged_pct}% unchanged
+                            </p>
+                            <div className="w-full h-2 bg-muted rounded-full overflow-hidden">
+                              <div
+                                className="h-full bg-blue-500 rounded-full transition-all"
+                                style={{ width: `${binDiff.basic_block_stats.unchanged_pct}%` }}
+                              />
+                            </div>
+                            <div className="flex gap-4 text-[10px] text-muted-foreground">
+                              <span>{binDiff.basic_block_stats.common_count} common</span>
+                              <span className="text-green-600">+{binDiff.basic_block_stats.added_count} added</span>
+                              <span className="text-red-600">-{binDiff.basic_block_stats.removed_count} removed</span>
+                            </div>
+                          </div>
+                        )}
                       </div>
                     )}
 

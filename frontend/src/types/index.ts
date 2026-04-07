@@ -632,6 +632,15 @@ export interface SectionDiffEntry {
   changed: boolean
 }
 
+export interface BasicBlockStats {
+  blocks_a: number
+  blocks_b: number
+  common_count: number
+  added_count: number
+  removed_count: number
+  unchanged_pct: number
+}
+
 export interface BinaryDiff {
   binary_path: string
   functions_added: FunctionDiffEntry[]
@@ -644,6 +653,7 @@ export interface BinaryDiff {
   imports_removed?: string[]
   exports_added?: string[]
   exports_removed?: string[]
+  basic_block_stats?: BasicBlockStats | null
 }
 
 export interface InstructionDiff {
@@ -661,5 +671,16 @@ export interface TextDiff {
   lines_added: number
   lines_removed: number
   truncated: boolean
+  error: string | null
+}
+
+export interface DecompilationDiff {
+  function_name: string
+  binary_path: string
+  source_a: string
+  source_b: string
+  diff_text: string
+  lines_added: number
+  lines_removed: number
   error: string | null
 }

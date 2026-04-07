@@ -115,10 +115,16 @@ def _is_android_firmware_zip(zip_path: str) -> bool:
 
 
 def _extract_firmware_from_zip(zip_path: str, output_dir: str) -> str | None:
-    """Extract the main firmware file from a ZIP archive.
+    """Extract all files from a ZIP archive, returning the primary firmware path.
 
-    Picks the largest file in the archive (most likely the firmware image).
-    Returns the path to the extracted file, or None if the archive is empty.
+    Extracts the full contents of the ZIP into a 'zip_contents' subdirectory
+    (preserving internal directory structure) so that all companion files
+    (FPGA bitstreams, adapter firmware, manifests, config data) are retained
+    for browsing and analysis.
+
+    The largest file is identified as the primary firmware image and its path
+    is returned for the analysis pipeline.  Returns None if the archive
+    contains no extractable files.
     """
     with zipfile.ZipFile(zip_path, "r") as zf:
         candidates = []
@@ -134,16 +140,60 @@ def _extract_firmware_from_zip(zip_path: str, output_dir: str) -> str | None:
         if not candidates:
             return None
 
+        # Create a subdirectory for the full ZIP contents
+        extract_dir = os.path.join(output_dir, "zip_contents")
+        os.makedirs(extract_dir, exist_ok=True)
+        real_extract_dir = os.path.realpath(extract_dir)
+
+        # Extract all files with ZIP slip prevention
+        for info in zf.infolist():
+            target_path = os.path.realpath(
+                os.path.join(extract_dir, info.filename)
+            )
+            if not (
+                target_path.startswith(real_extract_dir + os.sep)
+                or target_path == real_extract_dir
+            ):
+                # Path traversal attempt — skip this entry
+                logger.warning(
+                    "Skipping ZIP entry with path traversal: %s", info.filename
+                )
+                continue
+
+            if info.is_dir():
+                os.makedirs(target_path, exist_ok=True)
+            else:
+                # Ensure parent directory exists
+                parent = os.path.dirname(target_path)
+                os.makedirs(parent, exist_ok=True)
+                # Extract in chunks to avoid loading entire file into memory
+                with zf.open(info) as src, open(target_path, "wb") as dst:
+                    while chunk := src.read(8192):
+                        dst.write(chunk)
+
+        # Identify the largest file as the primary firmware target
         best = max(candidates, key=lambda i: i.file_size)
-        target_name = _sanitize_filename(os.path.basename(best.filename))
-        target_path = os.path.join(output_dir, target_name)
+        primary_path = os.path.realpath(
+            os.path.join(extract_dir, best.filename)
+        )
 
-        # Extract in chunks to avoid loading entire file into memory
-        with zf.open(best) as src, open(target_path, "wb") as dst:
-            while chunk := src.read(8192):
-                dst.write(chunk)
+        # Verify the primary file was actually extracted (not skipped by
+        # ZIP slip prevention)
+        if not os.path.isfile(primary_path):
+            # Fall back to the largest file that was actually extracted
+            for fallback in sorted(
+                candidates, key=lambda i: i.file_size, reverse=True
+            ):
+                fb_path = os.path.realpath(
+                    os.path.join(extract_dir, fallback.filename)
+                )
+                if os.path.isfile(fb_path):
+                    primary_path = fb_path
+                    break
+            else:
+                return None
 
-        return target_path
+        return primary_path
 
 
 def _firmware_tar_filter(member, dest_path):
@@ -330,11 +380,11 @@ class FirmwareService:
         if is_zip:
             try:
                 is_android = _is_android_firmware_zip(storage_path)
-            except (zipfile.BadZipFile, OSError):
+            except (zipfile.BadZipFile, OSError, EOFError):
                 is_android = False
             try:
                 is_rootfs = not is_android and _zip_contains_rootfs(storage_path)
-            except (zipfile.BadZipFile, OSError):
+            except (zipfile.BadZipFile, OSError, EOFError):
                 is_rootfs = False
 
             if is_android:
@@ -396,7 +446,11 @@ class FirmwareService:
                 return firmware
 
             else:
-                extracted = _extract_firmware_from_zip(storage_path, firmware_dir)
+                try:
+                    extracted = _extract_firmware_from_zip(storage_path, firmware_dir)
+                except (zipfile.BadZipFile, EOFError, OSError) as exc:
+                    logger.warning("ZIP extraction failed (%s), treating as raw firmware", exc)
+                    extracted = None
                 if extracted:
                     os.remove(storage_path)
                     storage_path = extracted

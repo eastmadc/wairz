@@ -10,6 +10,8 @@ from app.database import get_db
 from app.schemas.comparison import (
     BinaryDiffRequest,
     BinaryDiffResponse,
+    DecompilationDiffRequest,
+    DecompilationDiffResponse,
     FirmwareDiffRequest,
     FirmwareDiffResponse,
     InstructionDiffRequest,
@@ -19,6 +21,7 @@ from app.schemas.comparison import (
 )
 from app.services.comparison_service import (
     diff_binary,
+    diff_decompilation,
     diff_filesystems,
     diff_function_instructions,
     diff_text_file,
@@ -113,6 +116,7 @@ async def compare_binary(
         imports_removed=result.imports_removed,
         exports_added=result.exports_added,
         exports_removed=result.exports_removed,
+        basic_block_stats=result.basic_block_stats,
     )
 
 
@@ -185,6 +189,40 @@ async def compare_instructions(
     )
 
     return InstructionDiffResponse(**result)
+
+
+@router.post("/decompilation", response_model=DecompilationDiffResponse)
+async def compare_decompilation(
+    project_id: uuid.UUID,
+    body: DecompilationDiffRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Compare a specific function's Ghidra decompilation between two firmware versions.
+
+    Returns a unified diff of the decompiled C code.
+    """
+    fw_a = await _get_firmware(body.firmware_a_id, project_id, db)
+    fw_b = await _get_firmware(body.firmware_b_id, project_id, db)
+
+    # Validate the binary path exists in both firmware
+    try:
+        path_a = validate_path(fw_a.extracted_path, body.binary_path)
+    except Exception:
+        raise HTTPException(404, f"Binary not found in firmware A: {body.binary_path}")
+
+    try:
+        path_b = validate_path(fw_b.extracted_path, body.binary_path)
+    except Exception:
+        raise HTTPException(404, f"Binary not found in firmware B: {body.binary_path}")
+
+    result = await diff_decompilation(
+        path_a, path_b,
+        body.binary_path, body.function_name,
+        body.firmware_a_id, body.firmware_b_id,
+        db, body.context_lines,
+    )
+
+    return DecompilationDiffResponse(**result)
 
 
 def _entry_to_dict(entry) -> dict:

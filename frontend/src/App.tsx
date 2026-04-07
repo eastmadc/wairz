@@ -11,6 +11,7 @@ import EmulationPage from '@/pages/EmulationPage'
 import FuzzingPage from '@/pages/FuzzingPage'
 import ComparisonPage from '@/pages/ComparisonPage'
 import SecurityScanPage from '@/pages/SecurityScanPage'
+import SecurityToolsPage from '@/pages/SecurityToolsPage'
 import DeviceAcquisitionPage from '@/pages/DeviceAcquisitionPage'
 import HelpPage from '@/pages/HelpPage'
 import NotFoundPage from '@/pages/NotFoundPage'
@@ -32,6 +33,7 @@ export default function App() {
           <Route path="/projects/:projectId/emulation" element={<EmulationPage />} />
           <Route path="/projects/:projectId/fuzzing" element={<FuzzingPage />} />
           <Route path="/projects/:projectId/compare" element={<ComparisonPage />} />
+          <Route path="/projects/:projectId/tools" element={<SecurityToolsPage />} />
           <Route path="/projects/:projectId/device" element={<DeviceAcquisitionPage />} />
           <Route path="/help" element={<HelpPage />} />
           <Route path="*" element={<NotFoundPage />} />
