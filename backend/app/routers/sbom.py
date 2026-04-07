@@ -795,4 +795,26 @@ def _build_spdx_response(components: list, firmware) -> Response:
             "Content-Disposition": f'attachment; filename="sbom-{firmware.id}.spdx.json"'
         },
     )
+
+
+@router.get("/cpe-dictionary/status")
+async def get_cpe_dictionary_status(project_id: uuid.UUID):
+    """Return the CPE dictionary loading status."""
+    from app.services.cpe_dictionary_service import get_cpe_dictionary_service
+
+    svc = get_cpe_dictionary_service()
+    return await svc.get_status()
+
+
+@router.post("/cpe-dictionary/reload")
+async def reload_cpe_dictionary(project_id: uuid.UUID):
+    """Force reload the CPE dictionary from NVD."""
+    from app.services.cpe_dictionary_service import get_cpe_dictionary_service
+
+    svc = get_cpe_dictionary_service()
+    svc._index = None
+    svc._product_names = None
+    svc._loading = False
+    loaded = await svc.ensure_loaded()
+    return {"status": "loading" if not loaded else "loaded"}
 # SBOM RTOS injection: 1775525996

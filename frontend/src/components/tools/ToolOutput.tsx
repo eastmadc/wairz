@@ -25,8 +25,24 @@ export default function ToolOutput({ result, loading, error }: ToolOutputProps) 
   const [copied, setCopied] = useState(false)
   const [collapsed, setCollapsed] = useState(false)
 
-  const handleCopy = async (text: string) => {
-    await navigator.clipboard.writeText(text)
+  const handleCopy = (text: string) => {
+    const fallback = () => {
+      const ta = document.createElement('textarea')
+      ta.value = text
+      ta.style.position = 'fixed'
+      ta.style.opacity = '0'
+      document.body.appendChild(ta)
+      ta.focus()
+      ta.select()
+      try { document.execCommand('copy') } catch { /* ignore */ }
+      document.body.removeChild(ta)
+    }
+
+    if (navigator.clipboard?.writeText) {
+      navigator.clipboard.writeText(text).catch(fallback)
+    } else {
+      fallback()
+    }
     setCopied(true)
     setTimeout(() => setCopied(false), 2000)
   }
@@ -127,7 +143,7 @@ export default function ToolOutput({ result, loading, error }: ToolOutputProps) 
       <div className="rounded-md border bg-muted/30 overflow-hidden">
         <pre
           className={`p-4 text-xs font-mono whitespace-pre-wrap overflow-auto ${
-            collapsed ? 'max-h-24' : 'max-h-[600px]'
+            collapsed ? 'max-h-24' : ''
           }`}
         >
           {formattedOutput}

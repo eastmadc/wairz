@@ -370,7 +370,11 @@ async def _handle_get_binary_info(input: dict, context: ToolContext) -> str:
     path = context.resolve_path(input["binary_path"])
 
     cache = get_analysis_cache()
-    info = await cache.get_binary_info(path, context.firmware_id, context.db)
+    info = None
+    try:
+        info = await cache.get_binary_info(path, context.firmware_id, context.db)
+    except Exception:
+        pass  # Fall through to LIEF/raw analysis
 
     if info:
         bin_info = info.get("bin", {})
@@ -459,7 +463,44 @@ async def _handle_get_binary_info(input: dict, context: ToolContext) -> str:
         ]
         return "\n".join(lines)
 
-    return "Could not retrieve binary info. The file may not be a recognized binary format."
+    # Raw binary fallback — provide basic file metadata
+    try:
+        file_size = os.path.getsize(path)
+        with open(path, "rb") as f:
+            header = f.read(16)
+        magic_hex = " ".join(f"{b:02x}" for b in header[:16])
+
+        # Try to detect architecture from RTOS detection or metadata
+        lines = [
+            "Binary Information (raw binary):",
+            "",
+            f"  File:         {os.path.basename(path)}",
+            f"  Format:       Raw binary (no ELF/PE/Mach-O header)",
+            f"  Size:         {file_size:,} bytes ({file_size / 1024:.1f} KB)",
+            f"  Magic bytes:  {magic_hex}",
+        ]
+
+        # Check for ARM thumb instructions (common in Cortex-M firmware)
+        if file_size > 0x100:
+            with open(path, "rb") as f:
+                # Check vector table pattern (ARM Cortex-M: SP at 0x0, reset vector at 0x4)
+                sp = int.from_bytes(f.read(4), "little")
+                reset = int.from_bytes(f.read(4), "little")
+                if 0x20000000 <= sp <= 0x20100000 and 0x08000000 <= reset <= 0x08100000:
+                    lines.append(f"  Architecture: ARM Cortex-M (vector table detected)")
+                    lines.append(f"  Initial SP:   {hex(sp)}")
+                    lines.append(f"  Reset vector: {hex(reset)}")
+                elif sp == 0 or reset == 0:
+                    pass  # Not a vector table
+                else:
+                    lines.append(f"  Word 0 (SP?): {hex(sp)}")
+                    lines.append(f"  Word 1 (PC?): {hex(reset)}")
+
+        lines.append("")
+        lines.append("  Note: Use extract_strings or detect_rtos for deeper analysis of raw binaries.")
+        return "\n".join(lines)
+    except OSError:
+        return "Could not read binary file."
 
 
 async def _handle_check_binary_protections(
@@ -1042,7 +1083,9 @@ async def _handle_search_binary_content(input: dict, context: ToolContext) -> st
     path = context.resolve_path(input["binary_path"])
     mode = input.get("mode", "string")
     pattern = input["pattern"]
-    max_results = min(input.get("max_results", 50), 100)
+    max_results = input.get("max_results", 50)
+    if max_results <= 0:
+        max_results = 100000
 
     cache = get_analysis_cache()
 

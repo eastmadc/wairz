@@ -31,6 +31,17 @@ async def lifespan(app: FastAPI):
             "Polling fallback will continue to work."
         )
 
+    # Start loading CPE dictionary in background (non-blocking)
+    try:
+        from app.services.cpe_dictionary_service import get_cpe_dictionary_service
+        cpe_svc = get_cpe_dictionary_service()
+        await cpe_svc.ensure_loaded()
+    except Exception:
+        import logging
+        logging.getLogger(__name__).warning(
+            "CPE dictionary background load failed — fuzzy matching will use local map only"
+        )
+
     yield
 
     # Shutdown Redis
