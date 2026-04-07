@@ -508,6 +508,30 @@ function ComponentsTab({ components, typeFilter, nameSearch, onTypeFilter, onNam
                           {comp.vulnerability_count} CVE{comp.vulnerability_count !== 1 ? 's' : ''}
                         </Badge>
                       )}
+                      {comp.cpe && comp.cpe_confidence != null && (
+                        <TooltipProvider>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Badge
+                                variant="outline"
+                                className={`cursor-help text-[10px] ${
+                                  comp.cpe_confidence >= 0.85
+                                    ? 'border-green-500/50 text-green-600 dark:text-green-400'
+                                    : comp.cpe_confidence >= 0.7
+                                      ? 'border-yellow-500/50 text-yellow-600 dark:text-yellow-400'
+                                      : 'border-red-500/50 text-red-600 dark:text-red-400'
+                                }`}
+                              >
+                                CPE {Math.round(comp.cpe_confidence * 100)}%
+                              </Badge>
+                            </TooltipTrigger>
+                            <TooltipContent side="top" className="max-w-64 text-xs">
+                              CPE enriched via {(comp.enrichment_source ?? 'unknown').replace(/_/g, ' ')}
+                              {' \u00b7 '}{Math.round(comp.cpe_confidence * 100)}% confidence
+                            </TooltipContent>
+                          </Tooltip>
+                        </TooltipProvider>
+                      )}
                     </div>
                     <p className="mt-0.5 text-xs text-muted-foreground">
                       Detected via {comp.detection_source.replace(/_/g, ' ')}
@@ -521,6 +545,12 @@ function ComponentsTab({ components, typeFilter, nameSearch, onTypeFilter, onNam
                       <div>
                         <span className="font-medium text-muted-foreground">CPE: </span>
                         <span className="font-mono">{comp.cpe}</span>
+                        {comp.enrichment_source && comp.enrichment_source !== 'none' && (
+                          <span className="ml-2 text-muted-foreground">
+                            (via {comp.enrichment_source.replace(/_/g, ' ')}
+                            {comp.cpe_confidence != null && `, ${Math.round(comp.cpe_confidence * 100)}% confidence`})
+                          </span>
+                        )}
                       </div>
                     )}
                     {comp.purl && (

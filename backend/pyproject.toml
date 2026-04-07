@@ -29,6 +29,7 @@ dependencies = [
     "pefile>=2024.8",
     "capstone>=5.0.0",
     "aiosqlite>=0.20.0",
+    "rapidfuzz>=3.0.0",
 ]
 
 [project.scripts]

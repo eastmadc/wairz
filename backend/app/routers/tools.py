@@ -48,6 +48,9 @@ ALLOWED_TOOLS: set[str] = {
     "find_crypto_material",
     "find_hardcoded_credentials",
     # Binary analysis (read-only)
+    "detect_rtos",
+    "analyze_binary_format",
+    "analyze_raw_binary",
     "list_functions",
     "disassemble_function",
     "decompile_function",
@@ -231,7 +234,7 @@ async def run_tool(
         extraction_dir=firmware.extraction_dir,
     )
 
-    result = await registry.execute(body.tool_name, body.input, context)
+    result = await registry.execute(body.tool_name, body.input, context, truncate=False)
 
     # The registry returns "Error: ..." or "Error executing ..." on failure
     is_error = result.startswith("Error:")  or result.startswith("Error executing ")

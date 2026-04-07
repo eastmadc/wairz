@@ -74,11 +74,14 @@ def _matches_type(filepath: str, name: str, file_type: str) -> bool:
     return False
 
 
-def _find_files_by_type(search_root: str, real_root: str, file_type: str) -> str:
+def _find_files_by_type(
+    search_root: str, real_root: str, file_type: str, max_results: int = 0
+) -> str:
     """Walk filesystem and find files matching the requested type."""
     if file_type not in VALID_TYPES:
         return f"Error: unknown file type '{file_type}'. Valid types: {', '.join(sorted(VALID_TYPES))}"
 
+    limit = max_results if max_results > 0 else MAX_FIND_RESULTS
     matches: list[str] = []
 
     for dirpath, _dirs, files in safe_walk(search_root):
@@ -87,17 +90,17 @@ def _find_files_by_type(search_root: str, real_root: str, file_type: str) -> str
             if _matches_type(abs_path, name, file_type):
                 rel_path = "/" + os.path.relpath(abs_path, real_root)
                 matches.append(rel_path)
-                if len(matches) >= MAX_FIND_RESULTS:
+                if len(matches) >= limit:
                     break
-        if len(matches) >= MAX_FIND_RESULTS:
+        if len(matches) >= limit:
             break
 
     if not matches:
         return f"No files of type '{file_type}' found."
 
     header = f"Found {len(matches)} {file_type} file(s)"
-    if len(matches) >= MAX_FIND_RESULTS:
-        header += f" (showing first {MAX_FIND_RESULTS})"
+    if len(matches) >= limit:
+        header += f" (showing first {limit})"
     header += ":\n"
     return header + "\n".join(matches)
 
@@ -187,6 +190,7 @@ async def _handle_find_files_by_type(input: dict, context: ToolContext) -> str:
         search_root=search_root,
         real_root=real_root,
         file_type=input["file_type"],
+        max_results=input.get("max_results", 0),
     )
 
 
@@ -506,7 +510,7 @@ def register_filesystem_tools(registry: ToolRegistry) -> None:
         description=(
             "Find files of a specific type in the firmware filesystem. "
             "Types: elf, shell_script, config, certificate, python, lua, "
-            "library, database, web. Max 100 results."
+            "library, database, web."
         ),
         input_schema={
             "type": "object",
@@ -519,6 +523,10 @@ def register_filesystem_tools(registry: ToolRegistry) -> None:
                 "path": {
                     "type": "string",
                     "description": "Directory to search in (default: '/')",
+                },
+                "max_results": {
+                    "type": "integer",
+                    "description": "Maximum results to return (default: 100, set to 0 for all)",
                 },
             },
             "required": ["file_type"],

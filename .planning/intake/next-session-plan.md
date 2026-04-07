@@ -20,7 +20,7 @@
 8. **Signia PowerPack analysis** — Identified as Ethicon surgical stapler (not hearing aid), ARM Cortex-M4, uC/OS-II high confidence, 15+ tasks
 
 **What to do next (priority order):**
-1. **CPE Enrichment Phase 2-3** (`plan-cpe-enrichment.md`) — NVD CPE dictionary fuzzy matching with `rapidfuzz`, kernel module inheritance, confidence scoring
+1. ~~**CPE Enrichment Phase 2-3**~~ — **DONE** (session 15, 2026-04-07). NVD CPE dictionary service, rapidfuzz fuzzy matching, confidence scoring + frontend badges.
 2. **Network Protocol Analysis** (`plan-network-protocol-analysis.md`) — Scapy-based pcap analysis from emulated firmware
 3. **CI/CD Action hardening** (`plan-cicd-github-action.md`) — SARIF output, configurable fail thresholds, Docker optimization
 4. **Docker dev mode** — Volume mount source code for hot-reload (current `docker compose build` has cache staleness issues)

@@ -99,7 +99,9 @@ class ToolRegistry:
             for t in self._tools.values()
         ]
 
-    async def execute(self, name: str, input: dict, context: ToolContext) -> str:
+    async def execute(
+        self, name: str, input: dict, context: ToolContext, *, truncate: bool = True
+    ) -> str:
         tool = self._tools.get(name)
         if tool is None:
             return f"Error: unknown tool '{name}'"
@@ -107,4 +109,6 @@ class ToolRegistry:
             result = await tool.handler(input, context)
         except Exception as exc:
             return f"Error executing {name}: {exc}"
-        return truncate_output(result)
+        if truncate:
+            return truncate_output(result)
+        return result

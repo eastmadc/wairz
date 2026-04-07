@@ -1838,16 +1838,30 @@ class SbomService:
         Runs after all scanning strategies have completed.  For each
         component that lacks a CPE, attempts enrichment via:
           1. Direct CPE_VENDOR_MAP lookup (exact + normalized name)
-          2. Fuzzy matching (strip lib prefix, normalize hyphens/underscores)
-          3. Kernel module inheritance (inherit linux_kernel CPE)
-          4. Android APK targetSdkVersion -> Android version CPE
+          2. Local fuzzy matching (strip lib prefix, normalize hyphens/underscores)
+          3. NVD CPE dictionary fuzzy matching (rapidfuzz against 1M+ official CPEs)
+          4. Kernel module inheritance (inherit linux_kernel CPE)
+          5. Android APK targetSdkVersion -> Android version CPE
+
+        Each enriched component gets metadata tracking:
+          - enrichment_source: how the CPE was determined
+          - cpe_confidence: 0.0-1.0 confidence score
         """
+        from app.services.cpe_dictionary_service import (
+            CONFIDENCE_AUTO,
+            get_cpe_dictionary_service,
+        )
+
         # Find the kernel version for module inheritance
         kernel_version = self._find_kernel_version()
 
+        # Try to get the CPE dictionary (non-blocking, may not be loaded yet)
+        cpe_dict = get_cpe_dictionary_service()
+
         stats: dict[str, int] = {
             "direct_map": 0,
-            "fuzzy_match": 0,
+            "local_fuzzy": 0,
+            "nvd_fuzzy": 0,
             "kernel_inherit": 0,
             "android_sdk": 0,
             "already_had_cpe": 0,
@@ -1857,6 +1871,10 @@ class SbomService:
         for key, comp in list(self._components.items()):
             if comp.cpe:
                 stats["already_had_cpe"] += 1
+                # Tag existing CPEs with source if not already tagged
+                if "enrichment_source" not in comp.metadata:
+                    comp.metadata["enrichment_source"] = "scanner"
+                    comp.metadata["cpe_confidence"] = 0.9
                 continue
 
             enriched = False
@@ -1870,27 +1888,47 @@ class SbomService:
                     vendor_product[0], vendor_product[1], comp.version, part=part
                 )
                 comp.supplier = comp.supplier or vendor_product[0]
+                comp.metadata["enrichment_source"] = "exact_match"
+                comp.metadata["cpe_confidence"] = 0.95
                 stats["direct_map"] += 1
                 enriched = True
 
-            # --- 2. Fuzzy matching ---
+            # --- 2. Local fuzzy matching (name normalization against CPE_VENDOR_MAP) ---
             if not enriched and comp.version:
                 fuzzy_cpe = self._fuzzy_cpe_lookup(comp.name, comp.version, comp.type)
                 if fuzzy_cpe:
                     comp.cpe = fuzzy_cpe
-                    stats["fuzzy_match"] += 1
+                    comp.metadata["enrichment_source"] = "local_fuzzy"
+                    comp.metadata["cpe_confidence"] = 0.85
+                    stats["local_fuzzy"] += 1
                     enriched = True
 
-            # --- 3. Kernel module inheritance ---
+            # --- 3. NVD CPE dictionary fuzzy matching ---
+            if not enriched and comp.version and cpe_dict._index is not None:
+                matches = cpe_dict.lookup_fuzzy(
+                    comp.name, comp.version, limit=3
+                )
+                if matches and matches[0].confidence >= CONFIDENCE_AUTO:
+                    best = matches[0]
+                    comp.cpe = best.cpe23
+                    comp.supplier = comp.supplier or best.vendor
+                    comp.metadata["enrichment_source"] = best.source
+                    comp.metadata["cpe_confidence"] = round(best.confidence, 2)
+                    stats["nvd_fuzzy"] += 1
+                    enriched = True
+
+            # --- 4. Kernel module inheritance ---
             if not enriched and kernel_version and self._is_kernel_module(comp):
                 comp.cpe = self._build_os_cpe(
                     "linux", "linux_kernel", kernel_version
                 )
                 comp.metadata["cpe_inherited_from"] = "linux-kernel"
+                comp.metadata["enrichment_source"] = "inherited"
+                comp.metadata["cpe_confidence"] = 0.80
                 stats["kernel_inherit"] += 1
                 enriched = True
 
-            # --- 4. Android APK targetSdkVersion ---
+            # --- 5. Android APK targetSdkVersion ---
             if not enriched and self._is_android_component(comp):
                 sdk_version = comp.metadata.get("targetSdkVersion")
                 if sdk_version:
@@ -1901,25 +1939,31 @@ class SbomService:
                             comp.cpe = self._build_os_cpe(
                                 "google", "android", android_ver
                             )
+                            comp.metadata["enrichment_source"] = "android_sdk"
+                            comp.metadata["cpe_confidence"] = 0.90
                             stats["android_sdk"] += 1
                             enriched = True
                     except (ValueError, TypeError):
                         pass
 
             if not enriched:
+                comp.metadata["enrichment_source"] = "none"
+                comp.metadata["cpe_confidence"] = 0.0
                 stats["no_match"] += 1
 
         total_enriched = (
-            stats["direct_map"] + stats["fuzzy_match"]
+            stats["direct_map"] + stats["local_fuzzy"] + stats["nvd_fuzzy"]
             + stats["kernel_inherit"] + stats["android_sdk"]
         )
         logger.info(
             "CPE enrichment complete: %d components enriched "
-            "(direct_map=%d, fuzzy=%d, kernel_inherit=%d, android_sdk=%d), "
+            "(direct_map=%d, local_fuzzy=%d, nvd_fuzzy=%d, "
+            "kernel_inherit=%d, android_sdk=%d), "
             "%d already had CPE, %d unmatched",
             total_enriched,
             stats["direct_map"],
-            stats["fuzzy_match"],
+            stats["local_fuzzy"],
+            stats["nvd_fuzzy"],
             stats["kernel_inherit"],
             stats["android_sdk"],
             stats["already_had_cpe"],

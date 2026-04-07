@@ -170,6 +170,9 @@ async def _handle_extract_strings(input: dict, context: ToolContext) -> str:
     """Extract and categorize interesting strings from a file."""
     path = context.resolve_path(input["path"])
     min_length = input.get("min_length", 6)
+    max_results = input.get("max_results", MAX_STRINGS)
+    if max_results <= 0:
+        max_results = None  # unlimited
 
     if not os.path.isfile(path):
         return f"Error: '{input['path']}' is not a file."
@@ -196,13 +199,13 @@ async def _handle_extract_strings(input: dict, context: ToolContext) -> str:
         label = cat_name.replace("_", " ").title()
         parts.append(f"## {label} ({len(cat_items)} found)")
         for item in cat_items:
-            if shown >= MAX_STRINGS:
+            if max_results is not None and shown >= max_results:
                 break
             parts.append(f"  {item}")
             shown += 1
         parts.append("")
-        if shown >= MAX_STRINGS:
-            parts.append(f"... [truncated: showing {MAX_STRINGS} of {total_count} strings]")
+        if max_results is not None and shown >= max_results:
+            parts.append(f"... [truncated: showing {max_results} of {total_count} strings]")
             break
 
     return "\n".join(parts)
@@ -214,13 +217,16 @@ async def _handle_search_strings(input: dict, context: ToolContext) -> str:
     input_path = input.get("path", "/")
     search_path = context.resolve_path(input_path)
     real_root = context.real_root_for(input_path)
+    max_results = input.get("max_results", MAX_GREP_RESULTS)
+    if max_results <= 0:
+        max_results = 100000  # effectively unlimited
 
     try:
         stdout, _ = await _run_subprocess(
             [
                 "grep", "-rn",
                 "--binary-files=without-match",
-                "--max-count=100",
+                f"--max-count={max_results}",
                 "-E", pattern,
                 search_path,
             ],
@@ -237,7 +243,7 @@ async def _handle_search_strings(input: dict, context: ToolContext) -> str:
 
     # Convert absolute paths to firmware-relative paths
     results: list[str] = []
-    for line in lines[:MAX_GREP_RESULTS]:
+    for line in lines[:max_results]:
         if line.startswith(real_root):
             line = line[len(real_root):]
             if not line.startswith("/"):
@@ -245,8 +251,8 @@ async def _handle_search_strings(input: dict, context: ToolContext) -> str:
         results.append(line)
 
     header = f"Found {len(results)} match(es) for '{pattern}'"
-    if len(lines) > MAX_GREP_RESULTS:
-        header += f" (showing first {MAX_GREP_RESULTS})"
+    if len(lines) > max_results:
+        header += f" (showing first {max_results})"
     header += ":\n"
 
     return header + "\n".join(results)
@@ -476,6 +482,9 @@ async def _handle_find_hardcoded_credentials(
     input_path = input.get("path", "/")
     search_path = context.resolve_path(input_path)
     real_root = context.real_root_for(input_path)
+    max_results = input.get("max_results", MAX_CRED_RESULTS)
+    if max_results <= 0:
+        max_results = 100000
 
     results: list[dict[str, str]] = []
     auth_issues: list[str] = []
@@ -502,10 +511,10 @@ async def _handle_find_hardcoded_credentials(
 
     # Walk filesystem for credential patterns
     for dirpath, _dirs, files in safe_walk(search_path):
-        if len(results) >= MAX_CRED_RESULTS:
+        if len(results) >= max_results:
             break
         for name in files:
-            if len(results) >= MAX_CRED_RESULTS:
+            if len(results) >= max_results:
                 break
 
             abs_path = os.path.join(dirpath, name)
@@ -521,7 +530,7 @@ async def _handle_find_hardcoded_credentials(
             try:
                 with open(abs_path, "r", errors="replace") as f:
                     for line_num, line in enumerate(f, 1):
-                        if len(results) >= MAX_CRED_RESULTS:
+                        if len(results) >= max_results:
                             break
                         matched = False
                         # Check cloud/service API key patterns first (higher value)
@@ -605,8 +614,8 @@ async def _handle_find_hardcoded_credentials(
             parts.append(f"    {r['match']}")
         parts.append("")
 
-    if len(results) >= MAX_CRED_RESULTS:
-        parts.append(f"... [truncated: showing first {MAX_CRED_RESULTS} results]")
+    if len(results) >= max_results:
+        parts.append(f"... [truncated: showing first {max_results} results]")
 
     return "\n".join(parts)
 
@@ -624,8 +633,7 @@ def register_string_tools(registry: ToolRegistry) -> None:
         description=(
             "Extract and categorize interesting strings from a file (binary or text). "
             "Strings are categorized into: URLs, IP addresses, email addresses, "
-            "file paths, potential credentials, and other. "
-            "Max 200 strings returned."
+            "file paths, potential credentials, and other."
         ),
         input_schema={
             "type": "object",
@@ -638,6 +646,10 @@ def register_string_tools(registry: ToolRegistry) -> None:
                     "type": "integer",
                     "description": "Minimum string length (default: 6)",
                 },
+                "max_results": {
+                    "type": "integer",
+                    "description": "Maximum strings to return (default: 200, set to 0 for all)",
+                },
             },
             "required": ["path"],
         },
@@ -649,7 +661,7 @@ def register_string_tools(registry: ToolRegistry) -> None:
         description=(
             "Search for a regex pattern across all text files in the firmware filesystem "
             "(like grep -rn). Returns matching lines with file paths and line numbers. "
-            "Max 100 results. Timeout: 30 seconds."
+            "Timeout: 30 seconds."
         ),
         input_schema={
             "type": "object",
@@ -661,6 +673,10 @@ def register_string_tools(registry: ToolRegistry) -> None:
                 "path": {
                     "type": "string",
                     "description": "Directory to search in (default: '/')",
+                },
+                "max_results": {
+                    "type": "integer",
+                    "description": "Maximum results to return (default: 100, set to 0 for all)",
                 },
             },
             "required": ["pattern"],
@@ -700,7 +716,7 @@ def register_string_tools(registry: ToolRegistry) -> None:
             "- /etc/passwd & /etc_ro/passwd: UID-0 non-root accounts, empty password "
             "fields with login shells\n"
             "- Filesystem scan: password/secret/token assignments in text files\n"
-            "Results ranked by Shannon entropy. Max 100 results."
+            "Results ranked by Shannon entropy."
         ),
         input_schema={
             "type": "object",
@@ -708,6 +724,10 @@ def register_string_tools(registry: ToolRegistry) -> None:
                 "path": {
                     "type": "string",
                     "description": "Directory to search in (default: '/')",
+                },
+                "max_results": {
+                    "type": "integer",
+                    "description": "Maximum results to return (default: 100, set to 0 for all)",
                 },
             },
             "required": [],

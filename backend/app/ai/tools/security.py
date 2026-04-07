@@ -23,7 +23,13 @@ from app.utils.sandbox import safe_walk, validate_path
 
 logger = logging.getLogger(__name__)
 
-MAX_RESULTS = 100
+MAX_RESULTS = 100  # default for MCP; overridable via max_results input param
+
+
+def _get_limit(input: dict) -> int:
+    """Read max_results from tool input, defaulting to MAX_RESULTS."""
+    val = input.get("max_results", MAX_RESULTS)
+    return val if val > 0 else 100000
 
 # Certificate file extensions to scan for
 _CERT_EXTENSIONS = {".pem", ".crt", ".cer", ".der", ".p12", ".pfx"}
@@ -243,8 +249,9 @@ async def _handle_analyze_config_security(input: dict, context: ToolContext) -> 
     if not findings:
         return f"No obvious security issues found in '{path}'."
 
+    limit = _get_limit(input)
     header = f"Found {len(findings)} potential issue(s) in '{path}':\n\n"
-    return header + "\n\n".join(findings[:MAX_RESULTS])
+    return header + "\n\n".join(findings[:limit])
 
 
 # ---------------------------------------------------------------------------
@@ -257,6 +264,7 @@ async def _handle_check_setuid_binaries(input: dict, context: ToolContext) -> st
     input_path = input.get("path") or "/"
     search_root = context.resolve_path(input_path)
     real_root = context.real_root_for(input_path)
+    limit = _get_limit(input)
 
     setuid_files: list[str] = []
     setgid_files: list[str] = []
@@ -282,9 +290,9 @@ async def _handle_check_setuid_binaries(input: dict, context: ToolContext) -> st
                 owner = f"gid={st.st_gid}"
                 setgid_files.append(f"  SETGID  {oct(mode)[-4:]}  {owner}  {rel}")
 
-            if len(setuid_files) + len(setgid_files) >= MAX_RESULTS:
+            if len(setuid_files) + len(setgid_files) >= limit:
                 break
-        if len(setuid_files) + len(setgid_files) >= MAX_RESULTS:
+        if len(setuid_files) + len(setgid_files) >= limit:
             break
 
     lines: list[str] = []
@@ -435,7 +443,8 @@ async def _handle_analyze_init_scripts(input: dict, context: ToolContext) -> str
     if raw_entries:
         lines.append(f"All init entries found ({len(raw_entries)}):")
         lines.append("")
-        lines.extend(raw_entries[:MAX_RESULTS])
+        init_limit = _get_limit(input)
+        lines.extend(raw_entries[:init_limit])
     else:
         lines.append("No init scripts, inittab, or systemd units found.")
 
@@ -464,6 +473,7 @@ async def _handle_check_filesystem_permissions(input: dict, context: ToolContext
     input_path = input.get("path") or "/"
     search_root = context.resolve_path(input_path)
     real_root = context.real_root_for(input_path)
+    limit = _get_limit(input)
 
     world_writable: list[str] = []
     sensitive_weak: list[str] = []
@@ -509,9 +519,9 @@ async def _handle_check_filesystem_permissions(input: dict, context: ToolContext
                         )
 
             total = len(world_writable) + len(sensitive_weak)
-            if total >= MAX_RESULTS:
+            if total >= limit:
                 break
-        if len(world_writable) + len(sensitive_weak) >= MAX_RESULTS:
+        if len(world_writable) + len(sensitive_weak) >= limit:
             break
 
     lines: list[str] = []
@@ -581,9 +591,9 @@ def _find_cert_files(extracted_root: str, search_path: str | None) -> list[str]:
                 _, ext = os.path.splitext(name)
                 if ext.lower() in _CERT_EXTENSIONS:
                     cert_files.append(os.path.join(dirpath, name))
-                if len(cert_files) >= MAX_RESULTS:
+                if len(cert_files) >= 10000:
                     break
-            if len(cert_files) >= MAX_RESULTS:
+            if len(cert_files) >= 10000:
                 break
 
     return cert_files
@@ -738,7 +748,7 @@ async def _handle_analyze_certificate(input: dict, context: ToolContext) -> str:
         return "No certificate files found in the firmware filesystem."
 
     results: list[dict] = []
-    for cert_file in cert_files[:MAX_RESULTS]:
+    for cert_file in cert_files:
         try:
             with open(cert_file, "rb") as f:
                 cert_data = f.read(100_000)  # 100KB limit per cert
@@ -2315,6 +2325,10 @@ def register_security_tools(registry: ToolRegistry) -> None:
                     "type": "string",
                     "description": "Path to the configuration file to analyze (e.g. '/etc/shadow', '/etc/ssh/sshd_config')",
                 },
+                "max_results": {
+                    "type": "integer",
+                    "description": "Maximum results to return (default: 100, set to 0 for all)",
+                },
             },
             "required": ["path"],
         },
@@ -2334,6 +2348,10 @@ def register_security_tools(registry: ToolRegistry) -> None:
                 "path": {
                     "type": "string",
                     "description": "Directory to scan (default: entire filesystem)",
+                },
+                "max_results": {
+                    "type": "integer",
+                    "description": "Maximum results to return (default: 100, set to 0 for all)",
                 },
             },
             "required": [],
@@ -2356,6 +2374,10 @@ def register_security_tools(registry: ToolRegistry) -> None:
                     "type": "string",
                     "description": "Root directory to scan (default: entire filesystem)",
                 },
+                "max_results": {
+                    "type": "integer",
+                    "description": "Maximum results to return (default: 100, set to 0 for all)",
+                },
             },
             "required": [],
         },
@@ -2376,6 +2398,10 @@ def register_security_tools(registry: ToolRegistry) -> None:
                 "path": {
                     "type": "string",
                     "description": "Directory to scan (default: entire filesystem)",
+                },
+                "max_results": {
+                    "type": "integer",
+                    "description": "Maximum results to return (default: 100, set to 0 for all)",
                 },
             },
             "required": [],

@@ -1,6 +1,6 @@
 # Plan: SBOM CPE Enrichment Across All Firmware Types
 
-**Priority:** High | **Effort:** Medium (~10h) | **Status:** partially implemented
+**Priority:** High | **Effort:** Medium (~10h) | **Status:** completed (2026-04-07)
 **Route:** `/citadel:archon` (3 phases)
 
 ## Problem

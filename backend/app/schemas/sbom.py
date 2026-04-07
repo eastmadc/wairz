@@ -30,6 +30,17 @@ class SbomComponentResponse(BaseModel):
     vulnerability_count: int = 0
     created_at: datetime
 
+    @computed_field
+    @property
+    def enrichment_source(self) -> str | None:
+        return self.metadata.get("enrichment_source")
+
+    @computed_field
+    @property
+    def cpe_confidence(self) -> float | None:
+        val = self.metadata.get("cpe_confidence")
+        return float(val) if val is not None else None
+
 
 class SbomGenerateResponse(BaseModel):
     components: list[SbomComponentResponse]

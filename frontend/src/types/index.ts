@@ -209,6 +209,16 @@ export interface FindingUpdate {
 export type DetectionSource = 'package_manager' | 'binary_strings' | 'library_soname' | 'kernel_modules' | 'config_file'
 export type DetectionConfidence = 'high' | 'medium' | 'low'
 
+export type EnrichmentSource =
+  | 'scanner'
+  | 'exact_match'
+  | 'local_fuzzy'
+  | 'nvd_exact'
+  | 'nvd_fuzzy'
+  | 'inherited'
+  | 'android_sdk'
+  | 'none'
+
 export interface SbomComponent {
   id: string
   firmware_id: string
@@ -224,6 +234,8 @@ export interface SbomComponent {
   metadata: Record<string, unknown>
   vulnerability_count: number
   created_at: string
+  enrichment_source: EnrichmentSource | null
+  cpe_confidence: number | null
 }
 
 export type VulnerabilityResolutionStatus = 'open' | 'resolved' | 'ignored' | 'false_positive'
