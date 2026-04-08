@@ -534,6 +534,199 @@ def _scan_noseyparker(root: str, findings: list[SecurityFinding]) -> None:
 
 
 # ---------------------------------------------------------------------------
+# ShellCheck scanner (optional — runs if shellcheck binary is installed)
+# ---------------------------------------------------------------------------
+
+def _scan_shellcheck(root: str, findings: list[SecurityFinding]) -> None:
+    """Run ShellCheck on shell scripts found in the firmware."""
+    import json
+    import subprocess
+    from shutil import which
+
+    if not which("shellcheck"):
+        logger.debug("shellcheck not installed — skipping")
+        return
+
+    # Discover shell scripts
+    shell_extensions = {".sh", ".ash"}
+    shebang_patterns = {b"/bin/sh", b"/bin/bash", b"/bin/ash", b"/usr/bin/env sh", b"/usr/bin/env bash"}
+    script_dirs = {"etc/init.d", "www/cgi-bin"}
+
+    scripts: list[str] = []
+    for dirpath, _dirs, files in os.walk(root):
+        if len(scripts) >= 100:
+            break
+        rel_dir = os.path.relpath(dirpath, root)
+        in_script_dir = any(
+            rel_dir == sd or rel_dir.startswith(sd + os.sep) for sd in script_dirs
+        )
+        for name in files:
+            if len(scripts) >= 100:
+                break
+            abs_path = os.path.join(dirpath, name)
+            if not os.path.isfile(abs_path):
+                continue
+            _, ext = os.path.splitext(name.lower())
+            if ext in shell_extensions or in_script_dir:
+                scripts.append(abs_path)
+                continue
+            try:
+                with open(abs_path, "rb") as f:
+                    header = f.read(2)
+                    if header == b"#!":
+                        first_line = (header + f.readline(256)).strip()
+                        if any(pat in first_line for pat in shebang_patterns):
+                            scripts.append(abs_path)
+            except OSError:
+                continue
+
+    if not scripts:
+        return
+
+    # Security-relevant SC codes mapped to CWEs
+    sc_cwe_map = {
+        2086: ("CWE-78", "Unquoted variable — command injection"),
+        2091: ("CWE-78", "Command substitution used as condition"),
+        2046: ("CWE-78", "Unquoted $(…) — word splitting"),
+    }
+
+    count = 0
+    for script_path in scripts:
+        if count >= MAX_FINDINGS_PER_CHECK:
+            break
+        try:
+            proc = subprocess.run(
+                ["shellcheck", "-f", "json1", "-S", "warning", "-s", "sh", script_path],
+                capture_output=True, timeout=30, text=True,
+            )
+        except (subprocess.TimeoutExpired, OSError):
+            continue
+
+        if not proc.stdout:
+            continue
+
+        try:
+            data = json.loads(proc.stdout)
+            comments = data.get("comments", [])
+        except json.JSONDecodeError:
+            continue
+
+        for c in comments:
+            sc_code = c.get("code", 0)
+            if sc_code not in sc_cwe_map:
+                continue
+            if count >= MAX_FINDINGS_PER_CHECK:
+                break
+            cwe_id, desc = sc_cwe_map[sc_code]
+            level = c.get("level", "warning")
+            severity_map = {"error": "high", "warning": "medium", "info": "low", "style": "info"}
+            rel_path = _rel(script_path, root)
+            findings.append(SecurityFinding(
+                title=f"SC{sc_code}: {desc} in {os.path.basename(script_path)}",
+                severity=severity_map.get(level, "medium"),
+                description=f"ShellCheck SC{sc_code}: {c.get('message', '')}",
+                evidence=None,
+                file_path=rel_path,
+                line_number=c.get("line"),
+                cwe_ids=[cwe_id],
+            ))
+            count += 1
+
+
+# ---------------------------------------------------------------------------
+# Bandit scanner (optional — runs if bandit binary is installed)
+# ---------------------------------------------------------------------------
+
+def _scan_bandit(root: str, findings: list[SecurityFinding]) -> None:
+    """Run Bandit on Python scripts found in the firmware."""
+    import json
+    import subprocess
+    from shutil import which
+
+    bandit_bin = which("bandit") or which("bandit", path="/app/.venv/bin")
+    if not bandit_bin:
+        logger.debug("bandit not installed — skipping")
+        return
+
+    # Discover Python scripts
+    py_extensions = {".py", ".pyw"}
+    shebang_patterns = {b"/usr/bin/python", b"/usr/bin/env python", b"/usr/bin/python3", b"/usr/bin/env python3"}
+
+    scripts: list[str] = []
+    for dirpath, _dirs, files in os.walk(root):
+        if len(scripts) >= 100:
+            break
+        for name in files:
+            if len(scripts) >= 100:
+                break
+            abs_path = os.path.join(dirpath, name)
+            if not os.path.isfile(abs_path):
+                continue
+            _, ext = os.path.splitext(name.lower())
+            if ext in py_extensions:
+                scripts.append(abs_path)
+                continue
+            try:
+                with open(abs_path, "rb") as f:
+                    header = f.read(2)
+                    if header == b"#!":
+                        first_line = (header + f.readline(256)).strip()
+                        if any(pat in first_line for pat in shebang_patterns):
+                            scripts.append(abs_path)
+            except OSError:
+                continue
+
+    if not scripts:
+        return
+
+    try:
+        proc = subprocess.run(
+            [bandit_bin, "-f", "json", "-ll", "-ii"] + scripts,
+            capture_output=True, timeout=60, text=True,
+        )
+    except (subprocess.TimeoutExpired, OSError) as e:
+        logger.warning("bandit execution failed: %s", e)
+        return
+
+    if not proc.stdout:
+        return
+
+    try:
+        data = json.loads(proc.stdout)
+    except json.JSONDecodeError:
+        return
+
+    results = data.get("results", [])
+    severity_map = {"HIGH": "high", "MEDIUM": "medium", "LOW": "low"}
+    count = 0
+
+    for r in results:
+        if count >= MAX_FINDINGS_PER_CHECK:
+            break
+        test_id = r.get("test_id", "?")
+        test_name = r.get("test_name", "unknown")
+        issue_text = r.get("issue_text", "")
+        file_path = r.get("filename", "")
+        line_num = r.get("line_number")
+        sev = r.get("issue_severity", "MEDIUM")
+        issue_cwe = r.get("issue_cwe", {})
+        cwe_id = f"CWE-{issue_cwe['id']}" if issue_cwe.get("id") else None
+
+        if file_path.startswith(root):
+            file_path = _rel(file_path, root)
+
+        findings.append(SecurityFinding(
+            title=f"[Bandit {test_id}] {test_name}: {issue_text[:80]}",
+            severity=severity_map.get(sev, "medium"),
+            description=f"Bandit {test_id} ({test_name}): {issue_text}",
+            file_path=file_path,
+            line_number=line_num,
+            cwe_ids=[cwe_id] if cwe_id else None,
+        ))
+        count += 1
+
+
+# ---------------------------------------------------------------------------
 # Main scan orchestrator
 # ---------------------------------------------------------------------------
 
@@ -557,6 +750,8 @@ def run_security_audit(extracted_root: str) -> ScanResult:
         # Optional external scanners — silently skip if not installed
         ("trufflehog", _scan_trufflehog),
         ("noseyparker", _scan_noseyparker),
+        ("shellcheck", _scan_shellcheck),
+        ("bandit", _scan_bandit),
     ]
 
     for name, func in checks:

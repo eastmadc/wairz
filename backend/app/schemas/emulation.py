@@ -149,6 +149,7 @@ class SystemEmulationStatusResponse(BaseModel):
     firmware_ip: str | None = None
     nvram_state: dict | None = None
     idle_since: datetime | None = None
+    pcap_path: str | None = None
 
 
 class SystemCommandRequest(BaseModel):
@@ -167,5 +168,62 @@ class NetworkCaptureRequest(BaseModel):
     interface: str = "eth0"
 
 
+class NetworkCaptureResponse(BaseModel):
+    packet_count: int
+    pcap_path: str
+    size_bytes: int
+    duration: int
+
+
 class NvramResponse(BaseModel):
     nvram: dict[str, str]
+
+
+# ── Pcap Analysis ──
+
+
+class ProtocolBreakdownResponse(BaseModel):
+    protocol: str
+    packet_count: int
+    percentage: float
+
+
+class ConversationResponse(BaseModel):
+    src: str
+    src_port: int
+    dst: str
+    dst_port: int
+    protocol: str
+    packet_count: int
+    byte_count: int
+
+
+class InsecureProtocolResponse(BaseModel):
+    protocol: str
+    port: int
+    severity: str
+    description: str
+    evidence: str
+    packet_count: int
+
+
+class DnsQueryResponse(BaseModel):
+    domain: str
+    query_type: str
+    resolved_ips: list[str]
+
+
+class TlsInfoResponse(BaseModel):
+    server: str
+    port: int
+    version: str
+    cipher_suites: list[str]
+
+
+class PcapAnalysisResponse(BaseModel):
+    total_packets: int
+    protocol_breakdown: list[ProtocolBreakdownResponse]
+    conversations: list[ConversationResponse]
+    insecure_findings: list[InsecureProtocolResponse]
+    dns_queries: list[DnsQueryResponse]
+    tls_info: list[TlsInfoResponse]

@@ -12,6 +12,7 @@ import {
   Save,
   BookOpen,
   Server,
+  Network,
 } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -33,6 +34,7 @@ import KernelManager from '@/components/emulation/KernelManager'
 import { SessionCard } from '@/components/emulation/SessionCard'
 import { EmulationTerminal } from '@/components/emulation/EmulationTerminal'
 import { SystemEmulationPanel } from '@/components/emulation/SystemEmulationPanel'
+import { NetworkTrafficPanel } from '@/components/emulation/NetworkTrafficPanel'
 import { extractErrorMessage } from '@/utils/error'
 import { useEventStream } from '@/hooks/useEventStream'
 import type {
@@ -83,6 +85,7 @@ export default function EmulationPage() {
   // Active session + terminal
   const [activeSession, setActiveSession] = useState<EmulationSession | null>(null)
   const [showTerminal, setShowTerminal] = useState(false)
+  const [systemSubTab, setSystemSubTab] = useState<'terminal' | 'network'>('terminal')
 
   const activeSessionRef = useRef(activeSession)
   activeSessionRef.current = activeSession
@@ -385,23 +388,75 @@ export default function EmulationPage() {
             />
           </div>
 
-          {/* Terminal area */}
-          <div className="relative flex-1 bg-[#0a0a0b]">
-            {showTerminal && activeSession && projectId ? (
-              <EmulationTerminal
-                projectId={projectId}
-                session={activeSession}
-                onClose={() => setShowTerminal(false)}
-              />
-            ) : (
-              <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
-                <div className="text-center">
-                  <Server className="mx-auto mb-3 h-10 w-10 text-muted-foreground/30" />
-                  <p>Start system emulation or connect to a running session</p>
-                  <p className="mt-1 text-xs text-muted-foreground/60">
-                    The terminal will appear here when a system emulation session is active
-                  </p>
-                </div>
+          {/* Right panel: sub-tabs for Terminal and Network Traffic */}
+          <div className="flex flex-1 flex-col overflow-hidden">
+            {/* Sub-tab bar */}
+            <div className="flex items-center gap-1 border-b border-border bg-background px-3 py-1.5">
+              <button
+                onClick={() => setSystemSubTab('terminal')}
+                className={`flex items-center gap-1.5 rounded px-2.5 py-1 text-xs font-medium transition-colors ${
+                  systemSubTab === 'terminal'
+                    ? 'bg-primary/10 text-primary'
+                    : 'text-muted-foreground hover:text-foreground hover:bg-accent'
+                }`}
+              >
+                <TerminalSquare className="h-3 w-3" />
+                Terminal
+              </button>
+              <button
+                onClick={() => setSystemSubTab('network')}
+                className={`flex items-center gap-1.5 rounded px-2.5 py-1 text-xs font-medium transition-colors ${
+                  systemSubTab === 'network'
+                    ? 'bg-primary/10 text-primary'
+                    : 'text-muted-foreground hover:text-foreground hover:bg-accent'
+                }`}
+              >
+                <Network className="h-3 w-3" />
+                Network Traffic
+              </button>
+            </div>
+
+            {/* Sub-tab content */}
+            {systemSubTab === 'terminal' && (
+              <div className="relative flex-1 bg-[#0a0a0b]">
+                {showTerminal && activeSession && projectId ? (
+                  <EmulationTerminal
+                    projectId={projectId}
+                    session={activeSession}
+                    onClose={() => setShowTerminal(false)}
+                  />
+                ) : (
+                  <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+                    <div className="text-center">
+                      <Server className="mx-auto mb-3 h-10 w-10 text-muted-foreground/30" />
+                      <p>Start system emulation or connect to a running session</p>
+                      <p className="mt-1 text-xs text-muted-foreground/60">
+                        The terminal will appear here when a system emulation session is active
+                      </p>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {systemSubTab === 'network' && (
+              <div className="flex-1 overflow-hidden bg-background">
+                {activeSession && projectId ? (
+                  <NetworkTrafficPanel
+                    projectId={projectId}
+                    sessionId={activeSession.id}
+                  />
+                ) : (
+                  <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+                    <div className="text-center">
+                      <Network className="mx-auto mb-3 h-10 w-10 text-muted-foreground/30" />
+                      <p>Start system emulation to capture network traffic</p>
+                      <p className="mt-1 text-xs text-muted-foreground/60">
+                        Capture and analyze protocols, DNS queries, and insecure services
+                      </p>
+                    </div>
+                  </div>
+                )}
               </div>
             )}
           </div>
