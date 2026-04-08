@@ -2887,7 +2887,7 @@ async def _handle_capture_network_traffic(input: dict, context: ToolContext) -> 
 
     svc = SystemEmulationService(context.db)
     try:
-        output = await svc.capture_network_traffic(
+        capture_result = await svc.capture_network_traffic(
             session_id=UUID(session_id),
             duration=duration,
             interface=interface,
@@ -2895,12 +2895,17 @@ async def _handle_capture_network_traffic(input: dict, context: ToolContext) -> 
     except ValueError as exc:
         return f"Error: {exc}"
 
-    settings = get_settings()
-    max_bytes = settings.max_tool_output_kb * 1024
-    if len(output) > max_bytes:
-        output = output[:max_bytes] + f"\n... [output truncated at {settings.max_tool_output_kb}KB]"
+    packet_count = capture_result["packet_count"]
+    pcap_path = capture_result["pcap_path"]
+    size_bytes = capture_result["size_bytes"]
 
-    return f"=== Network Capture ({duration}s on {interface}) ===\n{output}"
+    size_kb = size_bytes / 1024
+    return (
+        f"=== Network Capture ({duration}s on {interface}) ===\n"
+        f"Packets captured: {packet_count}\n"
+        f"Pcap file: {pcap_path} ({size_kb:.1f} KB)\n"
+        f"Download via REST: GET /api/v1/projects/{{project_id}}/emulation/system/{{session_id}}/pcap"
+    )
 
 
 async def _handle_get_nvram_state(input: dict, context: ToolContext) -> str:

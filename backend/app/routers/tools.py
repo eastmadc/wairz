@@ -86,6 +86,8 @@ ALLOWED_TOOLS: set[str] = {
     "check_selinux_enforcement",
     "check_compliance",
     "scan_scripts",
+    "shellcheck_scan",
+    "bandit_scan",
     "check_secure_boot",
     # SBOM (read-only)
     "generate_sbom",
@@ -116,6 +118,12 @@ ALLOWED_TOOLS: set[str] = {
     "extract_nvram_variables",
     "identify_uefi_module",
     "read_uefi_module",
+    # Network analysis (read-only)
+    "analyze_network_traffic",
+    "get_protocol_breakdown",
+    "identify_insecure_protocols",
+    "get_dns_queries",
+    "get_network_conversations",
     # Emulation (status queries only)
     "check_emulation_status",
     "get_emulation_logs",

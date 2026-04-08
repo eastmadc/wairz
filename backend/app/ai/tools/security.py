@@ -20,6 +20,7 @@ from pathlib import Path
 
 from app.ai.tool_registry import ToolContext, ToolRegistry
 from app.utils.sandbox import safe_walk, validate_path
+from app.utils.truncation import truncate_output
 
 logger = logging.getLogger(__name__)
 
@@ -1848,6 +1849,392 @@ async def _handle_scan_scripts(input: dict, context: ToolContext) -> str:
 
 
 # ---------------------------------------------------------------------------
+# shellcheck_scan (ShellCheck)
+# ---------------------------------------------------------------------------
+
+# Map security-relevant ShellCheck codes to CWEs
+_SC_CWE_MAP: dict[int, tuple[str, str]] = {
+    2086: ("CWE-78", "Unquoted variable — word splitting → command injection risk"),
+    2091: ("CWE-78", "Quoting command substitution used as condition"),
+    2046: ("CWE-78", "Unquoted $(…) — word splitting → command injection risk"),
+    2059: ("CWE-134", "printf format string from variable"),
+    2155: ("CWE-252", "local var=$(cmd) masks return code"),
+}
+
+
+async def _discover_shell_scripts(
+    target_path: str, max_files: int
+) -> list[str]:
+    """Discover shell scripts by extension, shebang, and well-known paths."""
+    scripts: list[str] = []
+    seen: set[str] = set()
+
+    shell_extensions = {".sh", ".ash"}
+    shebang_patterns = {b"/bin/sh", b"/bin/bash", b"/bin/ash", b"/usr/bin/env sh", b"/usr/bin/env bash"}
+    # Directories where ALL files are likely scripts
+    script_dirs = {"etc/init.d", "www/cgi-bin"}
+
+    for dirpath, _dirs, files in safe_walk(target_path):
+        if len(scripts) >= max_files:
+            break
+        rel_dir = os.path.relpath(dirpath, target_path)
+        in_script_dir = any(
+            rel_dir == sd or rel_dir.startswith(sd + os.sep) for sd in script_dirs
+        )
+
+        for name in files:
+            if len(scripts) >= max_files:
+                break
+            abs_path = os.path.join(dirpath, name)
+            if abs_path in seen or not os.path.isfile(abs_path):
+                continue
+
+            # Check extension
+            _, ext = os.path.splitext(name.lower())
+            if ext in shell_extensions or in_script_dir:
+                seen.add(abs_path)
+                scripts.append(abs_path)
+                continue
+
+            # Check shebang
+            try:
+                with open(abs_path, "rb") as f:
+                    header = f.read(2)
+                    if header == b"#!":
+                        first_line = (header + f.readline(256)).strip()
+                        if any(pat in first_line for pat in shebang_patterns):
+                            seen.add(abs_path)
+                            scripts.append(abs_path)
+            except OSError:
+                continue
+
+    return scripts
+
+
+async def _handle_shellcheck_scan(input: dict, context: ToolContext) -> str:
+    """Run ShellCheck static analysis on shell scripts."""
+
+    if not shutil.which("shellcheck"):
+        return (
+            "Error: shellcheck is not installed. "
+            "Install it with: apt-get install -y shellcheck  "
+            "(or download the static binary from https://github.com/koalaman/shellcheck)"
+        )
+
+    # Resolve target path
+    target_rel = input.get("path") or "/"
+    target_path = context.resolve_path(target_rel)
+
+    if not os.path.isdir(target_path):
+        return (
+            f"Error: path '{target_rel}' is not a directory "
+            "in the firmware filesystem."
+        )
+
+    severity = input.get("severity", "warning")
+    shell = input.get("shell", "sh")
+    max_files = input.get("max_files", 100)
+
+    # Discover shell scripts
+    scripts = await _discover_shell_scripts(target_path, max_files)
+    if not scripts:
+        return "No shell scripts found in the target path."
+
+    # Run ShellCheck on each script
+    all_results: list[dict] = []
+    errors: list[str] = []
+    extracted_root = context.extracted_path
+
+    for script_path in scripts:
+        cmd = [
+            "shellcheck", "-f", "json1",
+            "-S", severity,
+            "-s", shell,
+            script_path,
+        ]
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, stderr = await asyncio.wait_for(
+                proc.communicate(), timeout=30
+            )
+        except asyncio.TimeoutError:
+            rel = _rel(script_path, extracted_root)
+            errors.append(f"Timeout scanning {rel}")
+            continue
+        except Exception as exc:
+            rel = _rel(script_path, extracted_root)
+            errors.append(f"Error scanning {rel}: {exc}")
+            continue
+
+        if not stdout:
+            continue
+
+        try:
+            data = json.loads(stdout)
+            comments = data.get("comments", [])
+            for c in comments:
+                c["file"] = script_path
+            all_results.extend(comments)
+        except json.JSONDecodeError:
+            continue
+
+    # Format output
+    lines: list[str] = []
+
+    if errors:
+        for err in errors[:5]:
+            lines.append(f"Warning: {err}")
+        if len(errors) > 5:
+            lines.append(f"  ... and {len(errors) - 5} more warnings")
+        lines.append("")
+
+    lines.append(f"ShellCheck scan complete: {len(all_results)} finding(s) in {len(scripts)} script(s)")
+    lines.append("")
+
+    if not all_results:
+        lines.append("No issues detected in scanned scripts.")
+        return "\n".join(lines)
+
+    # Group by severity, then by SC code
+    by_severity: dict[str, dict[int, list[dict]]] = {}
+    for r in all_results:
+        level = r.get("level", "warning")
+        code = r.get("code", 0)
+        by_severity.setdefault(level, {}).setdefault(code, []).append(r)
+
+    severity_order = ["error", "warning", "info", "style"]
+    for sev in severity_order:
+        if sev not in by_severity:
+            continue
+        by_code = by_severity[sev]
+        total = sum(len(v) for v in by_code.values())
+        lines.append(f"== {sev.upper()} ({total}) ==")
+
+        for code, findings in sorted(by_code.items()):
+            cwe_info = _SC_CWE_MAP.get(code)
+            cwe_label = f" [{cwe_info[0]}]" if cwe_info else ""
+            lines.append(f"  SC{code}{cwe_label} ({len(findings)} occurrence(s))")
+            if cwe_info:
+                lines.append(f"    Security: {cwe_info[1]}")
+
+            for f in findings[:10]:
+                file_path = _rel(f.get("file", ""), extracted_root)
+                line_num = f.get("line", "?")
+                end_line = f.get("endLine", "?")
+                message = f.get("message", "")
+                lines.append(f"    {file_path}:{line_num}-{end_line}")
+                if message:
+                    lines.append(f"      {message}")
+            if len(findings) > 10:
+                lines.append(f"    ... and {len(findings) - 10} more")
+            lines.append("")
+
+    return truncate_output("\n".join(lines))
+
+
+# ---------------------------------------------------------------------------
+# bandit_scan (Bandit)
+# ---------------------------------------------------------------------------
+
+# Key Bandit test IDs for firmware security
+_BANDIT_HIGHLIGHT: dict[str, tuple[str, str]] = {
+    "B102": ("CWE-78", "exec_used"),
+    "B103": ("CWE-732", "set_bad_file_permissions"),
+    "B104": ("CWE-200", "hardcoded_bind_all_interfaces"),
+    "B105": ("CWE-259", "hardcoded_password_string"),
+    "B106": ("CWE-259", "hardcoded_password_funcarg"),
+    "B107": ("CWE-259", "hardcoded_password_default"),
+    "B301": ("CWE-502", "pickle"),
+    "B602": ("CWE-78", "subprocess_popen_with_shell_equals_true"),
+    "B501": ("CWE-295", "ssl_no_verify"),
+}
+
+
+async def _discover_python_scripts(
+    target_path: str, max_files: int
+) -> list[str]:
+    """Discover Python scripts by extension and shebang."""
+    scripts: list[str] = []
+    seen: set[str] = set()
+    py_extensions = {".py", ".pyw"}
+    shebang_patterns = {b"/usr/bin/python", b"/usr/bin/env python", b"/usr/bin/python3", b"/usr/bin/env python3"}
+
+    for dirpath, _dirs, files in safe_walk(target_path):
+        if len(scripts) >= max_files:
+            break
+        for name in files:
+            if len(scripts) >= max_files:
+                break
+            abs_path = os.path.join(dirpath, name)
+            if abs_path in seen or not os.path.isfile(abs_path):
+                continue
+
+            _, ext = os.path.splitext(name.lower())
+            if ext in py_extensions:
+                seen.add(abs_path)
+                scripts.append(abs_path)
+                continue
+
+            # Check shebang
+            try:
+                with open(abs_path, "rb") as f:
+                    header = f.read(2)
+                    if header == b"#!":
+                        first_line = (header + f.readline(256)).strip()
+                        if any(pat in first_line for pat in shebang_patterns):
+                            seen.add(abs_path)
+                            scripts.append(abs_path)
+            except OSError:
+                continue
+
+    return scripts
+
+
+async def _handle_bandit_scan(input: dict, context: ToolContext) -> str:
+    """Run Bandit Python security linter on Python scripts in firmware."""
+
+    bandit_bin = shutil.which("bandit") or shutil.which("bandit", path="/app/.venv/bin")
+    if not bandit_bin:
+        return (
+            "Error: bandit is not installed. "
+            "Install it with: pip install bandit  "
+            "(or add bandit>=1.7 to pyproject.toml dependencies)"
+        )
+
+    # Resolve target path
+    target_rel = input.get("path") or "/"
+    target_path = context.resolve_path(target_rel)
+
+    if not os.path.isdir(target_path):
+        return (
+            f"Error: path '{target_rel}' is not a directory "
+            "in the firmware filesystem."
+        )
+
+    severity = input.get("severity", "low")
+    confidence = input.get("confidence", "medium")
+    max_files = input.get("max_files", 100)
+
+    # Discover Python scripts
+    scripts = await _discover_python_scripts(target_path, max_files)
+    if not scripts:
+        return "No Python scripts found in the target path."
+
+    # Map severity to bandit -l flags
+    severity_flag = {"low": "-l", "medium": "-ll", "high": "-lll"}.get(severity, "-l")
+    confidence_flag = {"low": "-i", "medium": "-ii", "high": "-iii"}.get(confidence, "-ii")
+
+    # Run Bandit on the target path (it handles recursion itself)
+    # Feed it the list of discovered files to avoid scanning non-Python files
+    cmd = [
+        bandit_bin,
+        "-f", "json",
+        severity_flag,
+        confidence_flag,
+    ] + scripts
+
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await asyncio.wait_for(
+            proc.communicate(), timeout=60
+        )
+    except asyncio.TimeoutError:
+        return (
+            "Error: Bandit scan timed out after 60 seconds. "
+            "Try scanning a smaller directory or fewer files."
+        )
+    except Exception as exc:
+        return f"Error running bandit: {exc}"
+
+    # Parse JSON output
+    try:
+        data = json.loads(stdout)
+    except json.JSONDecodeError:
+        err_msg = (
+            stderr.decode(errors="replace").strip()
+            if stderr else "unknown error"
+        )
+        # Bandit exits non-zero when it finds issues — that's normal
+        if not stdout:
+            return f"Bandit produced no output. stderr: {err_msg}"
+        return f"Error: could not parse Bandit output. stderr: {err_msg}"
+
+    results = data.get("results", [])
+    metrics = data.get("metrics", {})
+    extracted_root = context.extracted_path
+
+    # Format output
+    lines: list[str] = []
+
+    # Summary from metrics
+    total_metrics = metrics.get("_totals", {})
+    loc = total_metrics.get("loc", 0)
+    lines.append(f"Bandit scan complete: {len(results)} finding(s) in {len(scripts)} script(s) ({loc} lines of code)")
+    lines.append("")
+
+    if not results:
+        lines.append("No issues detected in scanned Python scripts.")
+        return "\n".join(lines)
+
+    # Group by severity
+    by_severity: dict[str, list[dict]] = {}
+    for r in results:
+        sev = r.get("issue_severity", "LOW")
+        by_severity.setdefault(sev, []).append(r)
+
+    severity_order = ["HIGH", "MEDIUM", "LOW"]
+    for sev in severity_order:
+        if sev not in by_severity:
+            continue
+        findings = by_severity[sev]
+        lines.append(f"== {sev} SEVERITY ({len(findings)}) ==")
+
+        for f in findings[:25]:
+            test_id = f.get("test_id", "?")
+            test_name = f.get("test_name", "unknown")
+            issue_text = f.get("issue_text", "")
+            file_path = f.get("filename", "")
+            line_num = f.get("line_number", "?")
+            conf = f.get("issue_confidence", "?")
+            issue_cwe = f.get("issue_cwe", {})
+            cwe_id = f"CWE-{issue_cwe.get('id', '')}" if issue_cwe.get("id") else ""
+
+            # Use known CWE mapping if bandit didn't provide one
+            if not cwe_id and test_id in _BANDIT_HIGHLIGHT:
+                cwe_id = _BANDIT_HIGHLIGHT[test_id][0]
+
+            # Make path relative to firmware root
+            if file_path.startswith(os.path.realpath(extracted_root)):
+                file_path = _rel(file_path, extracted_root)
+
+            cwe_label = f" [{cwe_id}]" if cwe_id else ""
+            lines.append(f"  [{test_id}] {test_name}{cwe_label} (confidence: {conf})")
+            lines.append(f"    File: {file_path}:{line_num}")
+            if issue_text:
+                lines.append(f"    {issue_text}")
+
+            # Add firmware-specific context for highlighted tests
+            if test_id in _BANDIT_HIGHLIGHT:
+                _, desc = _BANDIT_HIGHLIGHT[test_id]
+                lines.append(f"    Firmware risk: {desc}")
+            lines.append("")
+
+        if len(findings) > 25:
+            lines.append(f"  ... and {len(findings) - 25} more")
+            lines.append("")
+
+    return truncate_output("\n".join(lines))
+
+
+# ---------------------------------------------------------------------------
 # check_secure_boot
 # ---------------------------------------------------------------------------
 
@@ -2648,6 +3035,108 @@ def register_security_tools(registry: ToolRegistry) -> None:
             "required": [],
         },
         handler=_handle_scan_scripts,
+    )
+
+    # ----- ShellCheck static analysis -----
+
+    registry.register(
+        name="shellcheck_scan",
+        description=(
+            "Run ShellCheck static analysis on shell scripts to find command "
+            "injection via unquoted variables, unsafe patterns, and quoting "
+            "bugs. Complementary to scan_scripts (Semgrep). Discovers scripts "
+            "by extension (.sh, .ash), shebang (#!), and well-known paths "
+            "(/etc/init.d/, /www/cgi-bin/). Maps security-relevant SC codes "
+            "to CWEs (SC2086 → CWE-78, etc.). Requires shellcheck CLI."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": (
+                        "Directory to scan within the firmware filesystem "
+                        "(e.g. '/etc/init.d', '/usr/bin'). "
+                        "Defaults to the entire firmware root."
+                    ),
+                },
+                "severity": {
+                    "type": "string",
+                    "enum": ["error", "warning", "info", "style"],
+                    "description": (
+                        "Minimum severity level to report. "
+                        "Default: 'warning'."
+                    ),
+                },
+                "shell": {
+                    "type": "string",
+                    "enum": ["sh", "bash", "dash", "ksh"],
+                    "description": (
+                        "Shell dialect to assume. Most firmware uses "
+                        "POSIX sh/ash, so default is 'sh'."
+                    ),
+                },
+                "max_files": {
+                    "type": "integer",
+                    "description": (
+                        "Maximum number of scripts to scan. Default: 100."
+                    ),
+                },
+            },
+            "required": [],
+        },
+        handler=_handle_shellcheck_scan,
+    )
+
+    # ----- Bandit Python security linter -----
+
+    registry.register(
+        name="bandit_scan",
+        description=(
+            "Run Bandit Python security linter on Python scripts in firmware. "
+            "Detects command injection (subprocess shell=True, exec, eval), "
+            "hardcoded credentials, insecure crypto, pickle deserialization, "
+            "insecure TLS. Discovers Python scripts by extension (.py, .pyw) "
+            "and shebang. Returns findings with CWE mappings and severity. "
+            "Requires bandit CLI."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": (
+                        "Directory to scan within the firmware filesystem "
+                        "(e.g. '/usr/lib/python3'). "
+                        "Defaults to the entire firmware root."
+                    ),
+                },
+                "severity": {
+                    "type": "string",
+                    "enum": ["low", "medium", "high"],
+                    "description": (
+                        "Minimum severity level to report. "
+                        "Default: 'low' (report all)."
+                    ),
+                },
+                "confidence": {
+                    "type": "string",
+                    "enum": ["low", "medium", "high"],
+                    "description": (
+                        "Minimum confidence level to report. "
+                        "Default: 'medium'."
+                    ),
+                },
+                "max_files": {
+                    "type": "integer",
+                    "description": (
+                        "Maximum number of scripts to scan. Default: 100."
+                    ),
+                },
+            },
+            "required": [],
+        },
+        handler=_handle_bandit_scan,
     )
 
     # ----- Secure boot chain analysis -----

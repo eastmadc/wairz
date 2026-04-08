@@ -197,3 +197,89 @@ export function buildSystemEmulationTerminalURL(
   const host = window.location.host
   return `${proto}//${host}/api/v1/projects/${projectId}/emulation/system/${sessionId}/ws/${port}`
 }
+
+// ── Network Traffic Analysis ──
+
+export interface NetworkCaptureResult {
+  packet_count: number
+  pcap_path: string
+  size_bytes: number
+  duration: number
+}
+
+export interface ProtocolBreakdown {
+  protocol: string
+  packet_count: number
+  percentage: number
+}
+
+export interface NetworkConversation {
+  src: string
+  src_port: number
+  dst: string
+  dst_port: number
+  protocol: string
+  packet_count: number
+  byte_count: number
+}
+
+export interface InsecureProtocolFinding {
+  protocol: string
+  port: number
+  severity: string
+  description: string
+  evidence: string
+  packet_count: number
+}
+
+export interface DnsQueryResult {
+  domain: string
+  query_type: string
+  resolved_ips: string[]
+}
+
+export interface TlsInfoResult {
+  server: string
+  port: number
+  version: string
+  cipher_suites: string[]
+}
+
+export interface PcapAnalysis {
+  total_packets: number
+  protocol_breakdown: ProtocolBreakdown[]
+  conversations: NetworkConversation[]
+  insecure_findings: InsecureProtocolFinding[]
+  dns_queries: DnsQueryResult[]
+  tls_info: TlsInfoResult[]
+}
+
+export async function captureNetworkTraffic(
+  projectId: string,
+  sessionId: string,
+  duration = 10,
+  iface = 'eth0',
+): Promise<NetworkCaptureResult> {
+  const { data } = await apiClient.post<NetworkCaptureResult>(
+    `/projects/${projectId}/emulation/system/${sessionId}/capture`,
+    { duration, interface: iface },
+  )
+  return data
+}
+
+export async function analyzeNetworkTraffic(
+  projectId: string,
+  sessionId: string,
+): Promise<PcapAnalysis> {
+  const { data } = await apiClient.get<PcapAnalysis>(
+    `/projects/${projectId}/emulation/system/${sessionId}/network-analysis`,
+  )
+  return data
+}
+
+export function getPcapDownloadUrl(
+  projectId: string,
+  sessionId: string,
+): string {
+  return `/api/v1/projects/${projectId}/emulation/system/${sessionId}/pcap`
+}

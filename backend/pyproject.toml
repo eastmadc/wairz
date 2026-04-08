@@ -30,6 +30,8 @@ dependencies = [
     "capstone>=5.0.0",
     "aiosqlite>=0.20.0",
     "rapidfuzz>=3.0.0",
+    "scapy>=2.6",
+    "bandit>=1.7",
 ]
 
 [project.scripts]

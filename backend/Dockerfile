@@ -36,6 +36,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libgdk-pixbuf-2.0-0 \
     libffi-dev \
     libyara-dev \
+    shellcheck \
     && rm -rf /var/lib/apt/lists/* \
     && printf '#!/bin/sh\n# Wrapper: translates cramfsck -x <dir> <file> to fsck.cramfs --extract=<dir> <file>\nif [ "$1" = "-x" ]; then shift; dir="$1"; shift; exec fsck.cramfs --extract="$dir" "$@"; fi\nexec fsck.cramfs "$@"\n' > /usr/local/bin/cramfsck \
     && chmod +x /usr/local/bin/cramfsck

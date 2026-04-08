@@ -9,10 +9,12 @@ from app.models.sbom import SbomComponent, SbomVulnerability
 from app.models.emulation_session import EmulationSession
 from app.models.emulation_preset import EmulationPreset
 from app.models.fuzzing import FuzzingCampaign, FuzzingCrash
+from app.models.attack_surface import AttackSurfaceEntry
 
 __all__ = [
     "Project", "Firmware", "Conversation", "AnalysisCache",
     "Finding", "Document", "SecurityReview", "ReviewAgent",
     "SbomComponent", "SbomVulnerability", "EmulationSession",
     "EmulationPreset", "FuzzingCampaign", "FuzzingCrash",
+    "AttackSurfaceEntry",
 ]

@@ -26,6 +26,12 @@ logger = logging.getLogger(__name__)
 _COMMON_SERVICE_PORTS = [80, 443, 22, 23, 53, 8080, 8443, 21, 161, 554]
 
 
+def _write_bytes(path: str, data: bytes) -> None:
+    """Write bytes to a file (used via run_in_executor)."""
+    with open(path, "wb") as f:
+        f.write(data)
+
+
 class SystemEmulationService:
     """Orchestrates FirmAE sidecar for full system emulation."""
 
@@ -533,8 +539,17 @@ class SystemEmulationService:
         session_id: UUID,
         duration: int = 10,
         interface: str = "eth0",
-    ) -> str:
-        """Capture network traffic from the sidecar using tcpdump."""
+    ) -> dict:
+        """Capture network traffic from the sidecar using tcpdump.
+
+        Writes a binary pcap file inside the container, copies it out,
+        and persists it to the project's pcaps directory on disk.
+
+        Returns a dict with packet_count, pcap_path, size_bytes, and duration.
+        """
+        import io
+        import tarfile
+
         result = await self.db.execute(
             select(EmulationSession).where(EmulationSession.id == session_id)
         )
@@ -554,29 +569,76 @@ class SystemEmulationService:
             None, client.containers.get, session.container_id,
         )
 
-        # Run tcpdump with packet count limit as well as timeout
-        cmd = (
-            f"timeout {duration + 5} tcpdump -i {interface} -c 500 "
-            f"-nn -l 2>&1 | head -200 & "
-            f"sleep {duration} && kill %1 2>/dev/null; wait 2>/dev/null; true"
+        # Run tcpdump with binary pcap output inside the container
+        capture_cmd = (
+            f"timeout {duration + 5} tcpdump -i {interface} -c 10000 "
+            f"-w /tmp/capture.pcap not port 22 2>/dev/null & "
+            f"sleep {duration}; kill %1 2>/dev/null; wait 2>/dev/null; true"
         )
 
-        exec_result = await loop.run_in_executor(
+        await loop.run_in_executor(
             None,
             lambda: container.exec_run(
-                ["sh", "-c", cmd],
+                ["sh", "-c", capture_cmd],
                 demux=True,
             ),
         )
 
-        stdout_raw, stderr_raw = exec_result.output if isinstance(exec_result.output, tuple) else (exec_result.output, b"")
-        output = (stdout_raw or b"").decode("utf-8", errors="replace")
-        errors = (stderr_raw or b"").decode("utf-8", errors="replace")
+        # Count packets captured by reading back the pcap
+        count_cmd = "tcpdump -r /tmp/capture.pcap 2>/dev/null | wc -l"
+        count_result = await loop.run_in_executor(
+            None,
+            lambda: container.exec_run(["sh", "-c", count_cmd], demux=True),
+        )
+        stdout_raw = count_result.output[0] if isinstance(count_result.output, tuple) else count_result.output
+        try:
+            packet_count = int((stdout_raw or b"").decode().strip())
+        except (ValueError, AttributeError):
+            packet_count = 0
 
-        if errors and not output:
-            return f"tcpdump error:\n{errors}"
+        # Copy the pcap file out of the container via tar archive
+        try:
+            tar_stream, _stat = await loop.run_in_executor(
+                None,
+                lambda: container.get_archive("/tmp/capture.pcap"),
+            )
+        except docker.errors.NotFound:
+            raise ValueError("Capture failed — no pcap file produced in container")
 
-        return output or "(no traffic captured)"
+        # Extract the pcap bytes from the tar stream
+        tar_bytes = b"".join(tar_stream)
+        tar_buf = io.BytesIO(tar_bytes)
+        with tarfile.open(fileobj=tar_buf, mode="r") as tar:
+            member = tar.getmembers()[0]
+            pcap_data = tar.extractfile(member).read()
+
+        # Save to disk: {storage_root}/projects/{project_id}/pcaps/{session_id}.pcap
+        pcaps_dir = os.path.join(
+            self._settings.storage_root,
+            "projects",
+            str(session.project_id),
+            "pcaps",
+        )
+        os.makedirs(pcaps_dir, exist_ok=True)
+        pcap_file = os.path.join(pcaps_dir, f"{session_id}.pcap")
+
+        await loop.run_in_executor(
+            None,
+            lambda: _write_bytes(pcap_file, pcap_data),
+        )
+
+        size_bytes = len(pcap_data)
+
+        # Update the session's pcap_path column
+        session.pcap_path = pcap_file
+        await self.db.commit()
+
+        return {
+            "packet_count": packet_count,
+            "pcap_path": pcap_file,
+            "size_bytes": size_bytes,
+            "duration": duration,
+        }
 
     async def get_nvram_state(self, session_id: UUID) -> dict[str, str]:
         """Read NVRAM key-value pairs from the running emulation."""

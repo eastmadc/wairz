@@ -51,3 +51,4 @@ class EmulationSession(Base):
     firmware_ip: Mapped[str | None] = mapped_column(String(50), nullable=True)
     nvram_state: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     idle_since: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    pcap_path: Mapped[str | None] = mapped_column(String(512), nullable=True)

@@ -3,8 +3,10 @@
 import asyncio
 import logging
 import uuid
+from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi.responses import FileResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -24,13 +26,16 @@ from app.schemas.emulation import (
     EmulationStartRequest,
     FirmwareServiceResponse,
     NetworkCaptureRequest,
+    NetworkCaptureResponse,
     NvramResponse,
+    PcapAnalysisResponse,
     SystemCommandRequest,
     SystemCommandResponse,
     SystemEmulationStartRequest,
     SystemEmulationStatusResponse,
 )
 from app.services.emulation_service import EmulationService
+from app.services.pcap_analysis_service import PcapAnalysisService
 from app.services.system_emulation_service import SystemEmulationService
 
 logger = logging.getLogger(__name__)
@@ -464,6 +469,7 @@ async def run_command_in_system_emulation(
 
 @router.post(
     "/system/{session_id}/capture",
+    response_model=NetworkCaptureResponse,
 )
 async def capture_network_traffic(
     project_id: uuid.UUID,
@@ -471,7 +477,11 @@ async def capture_network_traffic(
     request: NetworkCaptureRequest,
     db: AsyncSession = Depends(get_db),
 ):
-    """Capture network traffic from the FirmAE emulated firmware."""
+    """Capture network traffic from the FirmAE emulated firmware.
+
+    Returns pcap metadata (packet count, file size). Use the
+    GET .../pcap endpoint to download the binary pcap for Wireshark.
+    """
     result = await db.execute(
         select(EmulationSession).where(EmulationSession.id == session_id)
     )
@@ -481,14 +491,119 @@ async def capture_network_traffic(
 
     svc = SystemEmulationService(db)
     try:
-        output = await svc.capture_network_traffic(
+        capture_result = await svc.capture_network_traffic(
             session_id=session_id,
             duration=request.duration,
             interface=request.interface,
         )
     except ValueError as exc:
         raise HTTPException(400, str(exc))
-    return {"capture": output}
+    return capture_result
+
+
+@router.get(
+    "/system/{session_id}/pcap",
+)
+async def download_pcap(
+    project_id: uuid.UUID,
+    session_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+):
+    """Download the captured pcap file for Wireshark analysis."""
+    result = await db.execute(
+        select(EmulationSession).where(EmulationSession.id == session_id)
+    )
+    session = result.scalar_one_or_none()
+    if not session or session.project_id != project_id:
+        raise HTTPException(404, "Session not found")
+    if not session.pcap_path:
+        raise HTTPException(404, "No pcap capture available for this session")
+
+    pcap_file = Path(session.pcap_path)
+    if not pcap_file.exists():
+        raise HTTPException(404, "Pcap file not found on disk")
+
+    return FileResponse(
+        path=str(pcap_file),
+        media_type="application/vnd.tcpdump.pcap",
+        filename=f"capture_{session_id}.pcap",
+    )
+
+
+@router.get(
+    "/system/{session_id}/network-analysis",
+    response_model=PcapAnalysisResponse,
+)
+async def analyze_network_traffic(
+    project_id: uuid.UUID,
+    session_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+):
+    """Analyze captured network traffic -- protocol breakdown, insecure protocols, DNS."""
+    result = await db.execute(
+        select(EmulationSession).where(EmulationSession.id == session_id)
+    )
+    session = result.scalar_one_or_none()
+    if not session or session.project_id != project_id:
+        raise HTTPException(404, "Session not found")
+    if not session.pcap_path:
+        raise HTTPException(404, "No pcap capture available. Capture traffic first.")
+
+    loop = asyncio.get_running_loop()
+    svc = PcapAnalysisService()
+    try:
+        analysis = await loop.run_in_executor(None, svc.analyze_pcap, session.pcap_path)
+    except FileNotFoundError:
+        raise HTTPException(404, "Pcap file not found on disk")
+
+    total = analysis.total_packets or 1
+    return {
+        "total_packets": analysis.total_packets,
+        "protocol_breakdown": [
+            {"protocol": p, "packet_count": c, "percentage": round(c / total * 100, 1)}
+            for p, c in sorted(analysis.protocol_breakdown.items(), key=lambda x: -x[1])
+        ],
+        "conversations": [
+            {
+                "src": c.src,
+                "src_port": c.src_port,
+                "dst": c.dst,
+                "dst_port": c.dst_port,
+                "protocol": c.protocol,
+                "packet_count": c.packet_count,
+                "byte_count": c.byte_count,
+            }
+            for c in analysis.conversations
+        ],
+        "insecure_findings": [
+            {
+                "protocol": f.protocol,
+                "port": f.port,
+                "severity": f.severity,
+                "description": f.description,
+                "evidence": f.evidence,
+                "packet_count": f.packet_count,
+            }
+            for f in analysis.insecure_findings
+        ],
+        "dns_queries": [
+            {
+                "domain": q.domain,
+                "query_type": q.query_type,
+                "resolved_ips": q.resolved_ips,
+            }
+            for q in analysis.dns_queries
+        ],
+        "tls_info": [
+            {
+                "server": t.server,
+                "port": t.port,
+                "version": t.version,
+                "cipher_suites": t.cipher_suites,
+            }
+            for t in analysis.tls_info
+        ],
+    }
 
 
 @router.get(

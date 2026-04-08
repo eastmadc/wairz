@@ -15,9 +15,10 @@ import { runTool } from '@/api/tools'
 import { listFirmware } from '@/api/firmware'
 import { useProjectStore } from '@/stores/projectStore'
 import FirmwareSelector from '@/components/projects/FirmwareSelector'
+import AttackSurfaceTab from '@/components/security/AttackSurfaceTab'
 import type { Finding, FirmwareDetail, Severity } from '@/types'
 
-type Tab = 'audit' | 'yara' | 'vulhunt'
+type Tab = 'audit' | 'yara' | 'vulhunt' | 'attack-surface'
 
 const SEVERITY_COLORS: Record<Severity, string> = {
   critical: 'bg-red-600 text-white',
@@ -51,7 +52,7 @@ export default function SecurityScanPage() {
     }
   }, [projectId])
 
-  const source = tab === 'audit' ? 'security_audit' : tab === 'yara' ? 'yara_scan' : 'vulhunt_scan'
+  const source = tab === 'audit' ? 'security_audit' : tab === 'yara' ? 'yara_scan' : tab === 'vulhunt' ? 'vulhunt_scan' : 'attack_surface'
 
   const loadFindings = useCallback(async () => {
     if (!projectId) return
@@ -201,6 +202,17 @@ export default function SecurityScanPage() {
         >
           VulHunt
         </button>
+        <button
+          type="button"
+          className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${
+            tab === 'attack-surface'
+              ? 'border-primary text-primary'
+              : 'border-transparent text-muted-foreground hover:text-foreground'
+          }`}
+          onClick={() => setTab('attack-surface')}
+        >
+          Attack Surface
+        </button>
       </div>
 
       {/* Action buttons + results */}
@@ -321,97 +333,105 @@ export default function SecurityScanPage() {
         </div>
       )}
 
-      {/* Findings list */}
-      {loadingFindings ? (
-        <div className="flex items-center gap-2 py-8 justify-center text-muted-foreground">
-          <Loader2 className="h-4 w-4 animate-spin" />
-          Loading findings...
-        </div>
-      ) : findings.length === 0 ? (
-        <div className="text-center py-8 text-muted-foreground">
-          <Shield className="h-12 w-12 mx-auto mb-3 opacity-30" />
-          <p className="text-sm">
-            {tab === 'audit'
-              ? 'No security audit findings. Click "Run Security Audit" to scan.'
-              : tab === 'yara'
-              ? 'No YARA findings. Click "Run YARA Scan" to scan.'
-              : 'No VulHunt findings yet. Click "Run VulHunt Scan" to analyze binaries.'}
-          </p>
-        </div>
-      ) : (
-        <div className="space-y-4">
-          {/* Severity summary */}
-          <div className="flex gap-3 flex-wrap">
-            {(['critical', 'high', 'medium', 'low', 'info'] as Severity[]).map((sev) => {
-              const count = bySeverity[sev]?.length || 0
-              if (count === 0) return null
-              return (
-                <Badge key={sev} className={SEVERITY_COLORS[sev]}>
-                  {sev}: {count}
-                </Badge>
-              )
-            })}
-            <span className="text-sm text-muted-foreground self-center">
-              {findings.length} total
-            </span>
-            <Button variant="link" size="sm" className="h-auto p-0" asChild>
-              <Link to={`/projects/${projectId}/findings?source=${source}`}>
-                View in Findings page
-              </Link>
-            </Button>
-          </div>
+      {tab === 'attack-surface' && projectId && (
+        <AttackSurfaceTab projectId={projectId} selectedFirmwareId={selectedFirmwareId} />
+      )}
 
-          {/* Findings table */}
-          <div className="overflow-x-auto">
-            <table className="w-full text-xs">
-              <thead>
-                <tr className="border-b text-left text-muted-foreground">
-                  <th className="pb-2 pr-3 font-medium w-20">Severity</th>
-                  <th className="pb-2 pr-3 font-medium">Title</th>
-                  <th className="pb-2 pr-3 font-medium">File</th>
-                </tr>
-              </thead>
-              <tbody>
-                {findings.slice(0, 200).map((f) => (
-                  <tr key={f.id} className="border-b border-border/30 hover:bg-muted/50">
-                    <td className="py-1.5 pr-3">
-                      <Badge variant="outline" className={`text-xs ${SEVERITY_COLORS[f.severity as Severity] || ''}`}>
-                        {f.severity}
-                      </Badge>
-                    </td>
-                    <td className="py-1.5 pr-3 truncate max-w-[400px]">
-                      <Link
-                        to={`/projects/${projectId}/findings`}
-                        state={{ findingId: f.id }}
-                        className="hover:underline hover:text-primary"
-                      >
-                        {f.title}
-                      </Link>
-                    </td>
-                    <td className="py-1.5 pr-3 font-mono text-muted-foreground truncate max-w-[200px]">
-                      {f.file_path ? (
-                        <Link
-                          to={`/projects/${projectId}/explore?path=${encodeURIComponent(f.file_path)}`}
-                          className="hover:underline hover:text-primary"
-                        >
-                          {f.file_path}
-                        </Link>
-                      ) : '-'}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            {findings.length > 200 && (
-              <p className="text-xs text-muted-foreground mt-2">
-                Showing first 200 of {findings.length} findings.{' '}
-                <Link to={`/projects/${projectId}/findings?source=${source}`} className="underline">
-                  View all in Findings page
-                </Link>
+      {/* Findings list (hidden on attack-surface tab which has its own display) */}
+      {tab !== 'attack-surface' && (
+        <>
+          {loadingFindings ? (
+            <div className="flex items-center gap-2 py-8 justify-center text-muted-foreground">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              Loading findings...
+            </div>
+          ) : findings.length === 0 ? (
+            <div className="text-center py-8 text-muted-foreground">
+              <Shield className="h-12 w-12 mx-auto mb-3 opacity-30" />
+              <p className="text-sm">
+                {tab === 'audit'
+                  ? 'No security audit findings. Click "Run Security Audit" to scan.'
+                  : tab === 'yara'
+                  ? 'No YARA findings. Click "Run YARA Scan" to scan.'
+                  : 'No VulHunt findings yet. Click "Run VulHunt Scan" to analyze binaries.'}
               </p>
-            )}
-          </div>
-        </div>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {/* Severity summary */}
+              <div className="flex gap-3 flex-wrap">
+                {(['critical', 'high', 'medium', 'low', 'info'] as Severity[]).map((sev) => {
+                  const count = bySeverity[sev]?.length || 0
+                  if (count === 0) return null
+                  return (
+                    <Badge key={sev} className={SEVERITY_COLORS[sev]}>
+                      {sev}: {count}
+                    </Badge>
+                  )
+                })}
+                <span className="text-sm text-muted-foreground self-center">
+                  {findings.length} total
+                </span>
+                <Button variant="link" size="sm" className="h-auto p-0" asChild>
+                  <Link to={`/projects/${projectId}/findings?source=${source}`}>
+                    View in Findings page
+                  </Link>
+                </Button>
+              </div>
+
+              {/* Findings table */}
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="border-b text-left text-muted-foreground">
+                      <th className="pb-2 pr-3 font-medium w-20">Severity</th>
+                      <th className="pb-2 pr-3 font-medium">Title</th>
+                      <th className="pb-2 pr-3 font-medium">File</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {findings.slice(0, 200).map((f) => (
+                      <tr key={f.id} className="border-b border-border/30 hover:bg-muted/50">
+                        <td className="py-1.5 pr-3">
+                          <Badge variant="outline" className={`text-xs ${SEVERITY_COLORS[f.severity as Severity] || ''}`}>
+                            {f.severity}
+                          </Badge>
+                        </td>
+                        <td className="py-1.5 pr-3 truncate max-w-[400px]">
+                          <Link
+                            to={`/projects/${projectId}/findings`}
+                            state={{ findingId: f.id }}
+                            className="hover:underline hover:text-primary"
+                          >
+                            {f.title}
+                          </Link>
+                        </td>
+                        <td className="py-1.5 pr-3 font-mono text-muted-foreground truncate max-w-[200px]">
+                          {f.file_path ? (
+                            <Link
+                              to={`/projects/${projectId}/explore?path=${encodeURIComponent(f.file_path)}`}
+                              className="hover:underline hover:text-primary"
+                            >
+                              {f.file_path}
+                            </Link>
+                          ) : '-'}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                {findings.length > 200 && (
+                  <p className="text-xs text-muted-foreground mt-2">
+                    Showing first 200 of {findings.length} findings.{' '}
+                    <Link to={`/projects/${projectId}/findings?source=${source}`} className="underline">
+                      View all in Findings page
+                    </Link>
+                  </p>
+                )}
+              </div>
+            </div>
+          )}
+        </>
       )}
     </div>
   )
