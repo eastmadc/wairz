@@ -3,7 +3,6 @@
 FROM python:3.12-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    binwalk \
     squashfs-tools \
     cramfsswap \
     util-linux-extra \
@@ -18,9 +17,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libyara-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Install unblob for broad firmware extraction support
-RUN pip3 install --no-cache-dir --break-system-packages unblob \
-    || echo "WARN: unblob install failed"
+# Install binwalk3 (Rust rewrite) and unblob for firmware extraction
+RUN pip3 install --no-cache-dir --break-system-packages binwalk3 unblob \
+    || echo "WARN: extraction tools install failed"
 
 # Install Grype for vulnerability scanning
 ARG GRYPE_VERSION=0.87.0

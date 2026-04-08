@@ -47,6 +47,42 @@ CGI_PATH_PATTERNS = ["/www/cgi-bin/", "/tmp/www/", "/www/", "/usr/lib/cgi-bin/"]
 # Normalization: max reasonable raw_score * multiplier ~ 150
 NORMALIZATION_FACTOR = 0.67
 
+# Pre-computed list for rapidfuzz matching
+_DAEMON_NAMES_LIST = sorted(KNOWN_NETWORK_DAEMONS)
+
+
+def _fuzzy_daemon_match(name: str, threshold: float = 0.80) -> bool:
+    """Check if a binary name fuzzy-matches a known network daemon.
+
+    Catches version-suffixed names (lighttpd-1.4.45), variant names
+    (dropbear_ssh, sshd-v2), and init script names (S50dropbear).
+    """
+    import re
+
+    # Strip common prefixes/suffixes before fuzzy matching
+    cleaned = re.sub(r"^[SK]\d{2}", "", name)         # init script prefixes (S50, K20)
+    cleaned = re.sub(r"[-_]?v?\d[\d.]*$", "", cleaned)  # version suffixes
+    cleaned = cleaned.strip("-_")
+
+    if not cleaned:
+        return False
+
+    # Quick exact check on cleaned name
+    if cleaned in KNOWN_NETWORK_DAEMONS:
+        return True
+
+    try:
+        from rapidfuzz import fuzz, process
+        result = process.extractOne(
+            cleaned,
+            _DAEMON_NAMES_LIST,
+            scorer=fuzz.token_sort_ratio,
+            score_cutoff=threshold * 100,
+        )
+        return result is not None
+    except ImportError:
+        return False
+
 
 @dataclass
 class BinarySignals:
@@ -447,9 +483,12 @@ def scan_attack_surface(
                     signals.is_cgi = True
                     break
 
-            # Known daemon check
+            # Known daemon check — exact first, then fuzzy for version-suffixed
+            # or variant names (e.g., lighttpd-1.4.45, dropbear_ssh, sshd-v2)
             if name in KNOWN_NETWORK_DAEMONS:
                 signals.is_known_daemon = True
+            else:
+                signals.is_known_daemon = _fuzzy_daemon_match(name)
 
             # Init script check
             if name in init_binaries:

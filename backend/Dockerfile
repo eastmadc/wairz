@@ -2,7 +2,6 @@ FROM python:3.12-slim AS base
 
 # Install system dependencies for firmware analysis
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    binwalk \
     sleuthkit \
     squashfs-tools \
     cramfsswap \
@@ -41,8 +40,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && printf '#!/bin/sh\n# Wrapper: translates cramfsck -x <dir> <file> to fsck.cramfs --extract=<dir> <file>\nif [ "$1" = "-x" ]; then shift; dir="$1"; shift; exec fsck.cramfs --extract="$dir" "$@"; fi\nexec fsck.cramfs "$@"\n' > /usr/local/bin/cramfsck \
     && chmod +x /usr/local/bin/cramfsck
 
-# Install Python-based firmware extraction tools used by binwalk
+# Install binwalk3 (Rust rewrite — 2-5x faster, fewer false positives)
+# and Python-based firmware extraction tools used by binwalk/unblob
 RUN pip3 install --no-cache-dir --break-system-packages \
+    binwalk3 \
     jefferson \
     ubi_reader \
     && pip3 install --no-cache-dir --break-system-packages \
@@ -54,6 +55,18 @@ RUN pip3 install --no-cache-dir --break-system-packages \
 # when binwalk times out or can't handle the container format.
 RUN pip3 install --no-cache-dir --break-system-packages unblob \
     || echo "WARN: unblob install failed — fallback extraction won't work"
+
+# Download YARA Forge community rules (~5000 detections, zero cost)
+# Distributed as a zip containing packages/core/yara-rules-core.yar
+# Graceful fallback if GitHub is unreachable during build
+RUN mkdir -p /data/yara-forge \
+    && curl -fsSL --max-time 60 -o /tmp/yara-forge.zip \
+       "$(curl -s https://api.github.com/repos/YARAHQ/yara-forge/releases/latest \
+          | grep -o 'https://[^"]*yara-forge-rules-core.zip' | head -1)" \
+    && unzip -o /tmp/yara-forge.zip -d /tmp/yara-forge-extract \
+    && mv /tmp/yara-forge-extract/packages/core/yara-rules-core.yar /data/yara-forge/ \
+    && rm -rf /tmp/yara-forge.zip /tmp/yara-forge-extract \
+    || echo "WARN: YARA Forge download failed — use update_yara_rules tool to retry"
 
 # Install sasquatch for non-standard SquashFS (vendor-modified firmware).
 # Uses the onekey-sec fork (maintained by the unblob team) which handles

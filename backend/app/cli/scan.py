@@ -180,11 +180,12 @@ def _extract_firmware(firmware_path: str, work_dir: str) -> str:
             logger.warning("unblob failed (rc=%d): %s", result.returncode, result.stderr[:500])
         else:
             return extract_dir
-    elif shutil.which("binwalk"):
-        logger.info("Extracting with binwalk: %s", firmware_path)
+    elif shutil.which("binwalk3") or shutil.which("binwalk"):
+        bw = shutil.which("binwalk3") or shutil.which("binwalk")
+        logger.info("Extracting with %s: %s", os.path.basename(bw), firmware_path)
         import subprocess
         result = subprocess.run(
-            ["binwalk", "-e", "-C", extract_dir, firmware_path],
+            [bw, "-e", "-C", extract_dir, firmware_path],
             capture_output=True, text=True, timeout=600,
         )
         if result.returncode != 0:

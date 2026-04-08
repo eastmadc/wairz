@@ -542,7 +542,7 @@ async def unpack_firmware(
 
     fallback_extractors = [
         ("unblob", run_unblob_extraction, 1200),
-        ("binwalk", run_binwalk_extraction, 600),
+        ("binwalk3", run_binwalk_extraction, 600),
     ]
 
     for idx, (name, func, timeout) in enumerate(fallback_extractors):

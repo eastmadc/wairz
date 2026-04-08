@@ -46,7 +46,12 @@ class YaraScanResult:
 
 
 def compile_rules(extra_rules_dir: str | None = None) -> yara.Rules:
-    """Compile all YARA rules from the built-in directory and optional extras.
+    """Compile all YARA rules from the built-in directory, YARA Forge, and optional extras.
+
+    Loads rules from three sources (in order):
+    1. Built-in rules in backend/app/yara_rules/
+    2. YARA Forge community rules from settings.yara_forge_dir (if downloaded)
+    3. Optional extra rules directory passed by caller
 
     Args:
         extra_rules_dir: Optional path to a directory with additional .yar files.
@@ -54,9 +59,12 @@ def compile_rules(extra_rules_dir: str | None = None) -> yara.Rules:
     Returns:
         Compiled yara.Rules object.
     """
-    sources: dict[str, str] = {}
+    from app.config import get_settings
 
-    for rules_dir in [_RULES_DIR, extra_rules_dir]:
+    sources: dict[str, str] = {}
+    yara_forge_dir = get_settings().yara_forge_dir
+
+    for rules_dir in [_RULES_DIR, yara_forge_dir, extra_rules_dir]:
         if rules_dir is None:
             continue
         rules_path = Path(rules_dir)
@@ -64,7 +72,13 @@ def compile_rules(extra_rules_dir: str | None = None) -> yara.Rules:
             continue
         for rule_file in sorted(rules_path.glob("*.yar")):
             namespace = rule_file.stem
-            sources[namespace] = rule_file.read_text()
+            # Prefix YARA Forge namespaces to avoid collisions
+            if str(rules_path) == yara_forge_dir:
+                namespace = f"forge_{namespace}"
+            try:
+                sources[namespace] = rule_file.read_text()
+            except Exception as e:
+                logger.warning("Failed to read YARA rule %s: %s", rule_file, e)
 
     if not sources:
         raise ValueError(f"No YARA rule files found in {_RULES_DIR}")

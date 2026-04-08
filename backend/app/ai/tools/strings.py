@@ -36,7 +36,13 @@ _COMMON_PASSWORDS = [
 
 # Patterns for string categorisation
 _URL_RE = re.compile(r"https?://\S+", re.IGNORECASE)
-_IP_RE = re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b")
+# Validated IP regex — each octet 0-255 (replaces weak \d{1,3} pattern)
+_IP_RE = re.compile(
+    r"\b(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\."
+    r"(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\."
+    r"(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\."
+    r"(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\b"
+)
 _EMAIL_RE = re.compile(r"\b[\w.+-]+@[\w-]+\.[\w.-]+\b")
 _FILEPATH_RE = re.compile(r"(?:/[\w._-]+){2,}")
 _CRED_RE = re.compile(
@@ -625,6 +631,227 @@ async def _handle_find_hardcoded_credentials(
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# Hardcoded IP detection
+# ---------------------------------------------------------------------------
+
+import ipaddress as _ipaddress
+
+# Well-known IPs — label instead of flagging as unknown
+_WELL_KNOWN_IPS: dict[str, str] = {
+    "8.8.8.8": "Google DNS", "8.8.4.4": "Google DNS",
+    "1.1.1.1": "Cloudflare DNS", "1.0.0.1": "Cloudflare DNS",
+    "208.67.222.222": "OpenDNS", "208.67.220.220": "OpenDNS",
+    "9.9.9.9": "Quad9 DNS", "149.112.112.112": "Quad9 DNS",
+    "77.88.8.8": "Yandex DNS", "77.88.8.1": "Yandex DNS",
+    "94.140.14.14": "AdGuard DNS", "94.140.15.15": "AdGuard DNS",
+    "76.76.2.0": "Control D DNS",
+    "129.6.15.28": "NIST NTP", "132.163.97.1": "NIST NTP",
+    "128.138.140.44": "NIST NTP",
+    "128.105.39.11": "Netgear hardcoded NTP (known issue)",
+    "17.253.34.253": "Apple NTP (time.apple.com)",
+}
+
+# Subnet masks to exclude
+_SUBNET_MASKS = frozenset({
+    "255.255.255.0", "255.255.0.0", "255.0.0.0",
+    "255.255.255.128", "255.255.255.192", "255.255.255.224",
+    "255.255.255.240", "255.255.255.248", "255.255.255.252",
+    "255.255.128.0", "255.255.192.0", "255.255.224.0",
+    "255.255.240.0", "255.255.248.0", "255.255.252.0",
+    "255.255.254.0", "255.255.255.255",
+})
+
+# Context patterns that suggest version strings (look-behind window)
+_VERSION_CONTEXT_RE = re.compile(
+    r"(?:version|ver|v|release|build|fw|rev|patch|sdk)\s*[:=]?\s*$",
+    re.IGNORECASE,
+)
+
+# High-risk context patterns (raise severity)
+_HIGH_RISK_CONTEXT_RE = re.compile(
+    r"(?:wget|curl|nc|netcat|tftp|ftp|ssh|scp|rsync)\b", re.IGNORECASE,
+)
+
+
+def _classify_ip(ip_str: str) -> tuple[str, str]:
+    """Classify an IP address. Returns (category, severity)."""
+    try:
+        addr = _ipaddress.ip_address(ip_str)
+    except ValueError:
+        return "invalid", "info"
+
+    if ip_str in _SUBNET_MASKS:
+        return "subnet_mask", "skip"
+    if ip_str in ("0.0.0.0", "255.255.255.255"):
+        return "broadcast", "skip"
+    if ip_str in _WELL_KNOWN_IPS:
+        return f"well_known:{_WELL_KNOWN_IPS[ip_str]}", "info"
+    if addr.is_loopback:
+        return "loopback", "info"
+    if addr.is_link_local:
+        return "link_local", "info"
+    if addr.is_multicast:
+        return "multicast", "skip"
+    if addr.is_private:
+        return "private_rfc1918", "low"
+    # RFC 5737 documentation ranges
+    if ip_str.startswith(("192.0.2.", "198.51.100.", "203.0.113.")):
+        return "documentation", "skip"
+    return "public", "medium"
+
+
+def _is_version_context(text: str, match_start: int) -> bool:
+    """Check if the IP match looks like a version string."""
+    prefix = text[max(0, match_start - 30):match_start]
+    return bool(_VERSION_CONTEXT_RE.search(prefix))
+
+
+def _is_oid_context(text: str, match_start: int) -> bool:
+    """Check if the IP match is part of an ASN.1 OID (e.g., 1.3.6.1.x)."""
+    prefix = text[max(0, match_start - 10):match_start]
+    return bool(re.search(r"\d+\.\d+\.$", prefix))
+
+
+async def _handle_find_hardcoded_ips(input: dict, context: ToolContext) -> str:
+    """Scan firmware for hardcoded IP addresses with classification."""
+    from app.utils.truncation import truncate_output
+
+    scan_root = context.resolve_path(input.get("path", "/"))
+    include_private = input.get("include_private", True)
+    include_binaries = input.get("include_binaries", True)
+    max_results = input.get("max_results", 200)
+
+    findings: list[dict] = []
+    files_scanned = 0
+    ips_found: Counter = Counter()
+
+    for dirpath, _dirnames, filenames in safe_walk(scan_root):
+        for fname in filenames:
+            fpath = os.path.join(dirpath, fname)
+            rel = "/" + os.path.relpath(fpath, context.extracted_path or scan_root)
+
+            try:
+                fstat = os.stat(fpath)
+            except OSError:
+                continue
+            if fstat.st_size > 10 * 1024 * 1024:  # 10MB max
+                continue
+
+            # Determine if text or binary
+            is_binary = False
+            try:
+                with open(fpath, "rb") as f:
+                    chunk = f.read(512)
+                if b"\x00" in chunk:
+                    is_binary = True
+            except OSError:
+                continue
+
+            if is_binary and not include_binaries:
+                continue
+
+            files_scanned += 1
+
+            # For text files, read content directly
+            # For binary files, use strings extraction
+            if is_binary:
+                try:
+                    proc = await asyncio.create_subprocess_exec(
+                        "strings", "-n", "7", fpath,
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.DEVNULL,
+                    )
+                    stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=10)
+                    content = stdout.decode("utf-8", errors="replace")
+                except (asyncio.TimeoutError, OSError):
+                    continue
+            else:
+                try:
+                    with open(fpath, "r", errors="replace") as f:
+                        content = f.read()
+                except OSError:
+                    continue
+
+            for match in _IP_RE.finditer(content):
+                ip_str = match.group()
+                category, severity = _classify_ip(ip_str)
+
+                if severity == "skip":
+                    continue
+                if not include_private and category == "private_rfc1918":
+                    continue
+
+                # False positive filters
+                if _is_version_context(content, match.start()):
+                    continue
+                if _is_oid_context(content, match.start()):
+                    continue
+
+                ips_found[ip_str] += 1
+
+                # Context-based severity adjustment
+                ctx_start = max(0, match.start() - 60)
+                ctx_end = min(len(content), match.end() + 60)
+                context_str = content[ctx_start:ctx_end].strip()
+
+                if _HIGH_RISK_CONTEXT_RE.search(context_str):
+                    if severity == "medium":
+                        severity = "high"
+                    elif severity == "low":
+                        severity = "medium"
+
+                findings.append({
+                    "ip": ip_str,
+                    "file": rel,
+                    "category": category,
+                    "severity": severity,
+                    "context": context_str[:120],
+                    "binary": is_binary,
+                })
+
+                if len(findings) >= max_results:
+                    break
+            if len(findings) >= max_results:
+                break
+        if len(findings) >= max_results:
+            break
+
+    # Format output
+    lines = [f"Scanned {files_scanned} files, found {len(findings)} IP references ({len(ips_found)} unique IPs)\n"]
+
+    # Group by severity
+    by_sev: dict[str, list[dict]] = {}
+    for f in findings:
+        by_sev.setdefault(f["severity"], []).append(f)
+
+    for sev in ["high", "medium", "low", "info"]:
+        items = by_sev.get(sev, [])
+        if not items:
+            continue
+        lines.append(f"\n## {sev.upper()} ({len(items)})")
+        seen = set()
+        for item in items:
+            key = (item["ip"], item["file"])
+            if key in seen:
+                continue
+            seen.add(key)
+            tag = f" [{item['category']}]" if ":" in item["category"] else ""
+            bin_tag = " (binary)" if item["binary"] else ""
+            lines.append(f"  {item['ip']}{tag} in {item['file']}{bin_tag}")
+            if item["context"] and sev in ("high", "medium"):
+                lines.append(f"    context: {item['context'][:100]}")
+
+    # Summary of unique IPs
+    if ips_found:
+        lines.append(f"\n## Top IPs (by occurrence)")
+        for ip, count in ips_found.most_common(20):
+            cat, _ = _classify_ip(ip)
+            lines.append(f"  {ip} ({count}x) [{cat}]")
+
+    return truncate_output("\n".join(lines))
+
+
 def register_string_tools(registry: ToolRegistry) -> None:
     """Register all string analysis tools with the given registry."""
 
@@ -733,4 +960,41 @@ def register_string_tools(registry: ToolRegistry) -> None:
             "required": [],
         },
         handler=_handle_find_hardcoded_credentials,
+    )
+
+    registry.register(
+        name="find_hardcoded_ips",
+        description=(
+            "Scan firmware filesystem for hardcoded IP addresses. Classifies each IP as "
+            "public (medium-high severity), private/RFC1918 (low), well-known (Google DNS, "
+            "Cloudflare, NTP servers — info), loopback, or link-local. Filters false positives: "
+            "version strings, subnet masks, ASN.1 OIDs, documentation ranges. "
+            "Severity is elevated when IPs appear near wget/curl/nc commands."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "Directory to scan (default: entire firmware root)",
+                },
+                "include_private": {
+                    "type": "boolean",
+                    "description": "Include private/RFC1918 IPs in results (default: true)",
+                    "default": True,
+                },
+                "include_binaries": {
+                    "type": "boolean",
+                    "description": "Scan ELF/binary files via strings extraction (default: true)",
+                    "default": True,
+                },
+                "max_results": {
+                    "type": "integer",
+                    "description": "Maximum IP references to return (default: 200)",
+                    "default": 200,
+                },
+            },
+            "required": [],
+        },
+        handler=_handle_find_hardcoded_ips,
     )

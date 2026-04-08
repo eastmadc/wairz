@@ -164,10 +164,10 @@ class FirmwareMetadataService:
         return metadata
 
     async def _run_binwalk_scan(self, path: str) -> list[FirmwareSection]:
-        """Run binwalk in scan-only CSV mode and parse the output."""
+        """Run binwalk3 in scan-only mode and parse the output."""
         try:
             proc = await asyncio.create_subprocess_exec(
-                "binwalk", "--csv", path,
+                "binwalk3", path,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
@@ -184,26 +184,26 @@ class FirmwareMetadataService:
         output = stdout.decode("utf-8", errors="replace")
         sections: list[FirmwareSection] = []
 
-        # binwalk --csv outputs lines like:
+        # binwalk3 outputs whitespace-separated lines:
         # DECIMAL       HEXADECIMAL     DESCRIPTION
-        # 0             0x0             uImage header...
-        # Skip header lines and parse
+        # 512           0x200           LZMA compressed data, ...
+        # Skip header and separator lines, parse data rows
         lines = output.strip().split("\n")
-        csv_lines = []
-        in_csv = False
+        data_lines = []
+        in_data = False
         for line in lines:
-            if line.startswith("DECIMAL"):
-                in_csv = True
+            if line.lstrip().startswith("DECIMAL"):
+                in_data = True
                 continue
-            if in_csv and line.strip():
-                csv_lines.append(line)
+            if in_data and line.startswith("---"):
+                continue
+            if in_data and line.strip():
+                # Skip continuation lines (indented descriptions)
+                if line and not line[0].isspace():
+                    data_lines.append(line)
 
-        for line in csv_lines:
-            # Parse: DECIMAL,HEXADECIMAL,DESCRIPTION
-            parts = line.split(",", 2)
-            if len(parts) < 3:
-                # Fallback: try whitespace-separated
-                parts = line.split(None, 2)
+        for line in data_lines:
+            parts = line.split(None, 2)
             if len(parts) < 3:
                 continue
             try:
