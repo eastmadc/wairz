@@ -2667,6 +2667,53 @@ async def _handle_check_secure_boot(input: dict, context: ToolContext) -> str:
 # ---------------------------------------------------------------------------
 
 
+async def _handle_update_yara_rules(input: dict, context: ToolContext) -> str:
+    """Download or update YARA Forge community rules."""
+    from app.config import get_settings
+
+    forge_dir = get_settings().yara_forge_dir
+    os.makedirs(forge_dir, exist_ok=True)
+    dest = os.path.join(forge_dir, "yara-rules-core.yar")
+
+    # YARA Forge distributes rules as a zip file
+    script = (
+        "set -e; "
+        "URL=$(curl -s https://api.github.com/repos/YARAHQ/yara-forge/releases/latest "
+        "| grep -o 'https://[^\"]*yara-forge-rules-core.zip' | head -1); "
+        "curl -fsSL --max-time 60 -o /tmp/yara-forge.zip \"$URL\"; "
+        f"unzip -o /tmp/yara-forge.zip -d /tmp/yara-forge-extract > /dev/null; "
+        f"mv /tmp/yara-forge-extract/packages/core/yara-rules-core.yar {dest}; "
+        "rm -rf /tmp/yara-forge.zip /tmp/yara-forge-extract"
+    )
+
+    proc = await asyncio.create_subprocess_exec(
+        "sh", "-c", script,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    try:
+        _, stderr = await asyncio.wait_for(proc.communicate(), timeout=120)
+    except asyncio.TimeoutError:
+        return "Error: download timed out after 120s"
+
+    if proc.returncode != 0:
+        err = stderr.decode("utf-8", errors="replace")[:300]
+        return f"Error: YARA Forge download failed: {err}"
+
+    # Count rules
+    try:
+        with open(dest) as f:
+            content = f.read()
+        rule_count = content.count("\nrule ")
+    except Exception:
+        rule_count = "unknown"
+
+    return (
+        f"YARA Forge community rules updated: {rule_count} rules downloaded to {forge_dir}.\n"
+        f"These will be automatically loaded alongside built-in rules on the next scan."
+    )
+
+
 def register_security_tools(registry: ToolRegistry) -> None:
     """Register all security assessment tools with the given registry."""
 
@@ -3169,4 +3216,18 @@ def register_security_tools(registry: ToolRegistry) -> None:
             "required": [],
         },
         handler=_handle_check_secure_boot,
+    )
+
+    registry.register(
+        name="update_yara_rules",
+        description=(
+            "Download or update YARA Forge community rules. Fetches the latest "
+            "yara-forge-rules-core.yar from GitHub, adding thousands of community "
+            "detection rules alongside the built-in Wairz rules. Safe to re-run."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {},
+        },
+        handler=_handle_update_yara_rules,
     )

@@ -170,9 +170,9 @@ def check_extraction_limits(
 
 
 async def run_binwalk_extraction(firmware_path: str, output_dir: str, timeout: int = 600) -> str:
-    """Run binwalk -e to extract firmware contents. Returns stdout+stderr."""
+    """Run binwalk3 -e to extract firmware contents. Returns stdout+stderr."""
     proc = await asyncio.create_subprocess_exec(
-        "binwalk", "-e", "-C", output_dir, firmware_path,
+        "binwalk3", "-e", "-C", output_dir, firmware_path,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.STDOUT,
     )

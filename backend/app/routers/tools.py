@@ -47,6 +47,7 @@ ALLOWED_TOOLS: set[str] = {
     "search_strings",
     "find_crypto_material",
     "find_hardcoded_credentials",
+    "find_hardcoded_ips",
     # Binary analysis (read-only)
     "detect_rtos",
     "analyze_binary_format",
@@ -137,6 +138,10 @@ ALLOWED_TOOLS: set[str] = {
     "vulhunt_scan_binary",
     "vulhunt_scan_firmware",
     "vulhunt_check_available",
+    # cwe_checker (read-only analysis)
+    "cwe_check_status",
+    "cwe_check_binary",
+    "cwe_check_firmware",
 }
 
 

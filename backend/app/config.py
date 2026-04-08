@@ -58,6 +58,10 @@ class Settings(BaseSettings):
     dependency_track_api_key: str = ""
     vulhunt_url: str = "http://vulhunt:8080"
     vulhunt_timeout: int = 300
+    cwe_checker_image: str = "ghcr.io/fkie-cad/cwe_checker:stable"
+    cwe_checker_timeout: int = 600
+    cwe_checker_memory_limit: str = "4g"
+    yara_forge_dir: str = "/data/yara-forge"
     api_key: str = ""
     log_level: str = "INFO"
 
