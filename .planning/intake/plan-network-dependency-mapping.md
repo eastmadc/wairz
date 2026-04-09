@@ -1,9 +1,11 @@
 # Plan: Network Dependency Mapping
 
 > Created: 2026-04-08
-> Priority: High
+> Priority: High | **Status:** completed (2026-04-08, session 21)
 > Effort: Medium (1 session)
 > Dependencies: None (standalone, complements hardcoded IP detection)
+
+**Completed 2026-04-08:** `detect_network_dependencies` MCP tool in security.py — 8 detection categories (NFS, SMB/CIFS, cloud storage, DB connections, MQTT/AMQP, FTP/TFTP, remote syslog, iSCSI), severity classification with CWE tags, integrated into security audit pipeline, whitelisted for REST.
 
 ---
 

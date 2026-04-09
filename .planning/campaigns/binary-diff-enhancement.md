@@ -1,6 +1,6 @@
 # Campaign: Binary Diff Enhancement
 
-**Status:** active
+**Status:** completed
 **Direction:** Replace broken pyelftools binary diff with LIEF body hashing + Capstone instruction diff
 **Seed:** `.planning/seeds/binary-diff-enhancement.yaml`
 **Branch:** feature/binary-diff-enhancement

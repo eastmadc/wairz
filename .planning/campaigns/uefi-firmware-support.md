@@ -1,5 +1,5 @@
 ---
-Status: active
+Status: completed
 Direction: Add UEFI/BIOS firmware unpacking, analysis, and security assessment
 Estimated Sessions: 2
 Type: build

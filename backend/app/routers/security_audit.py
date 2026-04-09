@@ -473,3 +473,87 @@ async def run_yara_scan(
         findings_created=len(all_yara_findings),
         errors=all_errors,
     )
+
+
+# ---------------------------------------------------------------------------
+# Update mechanism detection
+# ---------------------------------------------------------------------------
+
+
+class UpdateMechanismDetail(BaseModel):
+    system: str
+    confidence: str
+    binaries: list[str] = []
+    configs: list[str] = []
+    update_urls: list[str] = []
+    uses_https: bool | None = None
+    has_ab_scheme: bool | None = None
+    findings: list[dict] = []
+
+
+class UpdateMechanismResponse(BaseModel):
+    status: str
+    mechanisms: list[UpdateMechanismDetail]
+    total: int
+
+
+@router.get(
+    "/firmware/{firmware_id}/update-mechanisms",
+    response_model=UpdateMechanismResponse,
+)
+async def get_update_mechanisms(
+    project_id: uuid.UUID,
+    firmware_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+):
+    """Detect firmware update mechanisms in the extracted filesystem.
+
+    Scans for SWUpdate, RAUC, Mender, opkg/sysupgrade, U-Boot env,
+    Android OTA, package managers, and custom OTA scripts. Returns
+    detected mechanisms with binaries, configs, update URLs, and
+    security findings.
+    """
+    # Validate project exists
+    result = await db.execute(select(Project).where(Project.id == project_id))
+    project = result.scalar_one_or_none()
+    if not project:
+        raise HTTPException(404, "Project not found")
+
+    # Get firmware
+    result = await db.execute(
+        select(Firmware).where(
+            Firmware.id == firmware_id,
+            Firmware.project_id == project_id,
+            Firmware.extracted_path.isnot(None),
+        )
+    )
+    firmware = result.scalar_one_or_none()
+    if not firmware:
+        raise HTTPException(404, "Firmware not found or not yet extracted")
+
+    from app.services.update_mechanism_service import detect_update_mechanisms
+
+    loop = asyncio.get_running_loop()
+    mechanisms = await loop.run_in_executor(
+        None, detect_update_mechanisms, firmware.extracted_path
+    )
+
+    details = [
+        UpdateMechanismDetail(
+            system=m.system,
+            confidence=m.confidence,
+            binaries=m.binaries,
+            configs=m.configs,
+            update_urls=m.update_urls,
+            uses_https=m.uses_https,
+            has_ab_scheme=m.has_ab_scheme,
+            findings=m.findings,
+        )
+        for m in mechanisms
+    ]
+
+    return UpdateMechanismResponse(
+        status="success",
+        mechanisms=details,
+        total=len(details),
+    )
