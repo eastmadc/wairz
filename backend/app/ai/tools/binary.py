@@ -877,7 +877,9 @@ async def _handle_check_all_binary_protections(
         f"  {'─'*45} {'─'*5} {'─'*8} {'─'*3} {'─'*8} {'─'*4} {'─'*4} {'─'*5} {'─'*6}",
     ]
 
-    for r in results:
+    # Show up to 50 least-protected binaries in table
+    display_limit = 50
+    for r in results[:display_limit]:
         size_str = f"{r['size'] // 1024}K" if r['size'] >= 1024 else f"{r['size']}B"
         path_display = r["path"]
         if len(path_display) > 44:
@@ -886,6 +888,12 @@ async def _handle_check_all_binary_protections(
             f"  {path_display:<45} {r['type']:<5} {size_str:>8} "
             f"{_yn(r['nx']):>3} {r['relro']:>8} {_yn(r['canary']):>4} "
             f"{_yn(r['pie']):>4} {_yn(r['fortify']):>5} {r['score']:>5.1f}/5"
+        )
+
+    if len(results) > display_limit:
+        lines.append(
+            f"\n  ... {len(results) - display_limit} more binaries not shown "
+            f"(all scored ≥ {results[display_limit]['score']:.1f}/5)"
         )
 
     # Summary

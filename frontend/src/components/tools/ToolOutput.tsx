@@ -1,12 +1,17 @@
 import { useState } from 'react'
-import { Loader2, CheckCircle2, XCircle, Copy, Check, ChevronDown, ChevronUp, Terminal } from 'lucide-react'
+import { useParams } from 'react-router-dom'
+import { Loader2, CheckCircle2, XCircle, Copy, Check, ChevronDown, ChevronUp, Terminal, Download } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { exportSbom } from '@/api/sbom'
+import { useProjectStore } from '@/stores/projectStore'
 import type { ToolRunResponse } from '@/api/tools'
 
 interface ToolOutputProps {
   result: ToolRunResponse | null
   loading: boolean
   error: string | null
+  /** The input parameters that were passed to the tool */
+  toolInput?: Record<string, unknown>
 }
 
 function tryFormatJson(text: string): string {
@@ -21,9 +26,37 @@ function tryFormatJson(text: string): string {
   return text
 }
 
-export default function ToolOutput({ result, loading, error }: ToolOutputProps) {
+export default function ToolOutput({ result, loading, error, toolInput }: ToolOutputProps) {
+  const { projectId } = useParams<{ projectId: string }>()
+  const selectedFirmwareId = useProjectStore((s) => s.selectedFirmwareId)
   const [copied, setCopied] = useState(false)
   const [collapsed, setCollapsed] = useState(false)
+  const [downloading, setDownloading] = useState(false)
+
+  // Download handler for export tools
+  const handleDownload = async (format: string) => {
+    if (!projectId) return
+    setDownloading(true)
+    try {
+      const fwId = selectedFirmwareId || undefined
+      const blob = await exportSbom(projectId, format, fwId)
+      const filenames: Record<string, string> = {
+        'cyclonedx-json': `sbom-${projectId}.cdx.json`,
+        'spdx-json': `sbom-${projectId}.spdx.json`,
+        'cyclonedx-vex-json': `vex-${projectId}.cdx.json`,
+      }
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = filenames[format] || `sbom-${projectId}.json`
+      a.click()
+      URL.revokeObjectURL(url)
+    } catch {
+      // silently fail — user can copy the output instead
+    } finally {
+      setDownloading(false)
+    }
+  }
 
   const handleCopy = (text: string) => {
     const fallback = () => {
@@ -87,6 +120,12 @@ export default function ToolOutput({ result, loading, error }: ToolOutputProps) 
   const lineCount = formattedOutput.split('\n').length
   const isLong = lineCount > 50
 
+  // Determine if this is an export tool that supports direct download
+  const isExportTool = result.tool === 'export_sbom'
+  const exportFormat = isExportTool
+    ? (toolInput?.format as string) || 'cyclonedx-json'
+    : null
+
   return (
     <div className="space-y-3">
       {/* Status header */}
@@ -108,6 +147,22 @@ export default function ToolOutput({ result, loading, error }: ToolOutputProps) 
           </span>
         </div>
         <div className="flex items-center gap-1">
+          {isExportTool && exportFormat && result.success && (
+            <Button
+              variant="ghost"
+              size="xs"
+              onClick={() => handleDownload(exportFormat)}
+              disabled={downloading}
+              className="text-muted-foreground"
+            >
+              {downloading ? (
+                <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+              ) : (
+                <Download className="mr-1 h-3 w-3" />
+              )}
+              Download
+            </Button>
+          )}
           {isLong && (
             <Button
               variant="ghost"

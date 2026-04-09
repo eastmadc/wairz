@@ -179,21 +179,41 @@ export default function SbomPage() {
   }, [projectId, selectedFirmwareId])
 
   // Export SBOM
-  const handleExport = useCallback(async () => {
+  const [exportOpen, setExportOpen] = useState(false)
+  const exportRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!exportOpen) return
+    const handleClick = (e: MouseEvent) => {
+      if (exportRef.current && !exportRef.current.contains(e.target as Node)) {
+        setExportOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClick)
+    return () => document.removeEventListener('mousedown', handleClick)
+  }, [exportOpen])
+
+  const handleExport = useCallback(async (format: string) => {
     if (!projectId) return
+    setExportOpen(false)
     const fwId = selectedFirmwareId || undefined
+    const filenames: Record<string, string> = {
+      'cyclonedx-json': `sbom-${projectId}.cdx.json`,
+      'spdx-json': `sbom-${projectId}.spdx.json`,
+      'cyclonedx-vex-json': `vex-${projectId}.cdx.json`,
+    }
     try {
-      const blob = await exportSbom(projectId, 'cyclonedx-json', fwId)
+      const blob = await exportSbom(projectId, format, fwId)
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
-      a.download = `sbom-${projectId}.cdx.json`
+      a.download = filenames[format] || `sbom-${projectId}.json`
       a.click()
       URL.revokeObjectURL(url)
     } catch (err) {
       console.error('SBOM export failed:', err)
     }
-  }, [projectId])
+  }, [projectId, selectedFirmwareId])
 
   // Filter components
   const filteredComponents = components.filter((c) => {
@@ -242,10 +262,35 @@ export default function SbomPage() {
         <div className="flex items-center gap-2">
           {hasComponents && (
             <>
-              <Button variant="outline" size="sm" onClick={handleExport}>
-                <Download className="mr-1.5 h-3.5 w-3.5" />
-                Export
-              </Button>
+              <div className="relative" ref={exportRef}>
+                <Button variant="outline" size="sm" onClick={() => setExportOpen(!exportOpen)}>
+                  <Download className="mr-1.5 h-3.5 w-3.5" />
+                  Export
+                  <ChevronDown className="ml-1 h-3 w-3" />
+                </Button>
+                {exportOpen && (
+                  <div className="absolute right-0 top-full z-50 mt-1 w-56 rounded-md border bg-popover p-1 text-popover-foreground shadow-md">
+                    <button
+                      className="flex w-full items-center rounded-sm px-2 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground"
+                      onClick={() => handleExport('cyclonedx-json')}
+                    >
+                      CycloneDX 1.7 (JSON)
+                    </button>
+                    <button
+                      className="flex w-full items-center rounded-sm px-2 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground"
+                      onClick={() => handleExport('spdx-json')}
+                    >
+                      SPDX 2.3 (JSON)
+                    </button>
+                    <button
+                      className="flex w-full items-center rounded-sm px-2 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground"
+                      onClick={() => handleExport('cyclonedx-vex-json')}
+                    >
+                      CycloneDX VEX (with vulnerabilities)
+                    </button>
+                  </div>
+                )}
+              </div>
               <Button
                 variant="outline"
                 size="sm"

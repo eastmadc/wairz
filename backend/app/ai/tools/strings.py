@@ -321,13 +321,16 @@ async def _handle_find_crypto_material(input: dict, context: ToolContext) -> str
         return "No cryptographic material found."
 
     parts: list[str] = [f"Found {total} crypto-related file(s):", ""]
+    display_limit = 30
     for cat_name, items in findings.items():
         if not items:
             continue
         label = cat_name.replace("_", " ").title()
         parts.append(f"## {label} ({len(items)})")
-        for item in items:
+        for item in items[:display_limit]:
             parts.append(f"  {item}")
+        if len(items) > display_limit:
+            parts.append(f"  ... and {len(items) - display_limit} more")
         parts.append("")
 
     return "\n".join(parts)
@@ -608,16 +611,20 @@ async def _handle_find_hardcoded_credentials(
 
     if high_entropy:
         parts.append(f"## Likely Real Secrets (high entropy >4.0 bits) — {len(high_entropy)}")
-        for r in high_entropy:
+        for r in high_entropy[:30]:
             parts.append(f"  {r['file']}:{r['line']}  entropy={r['entropy']}")
             parts.append(f"    {r['match']}")
+        if len(high_entropy) > 30:
+            parts.append(f"  ... and {len(high_entropy) - 30} more")
         parts.append("")
 
     if low_entropy:
         parts.append(f"## Possible Credentials (lower entropy) — {len(low_entropy)}")
-        for r in low_entropy:
+        for r in low_entropy[:20]:
             parts.append(f"  {r['file']}:{r['line']}  entropy={r['entropy']}")
             parts.append(f"    {r['match']}")
+        if len(low_entropy) > 20:
+            parts.append(f"  ... and {len(low_entropy) - 20} more")
         parts.append("")
 
     if len(results) >= max_results:
@@ -725,6 +732,8 @@ async def _handle_find_hardcoded_ips(input: dict, context: ToolContext) -> str:
     findings: list[dict] = []
     files_scanned = 0
     ips_found: Counter = Counter()
+    # Track resolved real paths to avoid re-scanning hardlinks/symlinks
+    scanned_realpaths: set[str] = set()
 
     for dirpath, _dirnames, filenames in safe_walk(scan_root):
         for fname in filenames:
@@ -732,6 +741,7 @@ async def _handle_find_hardcoded_ips(input: dict, context: ToolContext) -> str:
             rel = "/" + os.path.relpath(fpath, context.extracted_path or scan_root)
 
             try:
+                real = os.path.realpath(fpath)
                 fstat = os.stat(fpath)
             except OSError:
                 continue
@@ -750,6 +760,13 @@ async def _handle_find_hardcoded_ips(input: dict, context: ToolContext) -> str:
 
             if is_binary and not include_binaries:
                 continue
+
+            # Skip binaries we've already scanned (symlinks/hardlinks to same file)
+            if is_binary and real in scanned_realpaths:
+                files_scanned += 1
+                continue
+            if is_binary:
+                scanned_realpaths.add(real)
 
             files_scanned += 1
 
@@ -817,30 +834,55 @@ async def _handle_find_hardcoded_ips(input: dict, context: ToolContext) -> str:
         if len(findings) >= max_results:
             break
 
-    # Format output
+    # Format output — group by IP, not by file occurrence
     lines = [f"Scanned {files_scanned} files, found {len(findings)} IP references ({len(ips_found)} unique IPs)\n"]
 
-    # Group by severity
-    by_sev: dict[str, list[dict]] = {}
+    # Build per-IP grouped data with highest severity
+    ip_data: dict[str, dict] = {}
     for f in findings:
-        by_sev.setdefault(f["severity"], []).append(f)
+        ip = f["ip"]
+        if ip not in ip_data:
+            ip_data[ip] = {
+                "category": f["category"],
+                "severity": f["severity"],
+                "files": [],
+                "contexts": [],
+            }
+        entry = ip_data[ip]
+        # Keep highest severity
+        sev_order = {"high": 3, "medium": 2, "low": 1, "info": 0}
+        if sev_order.get(f["severity"], 0) > sev_order.get(entry["severity"], 0):
+            entry["severity"] = f["severity"]
+        if f["file"] not in [x[0] for x in entry["files"]]:
+            entry["files"].append((f["file"], f["binary"]))
+        if f["context"] and len(entry["contexts"]) < 3:
+            entry["contexts"].append(f["context"][:100])
+
+    # Sort IPs by severity (high first), then by file count
+    sev_order = {"high": 0, "medium": 1, "low": 2, "info": 3}
+    sorted_ips = sorted(
+        ip_data.items(),
+        key=lambda x: (sev_order.get(x[1]["severity"], 9), -len(x[1]["files"])),
+    )
 
     for sev in ["high", "medium", "low", "info"]:
-        items = by_sev.get(sev, [])
-        if not items:
+        sev_ips = [(ip, d) for ip, d in sorted_ips if d["severity"] == sev]
+        if not sev_ips:
             continue
-        lines.append(f"\n## {sev.upper()} ({len(items)})")
-        seen = set()
-        for item in items:
-            key = (item["ip"], item["file"])
-            if key in seen:
-                continue
-            seen.add(key)
-            tag = f" [{item['category']}]" if ":" in item["category"] else ""
-            bin_tag = " (binary)" if item["binary"] else ""
-            lines.append(f"  {item['ip']}{tag} in {item['file']}{bin_tag}")
-            if item["context"] and sev in ("high", "medium"):
-                lines.append(f"    context: {item['context'][:100]}")
+        lines.append(f"\n## {sev.upper()} ({len(sev_ips)} IPs)")
+        for ip, data in sev_ips:
+            cat_tag = f" [{data['category']}]" if ":" in data["category"] else ""
+            file_count = len(data["files"])
+            lines.append(f"  {ip}{cat_tag} — found in {file_count} file(s)")
+            # Show up to 5 files, summarize the rest
+            for fpath, is_bin in data["files"][:5]:
+                bin_tag = " (binary)" if is_bin else ""
+                lines.append(f"    {fpath}{bin_tag}")
+            if file_count > 5:
+                lines.append(f"    ... and {file_count - 5} more files")
+            # Show context for high/medium
+            if sev in ("high", "medium") and data["contexts"]:
+                lines.append(f"    context: {data['contexts'][0]}")
 
     # Summary of unique IPs
     if ips_found:

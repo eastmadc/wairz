@@ -21,7 +21,7 @@ const CATEGORY_RULES: [string, (name: string) => boolean][] = [
   ],
   [
     'SBOM & Vulnerabilities',
-    (n) => /^(generate_sbom|get_sbom_|check_component_|run_vulnerability_|push_to_dependency)/.test(n),
+    (n) => /^(generate_sbom|export_sbom|get_sbom_|check_component_|run_vulnerability_|push_to_dependency|assess_vulnerabilities)/.test(n),
   ],
   [
     'Filesystem',
@@ -95,6 +95,7 @@ export default function SecurityToolsPage() {
   const [running, setRunning] = useState(false)
   const [result, setResult] = useState<ToolRunResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [lastInput, setLastInput] = useState<Record<string, unknown>>({})
 
   // Fetch tools on mount
   useEffect(() => {
@@ -151,6 +152,7 @@ export default function SecurityToolsPage() {
     setRunning(true)
     setResult(null)
     setError(null)
+    setLastInput(input)
     try {
       const resp = await runTool(
         projectId,
@@ -280,7 +282,7 @@ export default function SecurityToolsPage() {
                   loading={running}
                 />
                 <div className="border-t border-border pt-4">
-                  <ToolOutput result={result} loading={running} error={error} />
+                  <ToolOutput result={result} loading={running} error={error} toolInput={lastInput} />
                 </div>
               </div>
             </>
