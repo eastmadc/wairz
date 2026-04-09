@@ -784,8 +784,6 @@ async def _handle_export_sbom(input: dict, context: ToolContext) -> str:
         return json.dumps(doc, indent=2)[:30000]
 
     if export_format == "cyclonedx-vex-json":
-        from app.routers.sbom import _build_vex_response
-
         # Load vulnerabilities joined with components
         vuln_stmt = (
             select(SbomVulnerability, SbomComponent)
@@ -796,9 +794,56 @@ async def _handle_export_sbom(input: dict, context: ToolContext) -> str:
         vuln_result = await context.db.execute(vuln_stmt)
         vuln_rows = vuln_result.all()
 
-        resp = _build_vex_response(components, vuln_rows, fw_stub)
-        doc = json.loads(resp.body.decode())
-        return json.dumps(doc, indent=2)[:30000]
+        # For MCP, build a summary + top vulns instead of the full document.
+        # A full VEX with thousands of vulns can be 5-7MB — far beyond 30KB.
+        total_vulns = len(vuln_rows)
+        total_components = len(components)
+
+        # Severity breakdown
+        severity_counts: dict[str, int] = {}
+        state_counts: dict[str, int] = {}
+        for vuln, _comp in vuln_rows:
+            sev = (vuln.adjusted_severity or vuln.severity or "unknown").lower()
+            severity_counts[sev] = severity_counts.get(sev, 0) + 1
+            from app.routers.sbom import _map_resolution_to_vex_state
+            state = _map_resolution_to_vex_state(vuln)
+            state_counts[state] = state_counts.get(state, 0) + 1
+
+        # Affected components (unique)
+        affected_comp_ids = {str(comp.id) for _vuln, comp in vuln_rows}
+
+        # Top vulnerabilities (by CVSS score desc, already ordered)
+        top_vulns = []
+        for vuln, comp in vuln_rows[:50]:
+            score = (
+                float(vuln.adjusted_cvss_score)
+                if vuln.adjusted_cvss_score is not None
+                else (float(vuln.cvss_score) if vuln.cvss_score is not None else None)
+            )
+            top_vulns.append({
+                "cve": vuln.cve_id,
+                "severity": vuln.adjusted_severity or vuln.severity,
+                "cvss": score,
+                "component": comp.name,
+                "component_version": comp.version,
+                "description": (vuln.description or "")[:200],
+            })
+
+        summary = {
+            "format": "CycloneDX VEX 1.7 (MCP summary)",
+            "total_components": total_components,
+            "affected_components": len(affected_comp_ids),
+            "total_vulnerabilities": total_vulns,
+            "by_severity": dict(sorted(severity_counts.items())),
+            "by_state": dict(sorted(state_counts.items())),
+            "top_vulnerabilities": top_vulns,
+            "note": (
+                f"Showing top 50 of {total_vulns} vulnerabilities. "
+                f"Use the REST API GET /api/v1/projects/{{project_id}}/sbom/export"
+                f"?format=cyclonedx-vex-json for the full CycloneDX VEX document."
+            ),
+        }
+        return json.dumps(summary, indent=2)[:30000]
 
     # Default: CycloneDX 1.7 SBOM
     from datetime import datetime, timezone

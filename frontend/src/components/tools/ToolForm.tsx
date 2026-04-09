@@ -78,11 +78,11 @@ export default function ToolForm({ tool, onSubmit, loading }: ToolFormProps) {
             id={name}
             value={(values[name] as string) ?? ''}
             onChange={(e) => setValue(name, e.target.value)}
-            className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-xs transition-colors focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px] outline-none dark:bg-input/30"
+            className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-xs transition-colors focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px] outline-none text-foreground dark:bg-input/30"
           >
-            <option value="">Select...</option>
+            <option value="" className="bg-background text-foreground">Select...</option>
             {prop.enum.map((val) => (
-              <option key={val} value={val}>
+              <option key={val} value={val} className="bg-background text-foreground">
                 {val}
               </option>
             ))}
