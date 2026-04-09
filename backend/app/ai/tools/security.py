@@ -3046,6 +3046,146 @@ async def _handle_analyze_update_config(input: dict, context: ToolContext) -> st
     return truncate_output(report)
 
 
+# ---------------------------------------------------------------------------
+# CRA (EU Cyber Resilience Act) Compliance Tools
+# ---------------------------------------------------------------------------
+
+
+async def _handle_create_cra_assessment(input: dict, context: ToolContext) -> str:
+    """Create a CRA compliance assessment for the current firmware."""
+    import uuid as _uuid
+
+    from app.services.cra_compliance_service import CRAComplianceService
+
+    service = CRAComplianceService(context.db)
+    assessment = await service.create_assessment(
+        project_id=context.project_id,
+        firmware_id=context.firmware_id,
+        product_name=input.get("product_name"),
+        product_version=input.get("product_version"),
+        assessor_name=input.get("assessor_name"),
+    )
+    total = (
+        assessment.auto_pass_count
+        + assessment.auto_fail_count
+        + assessment.manual_count
+        + assessment.not_tested_count
+    )
+    return (
+        f"CRA assessment created: {assessment.id}\n"
+        f"{total} requirements initialized.\n"
+        f"Use auto_populate_cra to map existing findings to requirements."
+    )
+
+
+async def _handle_auto_populate_cra(input: dict, context: ToolContext) -> str:
+    """Auto-populate CRA assessment from existing tool findings."""
+    import uuid as _uuid
+
+    from app.services.cra_compliance_service import CRAComplianceService
+
+    assessment_id = input.get("assessment_id")
+    if not assessment_id:
+        return "Error: assessment_id is required"
+
+    service = CRAComplianceService(context.db)
+    try:
+        assessment = await service.auto_populate(_uuid.UUID(assessment_id))
+    except ValueError as e:
+        return f"Error: {e}"
+
+    return (
+        f"Auto-populated CRA assessment {assessment.id}:\n"
+        f"  Pass: {assessment.auto_pass_count}\n"
+        f"  Fail: {assessment.auto_fail_count}\n"
+        f"  Manual review: {assessment.manual_count}\n"
+        f"  Not tested: {assessment.not_tested_count}\n\n"
+        f"Use update_cra_requirement to manually assess 'not_tested' requirements."
+    )
+
+
+async def _handle_update_cra_requirement(input: dict, context: ToolContext) -> str:
+    """Manually update a CRA requirement status/notes."""
+    import uuid as _uuid
+
+    from app.services.cra_compliance_service import CRAComplianceService
+
+    assessment_id = input.get("assessment_id")
+    requirement_id = input.get("requirement_id")
+    if not assessment_id:
+        return "Error: assessment_id is required"
+    if not requirement_id:
+        return "Error: requirement_id is required"
+
+    status = input.get("status")
+    manual_notes = input.get("manual_notes")
+    manual_evidence = input.get("manual_evidence")
+
+    service = CRAComplianceService(context.db)
+    try:
+        req_result = await service.update_requirement(
+            assessment_id=_uuid.UUID(assessment_id),
+            requirement_id=requirement_id,
+            status=status,
+            manual_notes=manual_notes,
+            manual_evidence=manual_evidence,
+        )
+    except ValueError as e:
+        return f"Error: {e}"
+
+    return (
+        f"Updated requirement {req_result.requirement_id}: "
+        f"{req_result.requirement_title}\n"
+        f"  Status: {req_result.status}\n"
+        f"  Notes: {req_result.manual_notes or '(none)'}"
+    )
+
+
+async def _handle_export_cra_checklist(input: dict, context: ToolContext) -> str:
+    """Export CRA checklist as structured JSON."""
+    import uuid as _uuid
+
+    from app.services.cra_compliance_service import CRAComplianceService
+
+    assessment_id = input.get("assessment_id")
+    if not assessment_id:
+        return "Error: assessment_id is required"
+
+    service = CRAComplianceService(context.db)
+    try:
+        checklist = await service.export_checklist(_uuid.UUID(assessment_id))
+    except ValueError as e:
+        return f"Error: {e}"
+
+    return truncate_output(json.dumps(checklist, indent=2, default=str))
+
+
+async def _handle_generate_article14_notification(
+    input: dict, context: ToolContext
+) -> str:
+    """Generate Article 14 ENISA notification for a CVE."""
+    import uuid as _uuid
+
+    from app.services.cra_compliance_service import CRAComplianceService
+
+    assessment_id = input.get("assessment_id")
+    cve_id = input.get("cve_id")
+    if not assessment_id:
+        return "Error: assessment_id is required"
+    if not cve_id:
+        return "Error: cve_id is required"
+
+    service = CRAComplianceService(context.db)
+    try:
+        notification = await service.export_article14_notification(
+            _uuid.UUID(assessment_id), cve_id
+        )
+    except ValueError as e:
+        return f"Error: {e}"
+
+    return truncate_output(json.dumps(notification, indent=2, default=str))
+
+
 def register_security_tools(registry: ToolRegistry) -> None:
     """Register all security assessment tools with the given registry."""
 
@@ -3654,4 +3794,147 @@ def register_security_tools(registry: ToolRegistry) -> None:
             "required": ["system"],
         },
         handler=_handle_analyze_update_config,
+    )
+
+    # ----- CRA (EU Cyber Resilience Act) compliance -----
+
+    registry.register(
+        name="create_cra_assessment",
+        description=(
+            "Create a new CRA (EU Cyber Resilience Act) compliance assessment "
+            "for the current firmware. Initializes all 20 Annex I requirements "
+            "(13 Part 1 security + 7 Part 2 vulnerability handling) with status "
+            "'not_tested'. Optionally provide product metadata and assessor name."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "product_name": {
+                    "type": "string",
+                    "description": "Product name for the assessment (e.g. 'Router X200')",
+                },
+                "product_version": {
+                    "type": "string",
+                    "description": "Product firmware version (e.g. '2.1.0')",
+                },
+                "assessor_name": {
+                    "type": "string",
+                    "description": "Name of the person or team performing the assessment",
+                },
+            },
+            "required": [],
+        },
+        handler=_handle_create_cra_assessment,
+    )
+
+    registry.register(
+        name="auto_populate_cra",
+        description=(
+            "Auto-populate a CRA assessment from existing tool findings. "
+            "Maps findings to the 20 CRA Annex I requirements based on title "
+            "patterns, CWE IDs, and tool sources. High/critical severity findings "
+            "cause 'fail', lower severity causes 'partial', no findings means "
+            "'pass'. Non-automatable requirements are left for manual assessment. "
+            "Run security analysis tools first for best coverage."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "assessment_id": {
+                    "type": "string",
+                    "description": "UUID of the CRA assessment to auto-populate",
+                },
+            },
+            "required": ["assessment_id"],
+        },
+        handler=_handle_auto_populate_cra,
+    )
+
+    registry.register(
+        name="update_cra_requirement",
+        description=(
+            "Manually update a single CRA requirement's status and/or notes. "
+            "Use for requirements that cannot be auto-populated (e.g. risk "
+            "assessment documentation, vulnerability disclosure policy) or to "
+            "override auto-populated results with manual findings."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "assessment_id": {
+                    "type": "string",
+                    "description": "UUID of the CRA assessment",
+                },
+                "requirement_id": {
+                    "type": "string",
+                    "description": (
+                        "CRA requirement ID (e.g. 'annex1_part1_1.3', "
+                        "'annex1_part2_2.4')"
+                    ),
+                },
+                "status": {
+                    "type": "string",
+                    "enum": ["pass", "fail", "partial", "not_tested", "not_applicable"],
+                    "description": "New status for the requirement",
+                },
+                "manual_notes": {
+                    "type": "string",
+                    "description": "Manual assessment notes (e.g. justification for status)",
+                },
+                "manual_evidence": {
+                    "type": "string",
+                    "description": "Manual evidence text (e.g. document references, test results)",
+                },
+            },
+            "required": ["assessment_id", "requirement_id"],
+        },
+        handler=_handle_update_cra_requirement,
+    )
+
+    registry.register(
+        name="export_cra_checklist",
+        description=(
+            "Export a CRA compliance checklist as structured JSON. Returns the "
+            "full assessment with all 20 requirements grouped by Annex I Part 1 "
+            "(security) and Part 2 (vulnerability handling), including evidence, "
+            "finding IDs, deadlines, and compliance summary."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "assessment_id": {
+                    "type": "string",
+                    "description": "UUID of the CRA assessment to export",
+                },
+            },
+            "required": ["assessment_id"],
+        },
+        handler=_handle_export_cra_checklist,
+    )
+
+    registry.register(
+        name="generate_article14_notification",
+        description=(
+            "Generate an Article 14 ENISA vulnerability notification document "
+            "for a specific CVE. Article 14 of the CRA requires manufacturers "
+            "to notify ENISA within 24 hours of becoming aware of an actively "
+            "exploited vulnerability. Produces a structured notification with "
+            "product info, vulnerability details, affected components, timeline, "
+            "and mitigation status."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "assessment_id": {
+                    "type": "string",
+                    "description": "UUID of the CRA assessment",
+                },
+                "cve_id": {
+                    "type": "string",
+                    "description": "CVE identifier (e.g. 'CVE-2024-1234')",
+                },
+            },
+            "required": ["assessment_id", "cve_id"],
+        },
+        handler=_handle_generate_article14_notification,
     )

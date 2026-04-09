@@ -145,6 +145,12 @@ ALLOWED_TOOLS: set[str] = {
     "cwe_check_status",
     "cwe_check_binary",
     "cwe_check_firmware",
+    # CRA compliance (read-only analysis + reporting)
+    "create_cra_assessment",
+    "auto_populate_cra",
+    "update_cra_requirement",
+    "export_cra_checklist",
+    "generate_article14_notification",
 }
 
 
