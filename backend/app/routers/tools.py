@@ -90,6 +90,9 @@ ALLOWED_TOOLS: set[str] = {
     "shellcheck_scan",
     "bandit_scan",
     "check_secure_boot",
+    "detect_network_dependencies",
+    "detect_update_mechanisms",
+    "analyze_update_config",
     # SBOM (read-only)
     "generate_sbom",
     "get_sbom_components",

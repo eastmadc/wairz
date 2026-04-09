@@ -2667,6 +2667,303 @@ async def _handle_check_secure_boot(input: dict, context: ToolContext) -> str:
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# detect_network_dependencies
+# ---------------------------------------------------------------------------
+
+# Binary extensions to skip during text file scanning
+_NET_DEP_BINARY_EXTENSIONS = frozenset({
+    ".bin", ".img", ".gz", ".xz", ".bz2", ".zst", ".lz4", ".lzma",
+    ".zip", ".tar", ".elf", ".so", ".o", ".a", ".ko", ".dtb",
+    ".jpg", ".jpeg", ".png", ".gif", ".bmp", ".ico", ".svg",
+    ".mp3", ".mp4", ".wav", ".avi", ".mkv",
+    ".pyc", ".pyo", ".class", ".wasm",
+})
+
+# Regex patterns grouped by category
+_NET_DEP_PATTERNS: dict[str, list[tuple[re.Pattern, str, str, str | None]]] = {
+    # (pattern, description, severity, cwe)
+    "NFS": [
+        (re.compile(r"\bnfs://\S+", re.IGNORECASE), "NFS URL", "medium", "CWE-1051"),
+        (re.compile(r"^\s*[^#]\S+\s+\S+\s+nfs[4 ,\t]", re.MULTILINE), "NFS mount in fstab", "medium", "CWE-1051"),
+        (re.compile(r"\bmount\b.*\s+-t\s+nfs[4 ]", re.IGNORECASE), "NFS mount command", "medium", "CWE-1051"),
+        (re.compile(r"no_root_squash", re.IGNORECASE), "NFS no_root_squash export", "high", "CWE-269"),
+    ],
+    "SMB/CIFS": [
+        (re.compile(r"(?<!:)//\w[\w.-]+/\w[\w./$-]+"), "SMB/CIFS share path", "medium", "CWE-1051"),
+        (re.compile(r"\bmount\b.*\s+-t\s+cifs\b", re.IGNORECASE), "CIFS mount command", "medium", "CWE-1051"),
+        (re.compile(r"(?:cifs|smbfs|mount).*\bpassword=\S+", re.IGNORECASE), "CIFS mount with inline password", "critical", "CWE-798"),
+        (re.compile(r"(?:cifs|smbfs|mount).*\busername=\S+", re.IGNORECASE), "CIFS mount with inline username", "high", "CWE-256"),
+    ],
+    "Cloud Storage": [
+        (re.compile(r"\bs3://[\w./-]+", re.IGNORECASE), "AWS S3 bucket URL", "high", "CWE-200"),
+        (re.compile(r"[\w.-]+\.s3\.amazonaws\.com"), "AWS S3 endpoint", "high", "CWE-200"),
+        (re.compile(r"[\w.-]+\.blob\.core\.windows\.net"), "Azure Blob endpoint", "high", "CWE-200"),
+        (re.compile(r"\bgs://[\w./-]+"), "Google Cloud Storage URL", "high", "CWE-200"),
+        (re.compile(r"storage\.googleapis\.com"), "GCS endpoint", "high", "CWE-200"),
+    ],
+    "Database": [
+        (re.compile(r"\bmongodb://\S+", re.IGNORECASE), "MongoDB connection string", "high", "CWE-200"),
+        (re.compile(r"\bmysql://\S+", re.IGNORECASE), "MySQL connection string", "high", "CWE-200"),
+        (re.compile(r"\bpostgres(ql)?://\S+", re.IGNORECASE), "PostgreSQL connection string", "high", "CWE-200"),
+        (re.compile(r"\bredis://\S+", re.IGNORECASE), "Redis connection string", "high", "CWE-200"),
+        (re.compile(r"\binfluxdb://\S+", re.IGNORECASE), "InfluxDB connection string", "high", "CWE-200"),
+        (re.compile(r"\bamqps?://\S+", re.IGNORECASE), "AMQP connection string", "high", "CWE-200"),
+        (re.compile(r"(?:mysql|redis-cli|psql|mongo)\b.*(?:-h|--host)\s+\S+", re.IGNORECASE),
+         "Database CLI with remote host", "medium", "CWE-200"),
+        (re.compile(r"\b(?:3306|5432|6379|27017|5672|9092|2181)\b"),
+         "Well-known database/broker port", "info", None),
+    ],
+    "MQTT/AMQP": [
+        (re.compile(r"\bmqtts?://\S+", re.IGNORECASE), "MQTT broker URL", "high", "CWE-200"),
+        (re.compile(r"\bmosquitto_(?:pub|sub)\b.*-h\s+\S+", re.IGNORECASE),
+         "Mosquitto client with remote host", "high", "CWE-200"),
+        (re.compile(r"^\s*(?:listener|port)\s+1883\b", re.MULTILINE),
+         "MQTT plaintext listener (port 1883)", "high", "CWE-319"),
+        (re.compile(r"^\s*(?:listener|port)\s+8883\b", re.MULTILINE),
+         "MQTT TLS listener (port 8883)", "medium", "CWE-200"),
+    ],
+    "FTP/TFTP": [
+        (re.compile(r"\bftps?://\S+", re.IGNORECASE), "FTP URL", "high", "CWE-494"),
+        (re.compile(r"\btftp://\S+", re.IGNORECASE), "TFTP URL", "high", "CWE-494"),
+        (re.compile(r"\b(?:ftpget|ftpput|wget|curl)\b.*\bftp://", re.IGNORECASE),
+         "FTP download command", "high", "CWE-494"),
+    ],
+    "Remote Syslog": [
+        (re.compile(r"^\s*@@?\S+", re.MULTILINE),
+         "rsyslog remote forwarding (@host or @@host)", "medium", "CWE-319"),
+        (re.compile(r"destination\s*\{[^}]*host\s*\(\s*\"[^\"]+\"", re.DOTALL),
+         "syslog-ng remote destination", "medium", "CWE-319"),
+    ],
+    "iSCSI": [
+        (re.compile(r"\biqn\.\d{4}-\d{2}\.\S+", re.IGNORECASE),
+         "iSCSI target IQN", "high", "CWE-200"),
+    ],
+}
+
+# Config files to scan first (high confidence)
+_NET_DEP_CONFIG_FILES = [
+    "etc/fstab",
+    "etc/exports",
+    "etc/samba/smb.conf",
+    "etc/mosquitto/mosquitto.conf",
+    "etc/rsyslog.conf",
+    "etc/syslog-ng/syslog-ng.conf",
+    "etc/iscsi/initiatorname.iscsi",
+]
+
+# Config file globs for auto-mount configs
+_NET_DEP_CONFIG_GLOBS = [
+    "etc/auto.*",
+]
+
+
+def _is_net_dep_text_file(path: str) -> bool:
+    """Check if a file is a text file suitable for scanning."""
+    _, ext = os.path.splitext(path.lower())
+    if ext in _NET_DEP_BINARY_EXTENSIONS:
+        return False
+    try:
+        with open(path, "rb") as f:
+            chunk = f.read(512)
+            if b"\x00" in chunk:
+                return False
+    except OSError:
+        return False
+    return True
+
+
+async def _handle_detect_network_dependencies(input: dict, context: ToolContext) -> str:
+    """Scan firmware for network mounts, cloud endpoints, brokers, and DB connections."""
+    extracted_root = context.extracted_path
+    input_path = input.get("path") or "/"
+    search_root = context.resolve_path(input_path)
+    real_root = context.real_root_for(input_path)
+    limit = _get_limit(input)
+
+    from dataclasses import dataclass
+
+    @dataclass
+    class NetDepFinding:
+        category: str
+        severity: str
+        description: str
+        file_path: str
+        line_number: int
+        evidence: str
+        cwe: str | None
+
+    findings: list[NetDepFinding] = []
+
+    def _scan_file(abs_path: str, content: str | None = None):
+        """Scan a single file against all network dependency patterns."""
+        if content is None:
+            try:
+                if os.path.getsize(abs_path) > 1_000_000:
+                    return
+            except OSError:
+                return
+            if not _is_net_dep_text_file(abs_path):
+                return
+            try:
+                with open(abs_path, "r", errors="replace") as f:
+                    content = f.read(256_000)
+            except (OSError, PermissionError):
+                return
+
+        rel_path = _rel(abs_path, real_root)
+        basename = os.path.basename(abs_path).lower()
+
+        for category, patterns in _NET_DEP_PATTERNS.items():
+            for pat, desc, severity, cwe in patterns:
+                # Scope rsyslog @host pattern to rsyslog config files only
+                if "rsyslog" in desc.lower() and "rsyslog" not in basename and "syslog" not in basename:
+                    continue
+                # Scope syslog-ng pattern to syslog-ng configs only
+                if "syslog-ng" in desc.lower() and "syslog-ng" not in basename and "syslog" not in basename:
+                    continue
+                # Scope MQTT listener patterns to mosquitto config files
+                if "listener" in desc.lower() and "mosquitto" not in basename:
+                    continue
+                # Well-known port pattern only matches in config-like files
+                if "Well-known" in desc and not any(
+                    ext in basename for ext in (".conf", ".cfg", ".ini", ".yaml", ".yml", ".json", ".env")
+                ):
+                    continue
+
+                for line_num, line in enumerate(content.splitlines(), 1):
+                    if len(findings) >= limit:
+                        return
+                    stripped = line.strip()
+                    if not stripped or stripped.startswith("#"):
+                        continue
+                    m = pat.search(line)
+                    if not m:
+                        continue
+
+                    # Elevate severity for credential exposure in connection strings
+                    actual_severity = severity
+                    actual_cwe = cwe
+                    match_text = m.group(0)
+                    if category == "Database" and re.search(r"://[^/]*:[^@/]+@", match_text):
+                        actual_severity = "critical"
+                        actual_cwe = "CWE-798"
+                        desc_final = f"{desc} (contains credentials)"
+                    elif category == "SMB/CIFS" and "password=" in line.lower():
+                        actual_severity = "critical"
+                        actual_cwe = "CWE-798"
+                        desc_final = f"{desc} (inline password exposed)"
+                    else:
+                        desc_final = desc
+
+                    findings.append(NetDepFinding(
+                        category=category,
+                        severity=actual_severity,
+                        description=desc_final,
+                        file_path=rel_path,
+                        line_number=line_num,
+                        evidence=stripped[:200],
+                        cwe=actual_cwe,
+                    ))
+
+    # Phase 1: Scan specific config files (high confidence)
+    for rel_conf in _NET_DEP_CONFIG_FILES:
+        conf_path = os.path.join(real_root, rel_conf)
+        if os.path.isfile(conf_path):
+            _scan_file(conf_path)
+
+    # Scan auto.* mount configs
+    auto_dir = os.path.join(real_root, "etc")
+    if os.path.isdir(auto_dir):
+        try:
+            for name in os.listdir(auto_dir):
+                if name.startswith("auto.") and os.path.isfile(os.path.join(auto_dir, name)):
+                    _scan_file(os.path.join(auto_dir, name))
+        except OSError:
+            pass
+
+    # Phase 2: Scan init scripts and crontabs (medium confidence)
+    for rel_dir in ("etc/init.d", "etc/rc.d", "etc/cron.d", "var/spool/cron"):
+        dir_path = os.path.join(real_root, rel_dir)
+        if not os.path.isdir(dir_path):
+            continue
+        try:
+            for name in os.listdir(dir_path):
+                if len(findings) >= limit:
+                    break
+                abs_path = os.path.join(dir_path, name)
+                if os.path.isfile(abs_path):
+                    _scan_file(abs_path)
+        except OSError:
+            continue
+
+    # Phase 3: Broad sweep across all text files (if we haven't hit limit)
+    if len(findings) < limit:
+        # Track already-scanned files to avoid duplicates
+        scanned = set()
+        for f in findings:
+            scanned.add(f.file_path)
+
+        for dirpath, _dirs, files in safe_walk(search_root):
+            if len(findings) >= limit:
+                break
+            for name in files:
+                if len(findings) >= limit:
+                    break
+                abs_path = os.path.join(dirpath, name)
+                rel_path = _rel(abs_path, real_root)
+                if rel_path in scanned:
+                    continue
+                scanned.add(rel_path)
+                _scan_file(abs_path)
+
+    if not findings:
+        return "No network dependencies detected in the firmware filesystem."
+
+    # Deduplicate by (category, file_path, line_number)
+    seen = set()
+    unique: list[NetDepFinding] = []
+    for f in findings:
+        key = (f.category, f.file_path, f.line_number)
+        if key not in seen:
+            seen.add(key)
+            unique.append(f)
+    findings = unique[:limit]
+
+    # Sort by severity order, then category
+    sev_order = {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}
+
+    # Group by category
+    by_category: dict[str, list[NetDepFinding]] = {}
+    for f in sorted(findings, key=lambda x: (sev_order.get(x.severity, 5), x.category)):
+        by_category.setdefault(f.category, []).append(f)
+
+    # Build output
+    lines: list[str] = []
+    lines.append(f"Network Dependency Scan: {len(findings)} finding(s)\n")
+
+    # Summary counts by severity
+    sev_counts: dict[str, int] = {}
+    for f in findings:
+        sev_counts[f.severity] = sev_counts.get(f.severity, 0) + 1
+    summary_parts = []
+    for sev in ("critical", "high", "medium", "low", "info"):
+        if sev in sev_counts:
+            summary_parts.append(f"{sev_counts[sev]} {sev}")
+    lines.append(f"Severity: {', '.join(summary_parts)}\n")
+
+    for category, cat_findings in by_category.items():
+        lines.append(f"--- {category} ({len(cat_findings)}) ---\n")
+        for f in cat_findings:
+            cwe_str = f" [{f.cwe}]" if f.cwe else ""
+            lines.append(f"  [{f.severity.upper()}]{cwe_str} {f.description}")
+            lines.append(f"    File: {f.file_path}:{f.line_number}")
+            lines.append(f"    Evidence: {f.evidence}")
+            lines.append("")
+
+    return truncate_output("\n".join(lines))
+
+
 async def _handle_update_yara_rules(input: dict, context: ToolContext) -> str:
     """Download or update YARA Forge community rules."""
     from app.config import get_settings
@@ -2712,6 +3009,41 @@ async def _handle_update_yara_rules(input: dict, context: ToolContext) -> str:
         f"YARA Forge community rules updated: {rule_count} rules downloaded to {forge_dir}.\n"
         f"These will be automatically loaded alongside built-in rules on the next scan."
     )
+
+
+async def _handle_detect_update_mechanisms(input: dict, context: ToolContext) -> str:
+    """Scan firmware for update mechanisms and report findings."""
+    from app.services.update_mechanism_service import (
+        detect_update_mechanisms,
+        format_mechanisms_report,
+    )
+
+    extracted_root = context.extracted_path
+    input_path = input.get("path")
+    if input_path:
+        search_root = context.resolve_path(input_path)
+    else:
+        search_root = os.path.realpath(extracted_root)
+
+    mechanisms = detect_update_mechanisms(search_root)
+    report = format_mechanisms_report(mechanisms)
+    return truncate_output(report)
+
+
+async def _handle_analyze_update_config(input: dict, context: ToolContext) -> str:
+    """Deep-dive analysis of a specific update system's config."""
+    from app.services.update_mechanism_service import analyze_update_config_detail
+
+    extracted_root = context.extracted_path
+    system = input["system"].strip().lower()
+    config_path = input.get("path")
+
+    if config_path:
+        # Validate path within sandbox
+        context.resolve_path(config_path)
+
+    report = analyze_update_config_detail(extracted_root, system, config_path)
+    return truncate_output(report)
 
 
 def register_security_tools(registry: ToolRegistry) -> None:
@@ -3230,4 +3562,96 @@ def register_security_tools(registry: ToolRegistry) -> None:
             "properties": {},
         },
         handler=_handle_update_yara_rules,
+    )
+
+    registry.register(
+        name="detect_network_dependencies",
+        description=(
+            "Scan firmware for network dependencies: NFS/CIFS mounts, cloud storage "
+            "endpoints (S3, Azure Blob, GCS), database connections (MongoDB, MySQL, "
+            "PostgreSQL, Redis, InfluxDB), MQTT/AMQP brokers, FTP/TFTP URLs, remote "
+            "syslog forwarding, and iSCSI targets. Classifies findings by severity "
+            "and CWE. Flags credential exposure in mount options and connection strings. "
+            "Scans config files first (fstab, exports, smb.conf, mosquitto.conf), "
+            "then init scripts and crontabs, then all text files."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": (
+                        "Directory within the firmware to scan. "
+                        "Defaults to the entire firmware root."
+                    ),
+                },
+                "max_results": {
+                    "type": "integer",
+                    "description": "Maximum findings to return (default: 100, set to 0 for all)",
+                },
+            },
+            "required": [],
+        },
+        handler=_handle_detect_network_dependencies,
+    )
+
+    # ----- Firmware update mechanism detection -----
+
+    registry.register(
+        name="detect_update_mechanisms",
+        description=(
+            "Scan firmware for update mechanisms: SWUpdate, RAUC, Mender, "
+            "opkg/sysupgrade, U-Boot env, Android OTA, package managers "
+            "(dpkg/apt/yum), and custom wget+flash OTA scripts. For each "
+            "detected system, reports binaries, config files, update URLs "
+            "(HTTP vs HTTPS), A/B partition scheme, and security findings. "
+            "Flags: no update mechanism (CWE-1277), HTTP-only URLs (CWE-319), "
+            "no rollback (CWE-1277), custom OTA scripts (CWE-494)."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": (
+                        "Root path within firmware to scan. "
+                        "Defaults to the entire firmware filesystem."
+                    ),
+                },
+            },
+            "required": [],
+        },
+        handler=_handle_detect_update_mechanisms,
+    )
+
+    registry.register(
+        name="analyze_update_config",
+        description=(
+            "Deep-dive analysis of a specific update system's configuration. "
+            "Reads and parses the config files for the named update system, "
+            "extracting server URLs, feed definitions, slot layouts, signing "
+            "settings, and poll intervals. Systems: swupdate, rauc, mender, "
+            "opkg, uboot_env, android_ota, package_manager."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "system": {
+                    "type": "string",
+                    "description": (
+                        "Update system to analyze. One of: swupdate, rauc, "
+                        "mender, opkg, uboot_env, android_ota, package_manager."
+                    ),
+                },
+                "path": {
+                    "type": "string",
+                    "description": (
+                        "Optional path to a specific config file to analyze. "
+                        "If omitted, auto-discovers config files for the system."
+                    ),
+                },
+            },
+            "required": ["system"],
+        },
+        handler=_handle_analyze_update_config,
     )

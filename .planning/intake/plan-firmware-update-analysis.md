@@ -1,10 +1,12 @@
 # Plan: Firmware Update Mechanism Static Detection
 
 > Created: 2026-04-08
-> Priority: High (CRA Annex I prerequisite)
+> Priority: High (CRA Annex I prerequisite) | **Status:** completed (2026-04-08, session 21)
 > Effort: Medium (1 session)
 > Dependencies: None (standalone, feeds into CRA compliance report)
 > Session: S22
+
+**Completed 2026-04-08:** `update_mechanism_service.py` (530 lines) with 8 detectors (SWUpdate, RAUC, Mender, opkg, U-Boot env, Android OTA, custom scripts, package managers). 2 MCP tools (`detect_update_mechanisms`, `analyze_update_config`). REST endpoint at `/security/firmware/{fid}/update-mechanisms`. Integrated into security audit pipeline. Whitelisted for REST.
 
 ---
 

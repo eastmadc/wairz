@@ -1,11 +1,30 @@
 # Wairz Master Plan
 
 > Created: 2026-04-01
-> Updated: 2026-04-08 (session 20 -- cwe_checker, binwalk3, YARA Forge, hardcoded IPs, fuzzy daemons)
+> Updated: 2026-04-08 (session 21 -- network dependency mapping, firmware update detection)
 > Resume with: /do continue
 > Plans: .planning/intake/plan-*.md (detailed plans for remaining items)
 > Active campaign: none
-> Commit: f366c74 on clean-history (push to myfork pending)
+> Commit: pending on clean-history
+
+---
+
+## Session 21 Handoff (2026-04-08)
+
+**What was done this session:**
+1. **Network dependency mapping** (`plan-network-dependency-mapping.md`): `detect_network_dependencies` MCP tool — 8 detection categories (NFS, SMB/CIFS, cloud storage, DB connections, MQTT/AMQP, FTP/TFTP, remote syslog, iSCSI), severity classification with CWE tags, 3-phase scan (config files → init scripts → broad sweep). Fixed SMB/CIFS false positive on URL `://` patterns.
+2. **Firmware update mechanism detection** (`plan-firmware-update-analysis.md`): New `update_mechanism_service.py` (530 lines) with 8 detectors (SWUpdate, RAUC, Mender, opkg, U-Boot, Android OTA, custom scripts, package managers). 2 MCP tools (`detect_update_mechanisms`, `analyze_update_config`). REST endpoint. Flags no-update (CWE-1277), HTTP-only (CWE-319), no-rollback (CWE-1277), custom wget+flash (CWE-494).
+3. **Both integrated into security audit pipeline** — `_scan_network_dependencies()` and `_scan_update_mechanisms()` in `security_audit_service.py`.
+4. **98 REST-whitelisted tools** (was 95).
+
+**Verified on real firmware (Raspberry Pi OS):**
+- Network deps: 1 NFS mount finding (from .ash_history)
+- Update mechanisms: dpkg/rpm detected (medium confidence), no A/B rollback flagged
+
+**What to do next (S22-S24 per roadmap):**
+1. **S22 (done this session):** Firmware update mechanism detection — completed alongside S21
+2. **S23: CRA compliance report generator** (`plan-cra-compliance-report.md`) — Full Annex I data model, auto-populate from tools, Article 14 notification export, pentester checklist view. 1 session.
+3. **S24: Stabilize** — README update, Docker dev mode, integration tests for S20-S23 features.
 
 ---
 
