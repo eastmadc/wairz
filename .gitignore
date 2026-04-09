@@ -34,3 +34,6 @@ site/
 
 # Docker
 docker-compose.override.yml
+
+# Test firmware (large binaries)
+test-firmware/

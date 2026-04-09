@@ -1,11 +1,88 @@
 # Wairz Master Plan
 
 > Created: 2026-04-01
-> Updated: 2026-04-08 (session 21 -- network dependency mapping, firmware update detection)
+> Updated: 2026-04-09 (session 24 -- S24 Stabilize)
 > Resume with: /do continue
 > Plans: .planning/intake/plan-*.md (detailed plans for remaining items)
 > Active campaign: none
 > Commit: pending on clean-history
+
+---
+
+## Session 24 Handoff (2026-04-09)
+
+**What was done this session:**
+1. **README overhaul**: Updated from "60+ tools" to "160+ tools" (162 actual). Added all S13-S23 features: RTOS, Android, UEFI, CRA compliance, cwe_checker, YARA Forge, attack surface scoring, network deps, firmware update detection, hardcoded IPs, ShellCheck/Bandit, network protocol analysis. Updated architecture diagram, tech stack, MCP tools table (18 categories), project structure, and env vars.
+2. **Docker dev mode**: Created `docker-compose.dev.yml` override with volume mounts for backend Python source (uvicorn `--reload`) and frontend source (Vite HMR via `Dockerfile.dev`). No rebuild needed for code changes.
+3. **Integration tests for S20-S23**: 5 new test files (23 tests):
+   - `test_attack_surface.py` — attack surface scoring (4 tests)
+   - `test_update_mechanism.py` — firmware update detection (6 tests)
+   - `test_network_deps.py` — NFS/CIFS network dependency detection (5 tests)
+   - `test_rtos_detection.py` — FreeRTOS/VxWorks detection (5 tests)
+   - `test_hardcoded_ips.py` — hardcoded IP tool (3 tests, skips without lief)
+4. **Fixed pre-existing test failures**: Updated `test_security_audit_service.py` (checks_run count now >= 8 since S20-S21 added 4 new scan categories) and `test_string_tools.py` (added `find_hardcoded_ips` to expected tools set).
+5. **Housekeeping**: Added `test-firmware/` to `.gitignore`, marked `plan-network-protocol-analysis.md` as completed.
+
+**Test suite: 337 passed, 3 skipped, 0 failures.** TypeScript clean.
+
+**What to do next:**
+1. **CI/CD hardening** — SARIF output, `--fail-on` thresholds, `--format` options for GitHub Action
+2. **Frontend E2E tests (F4)** — 2-3 more Playwright specs + CI integration
+3. **Threat Intelligence** (deferred) — Phases 2-5 (ClamAV, VirusTotal, abuse.ch, CIRCL)
+
+**Known issues:**
+- 3 test files skip outside Docker (lief, yara not installed locally)
+- harness.json protected by hook — 2 quality rule candidates from S23 need manual addition
+
+---
+
+## Session 23 Handoff (2026-04-09)
+
+**What was done this session:**
+1. **VEX export fix**: MCP `export_sbom` with VEX format now returns structured summary (severity breakdown, top 50 vulns) instead of truncated 30KB of component JSON. REST endpoint still returns full 6.8MB CycloneDX VEX document.
+2. **SBOM export dropdown**: Export button on SBOM page now offers 3 formats (CycloneDX 1.7, SPDX 2.3, CycloneDX VEX). Each triggers direct browser download.
+3. **Download button on Security Tools page**: When running `export_sbom` from the Tools page, a Download button appears next to Copy that fetches the full document via REST.
+4. **Dark mode dropdown fix**: Global CSS rule in `index.css` base layer fixes white-on-white `<select>`/`<option>` elements across all 12+ pages.
+5. **MCP tool output deduplication**: `find_hardcoded_ips` resolves symlinks (busybox: 300 symlinks → 1 scan), groups by IP instead of per-file listing. Output: 64KB → 2KB.
+6. **Display caps on verbose tools**: `check_all_binary_protections` (50 cap), `find_crypto_material` (30/category), `find_hardcoded_credentials` (30 high-entropy, 20 low-entropy).
+7. **Category fix**: `export_sbom` and `assess_vulnerabilities` now appear in "SBOM & Vulnerabilities" category on Security Tools page.
+
+**Commit:** `cd8cb43` on `clean-history`, pushed to myfork.
+
+---
+
+## Session 22 Handoff (2026-04-09)
+
+**What was done this session:**
+1. **Committed session 21 work** (`124a69c`): network dependency mapping + firmware update mechanism detection + security audit integration.
+2. **CRA compliance report generator** (`plan-cra-compliance-report.md`): Full EU CRA Annex I data model with 20 requirements (13 Part 1 security + 7 Part 2 vulnerability handling). Fleet campaign: Wave 1 (backend models/service) → Wave 2 (REST+MCP || frontend) in parallel.
+   - DB models: `CraAssessment` + `CraRequirementResult` tables with Alembic migration
+   - Service: `cra_compliance_service.py` (833 lines) — auto-populate from existing findings, export checklist, Article 14 ENISA notification
+   - REST: 7 endpoints at `/api/v1/projects/{pid}/cra/`
+   - MCP: 5 tools (`create_cra_assessment`, `auto_populate_cra`, `update_cra_requirement`, `export_cra_checklist`, `generate_article14_notification`)
+   - Frontend: CraChecklistTab in SecurityScanPage with progress bar, grouped requirements, inline editing, JSON export
+3. **Knowledge extraction**: CRA compliance patterns + antipatterns written to `.planning/knowledge/`
+4. **CLAUDE.md updated**: 6 learned rules promoted from 63 knowledge files across 20+ sessions
+5. **Integration fixes**: SQLAlchemy back_populates mismatch, timezone-naive datetime for asyncpg
+
+**Verified on real firmware (Raspberry Pi OS):**
+- Create assessment: 20 requirements initialized
+- Auto-populate: 8 pass, 4 fail, 2 manual, 6 not tested
+- Export: Full structured JSON with Part 1 (13 reqs) + Part 2 (7 reqs)
+- Manual update: notes saved correctly
+- 147 MCP tools total (was 142), 103 REST-whitelisted (was 98)
+
+**Commit:** `3c4a689` on `clean-history`, pushed to myfork.
+
+**What to do next:**
+1. **S24: Stabilize** — README update (document 147+ tools, CRA compliance), Docker dev mode (volume mounts for hot-reload), integration tests for S20-S23 features.
+2. **CI/CD hardening** — SARIF output, `--fail-on` thresholds, `--format` options for GitHub Action
+3. **Frontend E2E tests (F4)** — 2-3 more Playwright specs + CI integration
+4. **Threat Intelligence** (deferred) — Phases 2-5 (ClamAV, VirusTotal, abuse.ch, CIRCL)
+
+**Known issues:**
+- Auto-populate response has a control character in evidence_summary (from finding data, not code bug)
+- `test-firmware/` directory (16MB OpenWrt binary) not committed — add to .gitignore if unwanted
 
 ---
 
