@@ -16,9 +16,10 @@ import { listFirmware } from '@/api/firmware'
 import { useProjectStore } from '@/stores/projectStore'
 import FirmwareSelector from '@/components/projects/FirmwareSelector'
 import AttackSurfaceTab from '@/components/security/AttackSurfaceTab'
+import CraChecklistTab from '@/components/security/CraChecklistTab'
 import type { Finding, FirmwareDetail, Severity } from '@/types'
 
-type Tab = 'audit' | 'yara' | 'vulhunt' | 'attack-surface'
+type Tab = 'audit' | 'yara' | 'vulhunt' | 'attack-surface' | 'cra'
 
 const SEVERITY_COLORS: Record<Severity, string> = {
   critical: 'bg-red-600 text-white',
@@ -213,6 +214,17 @@ export default function SecurityScanPage() {
         >
           Attack Surface
         </button>
+        <button
+          type="button"
+          className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${
+            tab === 'cra'
+              ? 'border-primary text-primary'
+              : 'border-transparent text-muted-foreground hover:text-foreground'
+          }`}
+          onClick={() => setTab('cra')}
+        >
+          CRA Compliance
+        </button>
       </div>
 
       {/* Action buttons + results */}
@@ -337,8 +349,12 @@ export default function SecurityScanPage() {
         <AttackSurfaceTab projectId={projectId} selectedFirmwareId={selectedFirmwareId} />
       )}
 
-      {/* Findings list (hidden on attack-surface tab which has its own display) */}
-      {tab !== 'attack-surface' && (
+      {tab === 'cra' && projectId && (
+        <CraChecklistTab projectId={projectId} selectedFirmwareId={selectedFirmwareId} />
+      )}
+
+      {/* Findings list (hidden on attack-surface and cra tabs which have their own display) */}
+      {tab !== 'attack-surface' && tab !== 'cra' && (
         <>
           {loadingFindings ? (
             <div className="flex items-center gap-2 py-8 justify-center text-muted-foreground">

@@ -8,7 +8,7 @@ from starlette.requests import Request
 
 from app.config import get_settings
 from app.middleware.auth import APIKeyMiddleware
-from app.routers import analysis, attack_surface, comparison, compliance, component_map, device, documents, emulation, events, export_import, files, findings, firmware, fuzzing, kernels, projects, sbom, security_audit, terminal, tools, uart
+from app.routers import analysis, attack_surface, comparison, compliance, component_map, cra_compliance, device, documents, emulation, events, export_import, files, findings, firmware, fuzzing, kernels, projects, sbom, security_audit, terminal, tools, uart
 from app.routers.terminal import system_ws_router as _system_ws_router
 from app.services.event_service import event_service
 from app.utils.sandbox import PathTraversalError
@@ -90,6 +90,7 @@ app.include_router(uart.router)
 app.include_router(device.router)
 app.include_router(security_audit.router)
 app.include_router(compliance.router)
+app.include_router(cra_compliance.router)
 app.include_router(attack_surface.router)
 app.include_router(tools.router)
 app.include_router(events.router)
