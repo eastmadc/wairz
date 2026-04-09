@@ -1,6 +1,6 @@
 # Plan: Network Protocol Analysis (5.4)
 
-**Priority:** Medium | **Effort:** Large (~13h) | **Status:** pending
+**Priority:** Medium | **Effort:** Large (~13h) | **Status:** completed (2026-04-08, session 18)
 **Route:** `/citadel:archon` (3 phases: capture, analysis, MCP+frontend)
 **Depends on:** System emulation (5.1) -- COMPLETED
 

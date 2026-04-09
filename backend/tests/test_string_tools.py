@@ -206,6 +206,7 @@ class TestRegistration:
             "search_strings",
             "find_crypto_material",
             "find_hardcoded_credentials",
+            "find_hardcoded_ips",
         }
 
     def test_tool_schemas_valid(self, registry):
