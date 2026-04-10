@@ -3378,6 +3378,264 @@ async def _handle_scan_firmware_virustotal(input: dict, context: ToolContext) ->
     return truncate_output("\n".join(lines))
 
 
+# ---------------------------------------------------------------------------
+# abuse.ch threat intelligence (MalwareBazaar, ThreatFox, URLhaus, YARAify)
+# ---------------------------------------------------------------------------
+
+
+async def _handle_check_malwarebazaar_hash(input: dict, context: ToolContext) -> str:
+    """Check a file's hash against MalwareBazaar for known malware."""
+    from app.services import abusech_service, virustotal_service
+
+    path = context.resolve_path(input.get("path", "/"))
+    if not os.path.isfile(path):
+        return f"Not a file: {input.get('path', '/')}"
+
+    loop = asyncio.get_running_loop()
+    sha256 = await loop.run_in_executor(
+        None, virustotal_service._compute_sha256, path
+    )
+
+    result = await abusech_service.check_malwarebazaar(sha256)
+    rel = _rel(path, context.extracted_path)
+    lines = [f"MalwareBazaar lookup for {rel}:", f"SHA-256: {sha256}"]
+
+    if not result.found:
+        lines.append("Status: Not found in MalwareBazaar")
+        lines.append("(Hash not associated with any known malware sample)")
+    else:
+        lines.append("Status: KNOWN MALWARE")
+        if result.signature:
+            lines.append(f"Signature: {result.signature}")
+        if result.file_type:
+            lines.append(f"File type: {result.file_type}")
+        if result.tags:
+            lines.append(f"Tags: {', '.join(result.tags[:10])}")
+        if result.first_seen:
+            lines.append(f"First seen: {result.first_seen}")
+        if result.reporter:
+            lines.append(f"Reporter: {result.reporter}")
+
+    return truncate_output("\n".join(lines))
+
+
+async def _handle_check_threatfox_ioc(input: dict, context: ToolContext) -> str:
+    """Check an IOC (hash, IP, domain) against ThreatFox."""
+    from app.services import abusech_service
+
+    ioc = input.get("ioc", "")
+    if not ioc:
+        return "Error: 'ioc' parameter is required (hash, IP, or domain)"
+
+    ioc_type = input.get("ioc_type", "sha256_hash")
+
+    results = await abusech_service.check_threatfox(ioc, ioc_type)
+    lines = [f"ThreatFox lookup for {ioc} (type: {ioc_type}):"]
+
+    if not results:
+        lines.append("Status: Not found in ThreatFox IOC database")
+    else:
+        lines.append(f"Status: FOUND — {len(results)} IOC record(s)")
+        for r in results[:10]:
+            lines.append(f"\n  Threat: {r.threat_type}")
+            lines.append(f"  Malware: {r.malware}")
+            lines.append(f"  Confidence: {r.confidence_level}%")
+            if r.tags:
+                lines.append(f"  Tags: {', '.join(r.tags[:5])}")
+            if r.reference:
+                lines.append(f"  Reference: {r.reference}")
+
+    return truncate_output("\n".join(lines))
+
+
+async def _handle_check_urlhaus_url(input: dict, context: ToolContext) -> str:
+    """Check a URL against URLhaus for known malware distribution."""
+    from app.services import abusech_service
+
+    url = input.get("url", "")
+    if not url:
+        return "Error: 'url' parameter is required"
+
+    result = await abusech_service.check_urlhaus(url)
+    lines = [f"URLhaus lookup for: {url}"]
+
+    if not result.found:
+        lines.append("Status: Not found in URLhaus")
+    else:
+        lines.append("Status: KNOWN MALICIOUS URL")
+        if result.threat:
+            lines.append(f"Threat: {result.threat}")
+        lines.append(f"URL status: {result.status}")
+        if result.tags:
+            lines.append(f"Tags: {', '.join(result.tags[:10])}")
+        if result.date_added:
+            lines.append(f"Date added: {result.date_added}")
+
+    return truncate_output("\n".join(lines))
+
+
+async def _handle_enrich_firmware_threat_intel(input: dict, context: ToolContext) -> str:
+    """Batch-check firmware IOCs against all abuse.ch services."""
+    from app.services import abusech_service, virustotal_service
+
+    if not context.extracted_path:
+        return "No extracted firmware available. Unpack firmware first."
+
+    loop = asyncio.get_running_loop()
+    max_hashes = input.get("max_hashes", 30)
+    hashes = await loop.run_in_executor(
+        None, virustotal_service.collect_binary_hashes,
+        context.extracted_path, max_hashes,
+    )
+
+    if not hashes:
+        return "No ELF or PE binaries found in extracted firmware."
+
+    # Collect IPs from hardcoded IP findings if available
+    ips: list[str] = []
+    urls: list[str] = []
+
+    lines = [
+        f"abuse.ch threat intel enrichment: {len(hashes)} binaries",
+        f"Services: MalwareBazaar, ThreatFox, URLhaus, YARAify",
+        "",
+    ]
+
+    summary = await abusech_service.enrich_iocs(
+        hashes=hashes,
+        ips=ips,
+        urls=urls,
+        max_hashes=max_hashes,
+    )
+
+    # MalwareBazaar results
+    mb_hits = summary["malwarebazaar"]
+    lines.append(f"--- MalwareBazaar: {len(mb_hits)} known malware samples ---")
+    if mb_hits:
+        for r in mb_hits[:20]:
+            lines.append(f"  {r.file_path}: {r.signature or 'unknown'}")
+            if r.tags:
+                lines.append(f"    Tags: {', '.join(r.tags[:5])}")
+    else:
+        lines.append("  No known malware samples found.")
+
+    # ThreatFox results
+    tf_hits = summary["threatfox"]
+    lines.append(f"\n--- ThreatFox: {len(tf_hits)} IOC matches ---")
+    if tf_hits:
+        for r in tf_hits[:20]:
+            lines.append(f"  {r.ioc}: {r.malware} ({r.threat_type})")
+    else:
+        lines.append("  No IOC matches found.")
+
+    # URLhaus results
+    uh_hits = summary["urlhaus"]
+    lines.append(f"\n--- URLhaus: {len(uh_hits)} malicious URLs ---")
+    if uh_hits:
+        for r in uh_hits[:20]:
+            lines.append(f"  {r.url}: {r.threat} ({r.status})")
+    else:
+        lines.append("  No malicious URLs found.")
+
+    # YARAify results
+    yf_hits = summary["yaraify"]
+    lines.append(f"\n--- YARAify: {len(yf_hits)} community YARA matches ---")
+    if yf_hits:
+        for r in yf_hits[:20]:
+            rules = ", ".join(r.rule_matches[:5])
+            lines.append(f"  {r.file_path}: {rules}")
+    else:
+        lines.append("  No community YARA matches found.")
+
+    total = len(mb_hits) + len(tf_hits) + len(uh_hits) + len(yf_hits)
+    lines.append(f"\n--- Total threat intel hits: {total} ---")
+
+    return truncate_output("\n".join(lines))
+
+
+# ---------------------------------------------------------------------------
+# CIRCL Hashlookup (known-good identification)
+# ---------------------------------------------------------------------------
+
+
+async def _handle_check_known_good_hash(input: dict, context: ToolContext) -> str:
+    """Check if a file is a known-good binary via CIRCL hashlookup."""
+    from app.services import hashlookup_service, virustotal_service
+
+    path = context.resolve_path(input.get("path", "/"))
+    if not os.path.isfile(path):
+        return f"Not a file: {input.get('path', '/')}"
+
+    loop = asyncio.get_running_loop()
+    sha256 = await loop.run_in_executor(
+        None, virustotal_service._compute_sha256, path
+    )
+
+    result = await hashlookup_service.check_known_good(sha256)
+    rel = _rel(path, context.extracted_path)
+    lines = [f"CIRCL Hashlookup for {rel}:", f"SHA-256: {sha256}"]
+
+    if not result.known:
+        lines.append("Status: Not found in known-good databases")
+        lines.append("(This doesn't mean the file is malicious — it may simply be custom/proprietary)")
+    else:
+        lines.append("Status: KNOWN GOOD")
+        lines.append(f"Source: {result.source}")
+        if result.product_name:
+            lines.append(f"Product: {result.product_name}")
+        if result.vendor:
+            lines.append(f"Vendor: {result.vendor}")
+        if result.file_name:
+            lines.append(f"Original filename: {result.file_name}")
+
+    return truncate_output("\n".join(lines))
+
+
+async def _handle_scan_firmware_known_good(input: dict, context: ToolContext) -> str:
+    """Batch-check firmware binaries against CIRCL known-good database."""
+    from app.services import hashlookup_service, virustotal_service
+
+    if not context.extracted_path:
+        return "No extracted firmware available. Unpack firmware first."
+
+    loop = asyncio.get_running_loop()
+    max_files = input.get("max_files", 100)
+    hashes = await loop.run_in_executor(
+        None, virustotal_service.collect_binary_hashes,
+        context.extracted_path, max_files,
+    )
+
+    if not hashes:
+        return "No ELF or PE binaries found in extracted firmware."
+
+    results = await hashlookup_service.batch_check_known_good(hashes, max_files=max_files)
+
+    known = [r for r in results if r.known]
+    unknown = [r for r in results if not r.known]
+
+    lines = [
+        f"CIRCL Hashlookup: {len(hashes)} binaries checked",
+        f"Known-good: {len(known)}",
+        f"Unknown/custom: {len(unknown)}",
+        "",
+    ]
+
+    if known:
+        lines.append("--- Known-good files (safe to deprioritize) ---")
+        for r in known[:50]:
+            product = f" ({r.product_name})" if r.product_name else ""
+            vendor = f" by {r.vendor}" if r.vendor else ""
+            lines.append(f"  {r.file_path}: {r.source}{product}{vendor}")
+
+    if unknown:
+        lines.append(f"\n--- Unknown/custom binaries ({len(unknown)}) ---")
+        lines.append("These require manual analysis — not in any known-good database.")
+        for r in unknown[:50]:
+            lines.append(f"  {r.file_path}")
+
+    return truncate_output("\n".join(lines))
+
+
 def register_security_tools(registry: ToolRegistry) -> None:
     """Register all security assessment tools with the given registry."""
 
@@ -4228,4 +4486,154 @@ def register_security_tools(registry: ToolRegistry) -> None:
             "required": [],
         },
         handler=_handle_scan_firmware_virustotal,
+    )
+
+    # ----- abuse.ch threat intelligence -----
+
+    registry.register(
+        name="check_malwarebazaar_hash",
+        description=(
+            "Check a file's SHA-256 hash against MalwareBazaar to see if it "
+            "is a known malware sample. Returns malware signature, tags, and "
+            "first-seen date if found. Only the hash is sent — no file data "
+            "is uploaded. Works without an API key (ABUSECH_AUTH_KEY optional "
+            "for higher rate limits)."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "Path to the file to check",
+                },
+            },
+            "required": ["path"],
+        },
+        handler=_handle_check_malwarebazaar_hash,
+    )
+
+    registry.register(
+        name="check_threatfox_ioc",
+        description=(
+            "Check an IOC (indicator of compromise) against ThreatFox. "
+            "Supports hash, IP address, domain, and URL lookups. Returns "
+            "associated malware family, threat type, and confidence level. "
+            "Useful for checking hardcoded IPs and extracted URLs against "
+            "known C2 infrastructure."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "ioc": {
+                    "type": "string",
+                    "description": (
+                        "The IOC to look up: a SHA-256 hash, IP address "
+                        "(with optional port, e.g. '1.2.3.4:443'), domain, "
+                        "or URL"
+                    ),
+                },
+                "ioc_type": {
+                    "type": "string",
+                    "enum": ["sha256_hash", "ip:port", "domain", "url"],
+                    "description": (
+                        "Type of IOC. Default: sha256_hash"
+                    ),
+                },
+            },
+            "required": ["ioc"],
+        },
+        handler=_handle_check_threatfox_ioc,
+    )
+
+    registry.register(
+        name="check_urlhaus_url",
+        description=(
+            "Check a URL against URLhaus to see if it is a known malware "
+            "distribution point. Returns threat classification, current "
+            "status (online/offline), and tags. Useful for checking URLs "
+            "extracted from firmware configuration files and scripts."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "url": {
+                    "type": "string",
+                    "description": "The URL to check against URLhaus",
+                },
+            },
+            "required": ["url"],
+        },
+        handler=_handle_check_urlhaus_url,
+    )
+
+    registry.register(
+        name="enrich_firmware_threat_intel",
+        description=(
+            "Batch-check all extracted firmware binaries against the full "
+            "abuse.ch threat intelligence suite: MalwareBazaar (known malware), "
+            "ThreatFox (IOC database), URLhaus (malicious URLs), and YARAify "
+            "(community YARA matches). Only hashes are sent — no file data. "
+            "Takes several minutes due to polite rate limiting."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "max_hashes": {
+                    "type": "integer",
+                    "description": (
+                        "Maximum binaries to check. Default: 30. "
+                        "Higher values take proportionally longer."
+                    ),
+                },
+            },
+            "required": [],
+        },
+        handler=_handle_enrich_firmware_threat_intel,
+    )
+
+    # ----- CIRCL Hashlookup (known-good identification) -----
+
+    registry.register(
+        name="check_known_good_hash",
+        description=(
+            "Check if a file is a known-good binary using CIRCL's hashlookup "
+            "service (NSRL database). Identifies legitimate files like BusyBox, "
+            "OpenSSL, or glibc to reduce false positives in threat analysis. "
+            "No API key required. A 'not found' result does NOT mean the file "
+            "is malicious — it may be custom or proprietary firmware."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "Path to the file to check",
+                },
+            },
+            "required": ["path"],
+        },
+        handler=_handle_check_known_good_hash,
+    )
+
+    registry.register(
+        name="scan_firmware_known_good",
+        description=(
+            "Batch-check all firmware binaries against CIRCL's known-good "
+            "database (NSRL). Identifies legitimate open-source and vendor "
+            "files to help prioritize manual analysis on truly unknown "
+            "binaries. No API key required."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "max_files": {
+                    "type": "integer",
+                    "description": (
+                        "Maximum binaries to check. Default: 100."
+                    ),
+                },
+            },
+            "required": [],
+        },
+        handler=_handle_scan_firmware_known_good,
     )

@@ -1,11 +1,52 @@
 # Wairz Master Plan
 
 > Created: 2026-04-01
-> Updated: 2026-04-09 (session 24 -- S24 Stabilize)
+> Updated: 2026-04-10 (session 26 -- S26 Threat Intel Phases 4-5)
 > Resume with: /do continue
 > Plans: .planning/intake/plan-*.md (detailed plans for remaining items)
 > Active campaign: none
 > Commit: pending on clean-history
+
+---
+
+## Session 26 Handoff (2026-04-10)
+
+**What was done this session:**
+1. **Threat Intelligence Phases 4-5**: Completed the final two phases of the threat intel integration plan.
+   - **Phase 4 — abuse.ch suite** (`abusech_service.py`, 270 lines): MalwareBazaar hash→malware lookup, ThreatFox IOC check (hash/IP/domain/URL), URLhaus malicious URL check, YARAify community YARA matches. Batch enrichment. 4 MCP tools.
+   - **Phase 5 — CIRCL Hashlookup** (`hashlookup_service.py`, 140 lines): NSRL known-good identification, bulk lookup with individual fallback. 2 MCP tools.
+   - 2 REST endpoints: `POST /security/abusech-scan`, `POST /security/known-good-scan`
+   - All 6 tools whitelisted, integrated into automated security audit pipeline
+   - Config: `ABUSECH_AUTH_KEY` in config.py (optional, for higher rate limits)
+2. **Intake triage**: Scanned all 15 intake items. 12 already completed from prior sessions. Updated `plan-threat-intelligence.md` with completion status.
+3. **Tool count: 113 MCP tools** (was 107 after S25).
+
+**Test suite: 386 passed, 0 failures.** TypeScript clean. 1 pre-existing YARA test failure (YARA Forge dir provides rules when custom dir monkeypatched empty — not a regression).
+
+**What to do next:**
+1. **Clean up intake queue** — 12 of 15 items are completed; archive or remove stale plan files
+2. **Frontend: threat intel display** — abuse.ch and CIRCL results on SecurityScanPage (new "Threat Intel" tab or section)
+3. **README update** — document 113 tools, threat intel features, new env vars
+4. **Remaining roadmap items** (from intake):
+   - `plan-cicd-github-action.md` — all acceptance criteria met in S25, can be closed
+   - `plan-frontend-gaps.md` — F4 E2E tests effectively complete (9 specs, CI workflow). Optional: visual regression, test fixtures
+   - Device Acquisition v2 Phase 10 — blocked on hardware
+
+**Known issues:**
+- 1 pre-existing YARA test (`test_raises_on_empty_rules_dir`) fails locally because YARA Forge dir provides rules even when custom dir is empty
+- harness.json still protected by hook — quality rule candidates need manual addition
+
+---
+
+## Session 25 Handoff (2026-04-10)
+
+**What was done this session:**
+1. **CI/CD hardening**: `--fail-on` flexible thresholds, `--format sarif` (SARIF 2.1.0), `--format vex`, `--timeout`, GitHub Action outputs with auto SARIF upload, Grype DB pre-download.
+2. **Threat Intelligence Phases 2-3**: ClamAV Docker sidecar (clamd TCP), VirusTotal hash-only lookups (privacy-first, 4 req/min rate limit). 4 MCP tools, 2 REST endpoints, security audit pipeline integration.
+3. **E2E tests**: 3 new Playwright specs (emulation, comparison, component map) with 15 tests. CI workflow with Docker Compose + artifact upload. 9 spec files total.
+4. **403 tests passed, TypeScript clean.** 107 MCP tools.
+
+**Commit:** `6acc04a` on `clean-history`.
 
 ---
 

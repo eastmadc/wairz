@@ -1,7 +1,9 @@
 # Plan: CI/CD GitHub Action for Firmware Scanning (5.2)
 
-**Priority:** High | **Effort:** Medium (~400 lines) | **Status:** partially implemented
+**Priority:** High | **Effort:** Medium (~400 lines) | **Status:** completed (2026-04-10, S25)
 **Route:** `/citadel:marshal` (finish remaining pieces)
+
+**Completed S25:** SARIF 2.1.0 output, `--fail-on` flexible thresholds (critical/high/medium/cvss:N.N/none), `--timeout`, `--format vex`, GitHub Action outputs (result, findings-critical, findings-high, findings-total, report-path, sarif-path), auto SARIF upload to GitHub Security tab, Grype DB pre-download in Dockerfile.ci. All acceptance criteria met.
 
 ## Goal
 
