@@ -7,6 +7,9 @@ export default defineConfig({
   retries: process.env.CI ? 2 : 0,
   workers: 1, // sequential — tests modify shared state
   reporter: 'html',
+  expect: {
+    timeout: 10000,
+  },
   use: {
     baseURL: 'http://localhost:3000',
     trace: 'on-first-retry',

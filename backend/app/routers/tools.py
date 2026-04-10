@@ -151,6 +151,11 @@ ALLOWED_TOOLS: set[str] = {
     "update_cra_requirement",
     "export_cra_checklist",
     "generate_article14_notification",
+    # Threat intelligence (read-only scanning)
+    "scan_with_clamav",
+    "scan_firmware_clamav",
+    "check_virustotal",
+    "scan_firmware_virustotal",
 }
 
 

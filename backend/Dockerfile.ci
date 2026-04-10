@@ -31,6 +31,10 @@ RUN ARCH=$(uname -m) && \
         | tar xz -C /usr/local/bin grype && \
     chmod +x /usr/local/bin/grype
 
+# Pre-download Grype vulnerability DB during build to save ~30s per scan
+ENV GRYPE_DB_CACHE_DIR=/data/grype-db
+RUN mkdir -p "$GRYPE_DB_CACHE_DIR" && grype db update
+
 # Install Syft for SBOM generation
 ARG SYFT_VERSION=1.41.2
 RUN ARCH=$(uname -m) && \

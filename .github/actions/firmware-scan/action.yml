@@ -4,12 +4,16 @@ inputs:
   firmware-path:
     description: 'Path to firmware file or extracted directory'
     required: true
-  fail-on-critical:
-    description: 'Fail the action if critical vulnerabilities are found'
+  fail-on:
+    description: 'Fail threshold: critical|high|medium|cvss:N.N|none (default: critical)'
     required: false
-    default: 'true'
+    default: 'critical'
+  fail-on-critical:
+    description: 'Deprecated: use fail-on instead. Kept for backward compatibility.'
+    required: false
+    default: ''
   format:
-    description: 'Output format (json or markdown)'
+    description: 'Output format: json, markdown, sarif, or vex'
     required: false
     default: 'json'
   skip-phases:
@@ -17,9 +21,32 @@ inputs:
     required: false
     default: ''
   output-file:
-    description: 'Write report to this file (default: stdout only)'
+    description: 'Write report to this file (default: wairz-report.<format ext>)'
     required: false
     default: ''
+  timeout:
+    description: 'Scan timeout in seconds'
+    required: false
+    default: '600'
+outputs:
+  result:
+    description: 'pass or fail'
+    value: ${{ steps.scan.outputs.result }}
+  findings-critical:
+    description: 'Number of critical findings'
+    value: ${{ steps.parse.outputs.findings-critical }}
+  findings-high:
+    description: 'Number of high findings'
+    value: ${{ steps.parse.outputs.findings-high }}
+  findings-total:
+    description: 'Total number of findings'
+    value: ${{ steps.parse.outputs.findings-total }}
+  report-path:
+    description: 'Path to generated report file'
+    value: ${{ steps.scan.outputs.report-path }}
+  sarif-path:
+    description: 'Path to SARIF file (when format=sarif)'
+    value: ${{ steps.scan.outputs.sarif-path }}
 runs:
   using: 'composite'
   steps:
@@ -27,21 +54,125 @@ runs:
       shell: bash
       run: docker build -t wairz-scan -f backend/Dockerfile.ci backend/
 
-    - name: Run firmware scan
+    - name: Determine output file
+      id: outfile
       shell: bash
       run: |
+        FORMAT="${{ inputs.format }}"
+        OUTFILE="${{ inputs.output-file }}"
+        if [ -z "$OUTFILE" ]; then
+          case "$FORMAT" in
+            sarif)  OUTFILE="wairz-report.sarif.json" ;;
+            vex)    OUTFILE="wairz-report.vex.json" ;;
+            markdown) OUTFILE="wairz-report.md" ;;
+            *)      OUTFILE="wairz-report.json" ;;
+          esac
+        fi
+        echo "outfile=$OUTFILE" >> "$GITHUB_OUTPUT"
+
+    - name: Run firmware scan
+      id: scan
+      shell: bash
+      run: |
+        OUTFILE="${{ steps.outfile.outputs.outfile }}"
+
         ARGS="${{ inputs.firmware-path }}"
         ARGS="$ARGS --format=${{ inputs.format }}"
+        ARGS="$ARGS --timeout=${{ inputs.timeout }}"
+        ARGS="$ARGS --output=/work/$OUTFILE"
+
         if [ -n "${{ inputs.skip-phases }}" ]; then
           ARGS="$ARGS --skip-phases=${{ inputs.skip-phases }}"
         fi
-        if [ "${{ inputs.fail-on-critical }}" = "true" ]; then
-          ARGS="$ARGS --fail-on-critical"
+
+        # Resolve fail-on: prefer new input, fall back to deprecated flag
+        FAIL_ON="${{ inputs.fail-on }}"
+        if [ -z "$FAIL_ON" ] && [ "${{ inputs.fail-on-critical }}" = "true" ]; then
+          FAIL_ON="critical"
         fi
-        if [ -n "${{ inputs.output-file }}" ]; then
-          ARGS="$ARGS --output=/work/${{ inputs.output-file }}"
+        if [ -n "$FAIL_ON" ]; then
+          ARGS="$ARGS --fail-on $FAIL_ON"
         fi
+
+        set +e
         docker run --rm \
           -v "${{ github.workspace }}:/work" \
           -w /work \
           wairz-scan $ARGS
+        EXIT_CODE=$?
+        set -e
+
+        # Set outputs based on exit code
+        if [ $EXIT_CODE -eq 0 ]; then
+          echo "result=pass" >> "$GITHUB_OUTPUT"
+        elif [ $EXIT_CODE -eq 1 ]; then
+          echo "result=fail" >> "$GITHUB_OUTPUT"
+        else
+          echo "result=error" >> "$GITHUB_OUTPUT"
+        fi
+
+        echo "report-path=$OUTFILE" >> "$GITHUB_OUTPUT"
+
+        if [ "${{ inputs.format }}" = "sarif" ]; then
+          echo "sarif-path=$OUTFILE" >> "$GITHUB_OUTPUT"
+        fi
+
+        # Propagate the exit code
+        exit $EXIT_CODE
+
+    - name: Parse finding counts
+      id: parse
+      if: always()
+      shell: bash
+      run: |
+        OUTFILE="${{ steps.outfile.outputs.outfile }}"
+        FORMAT="${{ inputs.format }}"
+
+        CRITICAL=0
+        HIGH=0
+        TOTAL=0
+
+        if [ -f "$OUTFILE" ]; then
+          if [ "$FORMAT" = "json" ]; then
+            CRITICAL=$(python3 -c "
+        import json, sys
+        data = json.load(open('$OUTFILE'))
+        findings = data.get('findings', [])
+        print(sum(1 for f in findings if f.get('severity') == 'critical'))
+        " 2>/dev/null || echo 0)
+            HIGH=$(python3 -c "
+        import json, sys
+        data = json.load(open('$OUTFILE'))
+        findings = data.get('findings', [])
+        print(sum(1 for f in findings if f.get('severity') == 'high'))
+        " 2>/dev/null || echo 0)
+            TOTAL=$(python3 -c "
+        import json, sys
+        data = json.load(open('$OUTFILE'))
+        print(len(data.get('findings', [])))
+        " 2>/dev/null || echo 0)
+          elif [ "$FORMAT" = "sarif" ]; then
+            CRITICAL=$(python3 -c "
+        import json
+        data = json.load(open('$OUTFILE'))
+        results = data.get('runs', [{}])[0].get('results', [])
+        print(sum(1 for r in results if r.get('level') == 'error'))
+        " 2>/dev/null || echo 0)
+            HIGH=0
+            TOTAL=$(python3 -c "
+        import json
+        data = json.load(open('$OUTFILE'))
+        print(len(data.get('runs', [{}])[0].get('results', [])))
+        " 2>/dev/null || echo 0)
+          fi
+        fi
+
+        echo "findings-critical=$CRITICAL" >> "$GITHUB_OUTPUT"
+        echo "findings-high=$HIGH" >> "$GITHUB_OUTPUT"
+        echo "findings-total=$TOTAL" >> "$GITHUB_OUTPUT"
+
+    - name: Upload SARIF to GitHub Security
+      if: always() && inputs.format == 'sarif'
+      uses: github/codeql-action/upload-sarif@v3
+      with:
+        sarif_file: ${{ steps.outfile.outputs.outfile }}

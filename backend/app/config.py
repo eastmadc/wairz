@@ -62,6 +62,10 @@ class Settings(BaseSettings):
     cwe_checker_timeout: int = 600
     cwe_checker_memory_limit: str = "4g"
     yara_forge_dir: str = "/data/yara-forge"
+    clamav_host: str = "clamav"
+    clamav_port: int = 3310
+    clamav_enabled: bool = True
+    virustotal_api_key: str = ""
     api_key: str = ""
     log_level: str = "INFO"
 

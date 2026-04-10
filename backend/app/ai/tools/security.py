@@ -3186,6 +3186,198 @@ async def _handle_generate_article14_notification(
     return truncate_output(json.dumps(notification, indent=2, default=str))
 
 
+# ---------------------------------------------------------------------------
+# ClamAV scanning
+# ---------------------------------------------------------------------------
+
+
+async def _handle_scan_with_clamav(input: dict, context: ToolContext) -> str:
+    """Scan a file or directory with ClamAV antivirus."""
+    from app.services import clamav_service
+
+    available = await clamav_service.check_available()
+    if not available:
+        return "ClamAV is not available. The clamd service may not be running or is unreachable."
+
+    path = context.resolve_path(input.get("path", "/"))
+
+    if os.path.isfile(path):
+        result = await clamav_service.scan_file(path)
+        if result.error:
+            return f"Error scanning {_rel(path, context.extracted_path)}: {result.error}"
+        if result.infected:
+            return (
+                f"INFECTED: {_rel(path, context.extracted_path)}\n"
+                f"Signature: {result.signature}"
+            )
+        return f"Clean: {_rel(path, context.extracted_path)} — no threats detected."
+
+    elif os.path.isdir(path):
+        max_files = input.get("max_files", 500)
+        results = await clamav_service.scan_directory(path, max_files=max_files)
+        infected = [r for r in results if r.infected]
+        errors = [r for r in results if r.error]
+
+        lines = [f"ClamAV scan of {_rel(path, context.extracted_path)}:"]
+        lines.append(f"Files scanned: {len(results)}")
+        lines.append(f"Infected: {len(infected)}")
+        if errors:
+            lines.append(f"Errors: {len(errors)}")
+
+        if infected:
+            lines.append("\n--- Infected files ---")
+            for r in infected[:50]:
+                rel = _rel(r.file_path, context.extracted_path)
+                lines.append(f"  {rel}: {r.signature}")
+
+        if errors:
+            lines.append("\n--- Scan errors ---")
+            for r in errors[:10]:
+                rel = _rel(r.file_path, context.extracted_path)
+                lines.append(f"  {rel}: {r.error}")
+
+        return truncate_output("\n".join(lines))
+    else:
+        return f"Path not found: {input.get('path', '/')}"
+
+
+async def _handle_scan_firmware_clamav(input: dict, context: ToolContext) -> str:
+    """Batch scan all extracted firmware files with ClamAV."""
+    from app.services import clamav_service
+
+    available = await clamav_service.check_available()
+    if not available:
+        return "ClamAV is not available. The clamd service may not be running or is unreachable."
+
+    if not context.extracted_path:
+        return "No extracted firmware available. Unpack firmware first."
+
+    results = await clamav_service.scan_directory(context.extracted_path, max_files=500)
+    infected = [r for r in results if r.infected]
+    errors = [r for r in results if r.error]
+
+    lines = ["ClamAV firmware scan results:"]
+    lines.append(f"Files scanned: {len(results)}")
+    lines.append(f"Infected: {len(infected)}")
+    lines.append(f"Clean: {len(results) - len(infected) - len(errors)}")
+    if errors:
+        lines.append(f"Errors: {len(errors)}")
+
+    if infected:
+        lines.append("\n--- Infected files ---")
+        for r in infected[:50]:
+            rel = _rel(r.file_path, context.extracted_path)
+            lines.append(f"  MALWARE: {rel}")
+            lines.append(f"    Signature: {r.signature}")
+    else:
+        lines.append("\nNo malware detected.")
+
+    if errors:
+        lines.append("\n--- Scan errors ---")
+        for r in errors[:10]:
+            lines.append(f"  {r.error}")
+
+    return truncate_output("\n".join(lines))
+
+
+# ---------------------------------------------------------------------------
+# VirusTotal hash-only lookups
+# ---------------------------------------------------------------------------
+
+
+async def _handle_check_virustotal(input: dict, context: ToolContext) -> str:
+    """Check a single file's hash against VirusTotal."""
+    from app.services import virustotal_service
+
+    path = context.resolve_path(input.get("path", "/"))
+    if not os.path.isfile(path):
+        return f"Not a file: {input.get('path', '/')}"
+
+    loop = asyncio.get_running_loop()
+    sha256 = await loop.run_in_executor(
+        None, virustotal_service._compute_sha256, path
+    )
+
+    result = await virustotal_service.check_hash(sha256)
+    if result is None:
+        return (
+            "VirusTotal API key not configured. Set VT_API_KEY in .env "
+            "to enable hash-only lookups. No file data is ever uploaded."
+        )
+
+    rel = _rel(path, context.extracted_path)
+    lines = [f"VirusTotal lookup for {rel}:", f"SHA-256: {sha256}"]
+
+    if not result.found:
+        lines.append("Status: Not found in VirusTotal corpus")
+        lines.append("(File hash not previously submitted to VT)")
+    else:
+        ratio = f"{result.detection_count}/{result.total_engines}"
+        if result.detection_count == 0:
+            lines.append(f"Status: Clean ({ratio} engines)")
+        else:
+            lines.append(f"Status: DETECTED ({ratio} engines)")
+            lines.append("\nDetections:")
+            for d in result.detections[:15]:
+                lines.append(f"  {d}")
+        lines.append(f"\nPermalink: {result.permalink}")
+
+    return truncate_output("\n".join(lines))
+
+
+async def _handle_scan_firmware_virustotal(input: dict, context: ToolContext) -> str:
+    """Batch hash-check all ELF/PE binaries in firmware against VirusTotal."""
+    from app.services import virustotal_service
+
+    api_key = virustotal_service._get_api_key()
+    if not api_key:
+        return (
+            "VirusTotal API key not configured. Set VT_API_KEY in .env "
+            "to enable hash-only lookups. No file data is ever uploaded."
+        )
+
+    if not context.extracted_path:
+        return "No extracted firmware available. Unpack firmware first."
+
+    loop = asyncio.get_running_loop()
+    max_files = input.get("max_files", 50)
+    hashes = await loop.run_in_executor(
+        None, virustotal_service.collect_binary_hashes,
+        context.extracted_path, max_files,
+    )
+
+    if not hashes:
+        return "No ELF or PE binaries found in extracted firmware."
+
+    lines = [
+        f"VirusTotal batch scan: {len(hashes)} binaries",
+        f"Rate limit: {virustotal_service.FREE_TIER_BATCH} lookups/min (free tier)",
+        f"Estimated time: ~{(len(hashes) // virustotal_service.FREE_TIER_BATCH) * 15}s",
+        "",
+    ]
+
+    results = await virustotal_service.batch_check_hashes(hashes)
+
+    detected = [r for r in results if r.found and r.detection_count > 0]
+    clean = [r for r in results if r.found and r.detection_count == 0]
+    not_found = [r for r in results if not r.found]
+
+    lines.append("--- Summary ---")
+    lines.append(f"Detected (malicious/suspicious): {len(detected)}")
+    lines.append(f"Clean: {len(clean)}")
+    lines.append(f"Not in VT corpus: {len(not_found)}")
+
+    if detected:
+        lines.append("\n--- Detected files ---")
+        for r in detected:
+            lines.append(f"  {r.file_path}: {r.detection_count}/{r.total_engines}")
+            for d in r.detections[:5]:
+                lines.append(f"    {d}")
+            lines.append(f"    {r.permalink}")
+
+    return truncate_output("\n".join(lines))
+
+
 def register_security_tools(registry: ToolRegistry) -> None:
     """Register all security assessment tools with the given registry."""
 
@@ -3937,4 +4129,103 @@ def register_security_tools(registry: ToolRegistry) -> None:
             "required": ["assessment_id", "cve_id"],
         },
         handler=_handle_generate_article14_notification,
+    )
+
+    # ----- ClamAV antivirus scanning -----
+
+    registry.register(
+        name="scan_with_clamav",
+        description=(
+            "Scan a specific file or directory with ClamAV antivirus. "
+            "Detects malware, trojans, backdoors, and other threats using "
+            "the ClamAV signature database (updated daily). The ClamAV "
+            "daemon runs as a Docker sidecar. Returns infection status and "
+            "signature names for detected threats. Gracefully reports if "
+            "ClamAV is unavailable."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": (
+                        "Path within the firmware to scan. Can be a file "
+                        "or directory. Defaults to the firmware root."
+                    ),
+                },
+                "max_files": {
+                    "type": "integer",
+                    "description": (
+                        "Maximum files to scan in directory mode. Default: 500."
+                    ),
+                },
+            },
+            "required": [],
+        },
+        handler=_handle_scan_with_clamav,
+    )
+
+    registry.register(
+        name="scan_firmware_clamav",
+        description=(
+            "Batch scan all extracted firmware files with ClamAV antivirus. "
+            "Scans up to 500 regular files (skipping symlinks, devices, and "
+            "files >100MB). Returns a summary with infected file list and "
+            "malware signature names. The ClamAV daemon runs as a Docker "
+            "sidecar with daily signature updates."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {},
+            "required": [],
+        },
+        handler=_handle_scan_firmware_clamav,
+    )
+
+    # ----- VirusTotal hash-only lookups -----
+
+    registry.register(
+        name="check_virustotal",
+        description=(
+            "Check a file's SHA-256 hash against VirusTotal. Privacy-first: "
+            "only the hash is sent, never the file contents. Returns detection "
+            "count, engine names, and a permalink. Requires VT_API_KEY in .env. "
+            "Gracefully reports if API key not configured."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "Path to the file to check",
+                },
+            },
+            "required": ["path"],
+        },
+        handler=_handle_check_virustotal,
+    )
+
+    registry.register(
+        name="scan_firmware_virustotal",
+        description=(
+            "Batch hash-check all ELF and PE binaries in extracted firmware "
+            "against VirusTotal. Privacy-first: only SHA-256 hashes are sent, "
+            "never file contents. Prioritizes shared libraries, then "
+            "executables. Rate-limited to 4 req/min (VT free tier). "
+            "Requires VT_API_KEY in .env."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "max_files": {
+                    "type": "integer",
+                    "description": (
+                        "Maximum binaries to check. Default: 50. "
+                        "Higher values take longer due to rate limiting."
+                    ),
+                },
+            },
+            "required": [],
+        },
+        handler=_handle_scan_firmware_virustotal,
     )
