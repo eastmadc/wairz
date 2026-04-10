@@ -1,10 +1,12 @@
 # Plan: CRA Compliance Report Generator
 
 > Created: 2026-04-08
-> Priority: Critical (EU CRA Article 14 — September 11, 2026 deadline)
+> Priority: Critical (EU CRA Article 14 — September 11, 2026 deadline) | **Status:** completed (2026-04-08, S23)
 > Effort: Medium-Large (1 session for MVP, expansion in future sessions)
 > Dependencies: cwe_checker (S20), firmware update detection (S22) for full coverage
 > Session: S23
+>
+> **Completed S23:** `cra_compliance_service.py` (833 lines), `CraAssessment` + `CraRequirementResult` DB models, REST router at `/api/v1/projects/{pid}/cra/`, MCP tools in security.py. Covers CRA Annex I Parts 1 & 2 with auto-populated and manual-entry fields.
 
 ---
 

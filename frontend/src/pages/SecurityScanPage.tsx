@@ -17,9 +17,10 @@ import { useProjectStore } from '@/stores/projectStore'
 import FirmwareSelector from '@/components/projects/FirmwareSelector'
 import AttackSurfaceTab from '@/components/security/AttackSurfaceTab'
 import CraChecklistTab from '@/components/security/CraChecklistTab'
+import ThreatIntelTab from '@/components/security/ThreatIntelTab'
 import type { Finding, FirmwareDetail, Severity } from '@/types'
 
-type Tab = 'audit' | 'yara' | 'vulhunt' | 'attack-surface' | 'cra'
+type Tab = 'audit' | 'yara' | 'vulhunt' | 'attack-surface' | 'threat-intel' | 'cra'
 
 const SEVERITY_COLORS: Record<Severity, string> = {
   critical: 'bg-red-600 text-white',
@@ -217,6 +218,17 @@ export default function SecurityScanPage() {
         <button
           type="button"
           className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${
+            tab === 'threat-intel'
+              ? 'border-primary text-primary'
+              : 'border-transparent text-muted-foreground hover:text-foreground'
+          }`}
+          onClick={() => setTab('threat-intel')}
+        >
+          Threat Intel
+        </button>
+        <button
+          type="button"
+          className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${
             tab === 'cra'
               ? 'border-primary text-primary'
               : 'border-transparent text-muted-foreground hover:text-foreground'
@@ -349,12 +361,16 @@ export default function SecurityScanPage() {
         <AttackSurfaceTab projectId={projectId} selectedFirmwareId={selectedFirmwareId} />
       )}
 
+      {tab === 'threat-intel' && projectId && (
+        <ThreatIntelTab projectId={projectId} selectedFirmwareId={selectedFirmwareId} />
+      )}
+
       {tab === 'cra' && projectId && (
         <CraChecklistTab projectId={projectId} selectedFirmwareId={selectedFirmwareId} />
       )}
 
-      {/* Findings list (hidden on attack-surface and cra tabs which have their own display) */}
-      {tab !== 'attack-surface' && tab !== 'cra' && (
+      {/* Findings list (hidden on tabs that have their own display) */}
+      {tab !== 'attack-surface' && tab !== 'threat-intel' && tab !== 'cra' && (
         <>
           {loadingFindings ? (
             <div className="flex items-center gap-2 py-8 justify-center text-muted-foreground">

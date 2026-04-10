@@ -18,6 +18,52 @@ export interface YaraScanResult {
   errors: string[]
 }
 
+export interface AbusechScanResult {
+  status: string
+  binaries_checked: number
+  malwarebazaar_hits: number
+  threatfox_hits: number
+  yaraify_hits: number
+  findings_created: number
+  details: Record<string, unknown>
+  errors: string[]
+}
+
+export interface KnownGoodFile {
+  path: string
+  sha256: string
+  source: string
+  product: string
+  vendor: string
+}
+
+export interface KnownGoodScanResult {
+  status: string
+  binaries_checked: number
+  known_good_count: number
+  unknown_count: number
+  known_good_files: KnownGoodFile[]
+  errors: string[]
+}
+
+export async function runAbusechScan(
+  projectId: string,
+): Promise<AbusechScanResult> {
+  const { data } = await apiClient.post<AbusechScanResult>(
+    `/projects/${projectId}/security/abusech-scan`,
+  )
+  return data
+}
+
+export async function runKnownGoodScan(
+  projectId: string,
+): Promise<KnownGoodScanResult> {
+  const { data } = await apiClient.post<KnownGoodScanResult>(
+    `/projects/${projectId}/security/known-good-scan`,
+  )
+  return data
+}
+
 export async function runSecurityAudit(
   projectId: string,
 ): Promise<SecurityAuditResult> {

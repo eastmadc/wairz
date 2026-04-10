@@ -3,7 +3,7 @@
 **F1 completed 2026-04-07** -- Expandable vuln rows, inline VEX buttons, bulk triage toolbar, keyboard shortcuts (session 14).
 **F2 completed 2026-04-07** -- Security Tools page at /tools with 81 tools, categorized list, dynamic JSON Schema forms, execution UI (session 14).
 **F3 completed 2026-04-06** -- Collapsible unpack log viewer added to ProjectDetailPage for all firmware.
-**F4 partially completed 2026-04-06** -- Playwright installed, 4 E2E test files created (session 12).
+**F4 completed 2026-04-10** -- 9 Playwright E2E spec files, CI workflow with Docker Compose + artifact upload (sessions 12/25).
 
 ## F1: CVE Triage Workflow UI
 

@@ -42,6 +42,8 @@ const SOURCE_CONFIG: Record<FindingSource, { icon: React.ElementType; label: str
   security_review: { icon: Search, label: 'Review', className: 'border-blue-500/50 text-blue-600 dark:text-blue-400' },
   security_audit: { icon: Shield, label: 'Security Audit', className: 'border-red-500/50 text-red-600 dark:text-red-400' },
   yara_scan: { icon: Shield, label: 'YARA Scan', className: 'border-amber-500/50 text-amber-600 dark:text-amber-400' },
+  abusech_scan: { icon: Shield, label: 'abuse.ch', className: 'border-rose-500/50 text-rose-600 dark:text-rose-400' },
+  known_good_scan: { icon: Shield, label: 'Known Good', className: 'border-green-500/50 text-green-600 dark:text-green-400' },
 }
 
 interface FindingsListProps {
