@@ -69,6 +69,12 @@
         "pattern": "CPU_TYPE\\.[a-z]",
         "filePattern": "backend/app/services/binary_analysis_service.py",
         "message": "Learned from standalone binary campaign: LIEF Mach-O CPU_TYPE enums are UPPERCASE (X86_64, ARM64), not lowercase. Always verify with dir()."
+      },
+      {
+        "name": "auto-session19-venv-which",
+        "pattern": "shutil\\.which\\(\"[a-z]+\"\\)$",
+        "filePattern": "backend/app/**/*.py",
+        "message": "Learned from session 19: In Docker with uv/venv, CLI tools from pip packages land in /app/.venv/bin/ not system PATH. Use: shutil.which(tool) or shutil.which(tool, path=\"/app/.venv/bin\")"
       }
     ]
   },
@@ -131,6 +137,6 @@
     "sessions": 0,
     "campaigns": 0,
     "override": null,
-    "sessions_completed": 57
+    "sessions_completed": 111
   }
 }

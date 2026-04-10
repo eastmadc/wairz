@@ -1,11 +1,51 @@
 # Wairz Master Plan
 
 > Created: 2026-04-01
-> Updated: 2026-04-10 (session 29 -- S29 visual polish, Error Boundary, config centralization, pagination, firmware dedup)
+> Updated: 2026-04-10 (session 30 -- S30 backlog cleanup: split large files, standardize commit/flush)
 > Resume with: /do continue
 > Plans: .planning/archive/plan-*.md (all 16 completed plans archived)
 > Active campaign: none
-> Commit: 181ea32 on clean-history
+> Commit: b5cec76 on clean-history
+
+---
+
+## Session 30 Handoff (2026-04-10)
+
+**What was done this session:**
+1. **R1: Split `emulation_service.py`** (1816→1658 lines): Extracted `emulation_constants.py` (constants + `_validate_kernel_file`) and `emulation_preset_service.py` (preset CRUD). Backward-compatible via re-export and delegation.
+2. **R2: Split `FileViewer.tsx`** (869→219 lines): Extracted 6 sub-components: `BinaryTabs`, `FunctionListPanel`, `DisassemblyPanel`, `DecompilationPanel`, `TextTabs`, `FileInfoPanel`.
+3. **R3: Split `ProjectDetailPage.tsx`** (710→330 lines): Extracted `FirmwareVersionCard` and `ProjectActionButtons` into `components/projects/`.
+4. **R9: Standardized commit→flush** across 7 routers (15 calls) and 2 services (5 calls). `get_db` auto-commits; services must `flush()` for MCP transaction compatibility. Preserved legitimate `commit()` in 4 background task handlers (own sessions).
+5. **ClamAV behind Docker Compose profile**: No ARM64 image available, moved to opt-in profile.
+6. **Knowledge extraction**: S30 backlog refactoring patterns/antipatterns.
+
+**Files changed (25 files, +1572 / -1272):**
+- `backend/app/services/emulation_constants.py` (new, 153 lines)
+- `backend/app/services/emulation_preset_service.py` (new, 88 lines)
+- `backend/app/services/emulation_service.py` (reduced by 194 lines)
+- `frontend/src/components/explorer/BinaryTabs.tsx` (new), `DecompilationPanel.tsx` (new), `DisassemblyPanel.tsx` (new), `FileInfoPanel.tsx` (new), `FunctionListPanel.tsx` (new), `TextTabs.tsx` (new)
+- `frontend/src/components/explorer/FileViewer.tsx` (reduced by 658 lines)
+- `frontend/src/components/projects/FirmwareVersionCard.tsx` (new, 337 lines), `ProjectActionButtons.tsx` (new, 147 lines)
+- `frontend/src/pages/ProjectDetailPage.tsx` (reduced by 443 lines)
+- 7 routers + 2 services (commit→flush standardization)
+- `docker-compose.yml` (ClamAV profile)
+
+**What to do next:**
+1. **Remaining backlog** (opportunistic):
+   - ~~R1: Split `emulation_service.py`~~ — ✅ Done (S30)
+   - ~~R2: Split `FileViewer.tsx`~~ — ✅ Done (S30)
+   - ~~R3: Split `ProjectDetailPage.tsx`~~ — ✅ Done (S30)
+   - R8: Standardize error handling hierarchy — opportunistic
+   - ~~R9: Standardize commit pattern across routers~~ — ✅ Done (S30)
+2. **Remaining roadmap**: Device Acquisition v2 Phase 10 (blocked on hardware)
+3. ~~UEFI Phase 4~~ — ✅ Verified (S31): all 5 UEFI tools + VulHunt tested on real firmware
+
+**UEFI Phase 4 verification (S31):**
+- D3633-S1.ROM: 18 firmware volumes, 550 modules, 48 NVRAM vars, GUID lookup, VulHunt scan — all pass
+- Framework BIOS 4.03: ZIP→CAP inner extraction, 13 volumes, 400 modules (Insyde H2O) — all pass
+- Note: `vulhunt_scan_firmware` times out on 550-module images; per-binary scan works fine
+
+**All intake items processed. No pending work items.**
 
 ---
 
@@ -19,23 +59,11 @@
 5. **Firmware resolution** (R10): `files.py` uses `Depends(resolve_firmware)` from `deps.py`.
 6. **Knowledge extraction**: S28 security audit fix + S29 parallel refactoring patterns/antipatterns.
 
-**Files changed (18 files, +563 / -166):**
-- `frontend/src/components/ErrorBoundary.tsx` (new)
-- `frontend/src/constants/statusConfig.ts` (new)
-- `frontend/src/App.tsx`, `frontend/src/components/findings/FindingDetail.tsx`, `FindingsList.tsx`, `sbom/VulnerabilityRow.tsx`, `SbomPage.tsx` (config dedup)
-- `frontend/src/components/security/ThreatIntelTab.tsx` (visual polish)
-- `backend/app/routers/projects.py`, `documents.py`, `files.py` (pagination, deps)
-- `backend/app/services/document_service.py` (pagination support)
-- `.planning/knowledge/session28-*`, `session29-*` (4 knowledge files)
-
 **What to do next:**
-1. **Remaining backlog** (opportunistic, fix when touching adjacent code):
-   - R1: Split `emulation_service.py` (~1637 lines) — when touching emulation
-   - R2: Split `FileViewer.tsx` (~846 lines) — when touching explorer UI
-   - R3: Split `ProjectDetailPage.tsx` (~593 lines) — when touching project page
-   - R8: Standardize error handling hierarchy — opportunistic
-   - R9: Standardize commit pattern across routers — opportunistic
-2. **Remaining roadmap**: Device Acquisition v2 Phase 10 (blocked on hardware), UEFI Phase 4 (blocked on firmware images)
+1. ~~**Remaining backlog R1, R2, R3, R9**~~ — ✅ Done (S30): file splits + commit→flush standardization
+2. R8: Standardize error handling hierarchy — opportunistic
+3. ~~**UEFI Phase 4**~~ — ✅ Verified (S31)
+4. **Remaining roadmap**: Device Acquisition v2 Phase 10 (blocked on hardware)
 
 **All intake items processed. No pending work items.**
 
@@ -472,7 +500,7 @@ All of these are implemented and in the codebase. Do NOT re-implement.
 | Item | Blocker | Action |
 |------|---------|--------|
 | Device Acquisition v2 Phase 10 | Physical MediaTek device in BROM mode | Wait for hardware availability |
-| UEFI campaign Phase 4 | UEFI firmware images (D3633-S1.ROM or Framework BIOS) | Download or acquire test images |
+| ~~UEFI campaign Phase 4~~ | ~~UEFI firmware images~~ | ✅ Verified S31 — D3633-S1.ROM + Framework BIOS |
 | A/B OTA validation | Pixel firmware download | Download when needed |
 
 ---

@@ -1,6 +1,6 @@
 # Patterns: UEFI Firmware Support Campaign
 
-> Extracted: 2026-04-04
+> Extracted: 2026-04-04 (updated 2026-04-10 with Phase 4 verification patterns)
 > Campaign: .planning/campaigns/uefi-firmware-support.md
 > Postmortem: none
 
@@ -64,3 +64,13 @@
 - **Description:** UEFIExtract's `.dump/` directory names contain module type info (e.g., "RaidDriverSmm", "HeciInit"). Parse path components to infer VulHunt's `--component-attribute kind=` parameter instead of hardcoding.
 - **Evidence:** VulHunt requires `kind=SmmModule` for SMM drivers, `kind=DxeDriver` for DXE. The `_infer_uefi_kind()` function maps path patterns to correct kinds.
 - **Applies when:** Tool output encodes metadata in directory/file names. Extract it instead of guessing.
+
+### 10. Real Firmware Verification Catches Scale Issues
+- **Description:** Unit tests use small synthetic inputs. Real UEFI firmware (D3633-S1.ROM: 550 modules, 18 volumes; Framework BIOS: 400 modules, 13 volumes) revealed that `vulhunt_scan_firmware` times out when scanning all modules sequentially via HTTP. Per-binary scan works fine.
+- **Evidence:** Phase 4 verification — `vulhunt_scan_firmware` curl hit 5-minute timeout on 550 modules. `vulhunt_scan_binary` on individual PE32 modules returned in <5s. All other tools (volumes, modules, NVRAM, GUID lookup, file explorer) handled scale without issue.
+- **Applies when:** Building any analysis tool that iterates over firmware contents. Always test with real firmware that has 100+ components to catch timeout/performance issues that synthetic tests miss.
+
+### 11. ZIP-Wrapped Firmware Extraction Pipeline
+- **Description:** Framework BIOS ships as a ZIP containing a `.cap` capsule file. The unpack pipeline correctly extracts the ZIP, identifies the inner `.cap` as UEFI firmware, and runs UEFIExtract on it — producing a fully browsable module tree.
+- **Evidence:** Phase 4 — `freamework uefi` project: ZIP→CAP extraction produced 13 firmware volumes, 400 modules, Insyde H2O FlashDeviceMap correctly identified. No manual intervention needed.
+- **Applies when:** Supporting vendor firmware distributions. Many OEMs wrap firmware in ZIP/7z/RAR. The recursive unpack + re-classify pattern handles this transparently.

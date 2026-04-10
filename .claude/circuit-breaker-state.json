@@ -1,7 +1,7 @@
 {
-  "consecutiveFailures": 2,
-  "lifetimeTrips": 34,
-  "lastFailedTool": "Read",
-  "lastFailureTime": "2026-04-05T15:51:05.781Z",
-  "lastError": "File content (27239 tokens) exceeds maximum allowed tokens (10000). Use offset and limit parameters to read specific portions of the file, or search for specific content instead of reading the whole f"
+  "consecutiveFailures": 0,
+  "lifetimeTrips": 67,
+  "lastFailedTool": null,
+  "lastFailureTime": null,
+  "lastError": null
 }

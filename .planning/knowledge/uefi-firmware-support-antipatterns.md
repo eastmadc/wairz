@@ -1,6 +1,6 @@
 # Anti-patterns: UEFI Firmware Support Campaign
 
-> Extracted: 2026-04-04
+> Extracted: 2026-04-04 (updated 2026-04-10 with Phase 4 verification anti-patterns)
 > Campaign: .planning/campaigns/uefi-firmware-support.md
 
 ## Failed Patterns
@@ -46,3 +46,9 @@
 - **Failure mode:** Almost started a campaign to implement already-completed work. Wasted investigation time.
 - **Evidence:** User asked to "run Phase 1 as a campaign" — research revealed all items already shipped.
 - **How to avoid:** After any implementation session, update the master plan status. Check git log before starting any campaign from a plan document.
+
+### 8. Firmware-Wide Scan Without Module Count Limit
+- **What was done:** `vulhunt_scan_firmware` iterates all PE32 modules in the firmware and scans each via HTTP to the VulHunt sidecar. No module count cap, no timeout per-module, no early-exit option.
+- **Failure mode:** On D3633-S1.ROM (550 modules), the HTTP request from curl times out at 5 minutes. The scan is still running server-side but the client gives up.
+- **Evidence:** Phase 4 verification — `curl --max-time 300` returned exit code 28 (timeout). Per-binary `vulhunt_scan_binary` completes in <5s.
+- **How to avoid:** For any tool that iterates over all firmware components: (a) add a configurable module cap with a sensible default (e.g., 100), (b) use SSE progress events so the client knows it's alive, (c) consider batching or parallel scanning. The per-binary tool should be the primary interface; firmware-wide scan should be opt-in for thorough assessments.

@@ -84,3 +84,12 @@
 {"schema":1,"timestamp":"2026-04-10T02:45:29.890Z","hook":"protect-files","action":"blocked","detail":"Read /home/kali/.claude/projects/-home-kali-code-wairz/memory/MEMORY.md (outside project root)"}
 {"schema":1,"timestamp":"2026-04-10T02:45:46.598Z","hook":"protect-files","action":"blocked","detail":"Write /home/kali/.claude/projects/-home-kali-code-wairz/memory/feedback_update_plans.md (outside project root)"}
 {"schema":1,"timestamp":"2026-04-10T02:45:54.625Z","hook":"protect-files","action":"blocked","detail":"Write /home/kali/.claude/projects/-home-kali-code-wairz/memory/feedback_update_plans.md (outside project root)"}
+{"schema":1,"timestamp":"2026-04-10T03:37:48.488Z","hook":"protect-files","action":"blocked","detail":"Read /tmp/claude-1000/-home-kali-code-wairz/034c69f2-9d4c-4c48-9767-400702c615b3/tasks/b9bbps5l8.output (outside project root)"}
+{"schema":1,"timestamp":"2026-04-10T04:35:57.598Z","hook":"protect-files","action":"blocked","detail":"Read .env.example (.env secrets)"}
+{"schema":1,"timestamp":"2026-04-10T04:36:00.593Z","hook":"external-action-gate","action":"blocked","detail":"cat .env (secrets): cat /home/kali/code/wairz/.env.example"}
+{"schema":1,"timestamp":"2026-04-10T04:36:03.330Z","hook":"protect-files","action":"blocked","detail":"Read .env.example (.env secrets)"}
+{"schema":1,"timestamp":"2026-04-10T04:36:13.693Z","hook":"protect-files","action":"blocked","detail":"Read .env.example (.env secrets)"}
+{"schema":1,"timestamp":"2026-04-10T04:36:17.630Z","hook":"external-action-gate","action":"blocked","detail":"head .env (secrets): head -40 /home/kali/code/wairz/.env.example"}
+{"schema":1,"timestamp":"2026-04-10T04:38:34.629Z","hook":"protect-files","action":"blocked","detail":"Read .env.example (.env secrets)"}
+{"schema":1,"timestamp":"2026-04-10T04:38:51.764Z","hook":"external-action-gate","action":"blocked","detail":"cat .env (secrets): cat > /home/kali/code/wairz/.env.example << 'ENVEOF'\n# Database\nDATABASE_URL=postgresql+asyncpg://wairz:wairz@localhost:5432/wairz\n\n# Redis (for task queue)\nREDIS_URL=redis://localhost:6379/0\n\n# Firmw"}
+{"schema":1,"timestamp":"2026-04-10T04:54:12.765Z","hook":"protect-files","action":"blocked","detail":"Read /tmp/claude-1000/-home-kali-code-wairz/6365ac0d-4737-42b0-8b32-078a1d344ee7/tasks/ba1xmhwzc.output (outside project root)"}
