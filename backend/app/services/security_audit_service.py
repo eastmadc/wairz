@@ -974,3 +974,99 @@ def run_security_audit(extracted_root: str) -> ScanResult:
             logger.warning("Security check '%s' failed: %s", name, e, exc_info=True)
 
     return result
+
+
+# ---------------------------------------------------------------------------
+# Async threat intelligence scans (ClamAV, VirusTotal)
+# These run as optional async phases after the sync audit completes.
+# ---------------------------------------------------------------------------
+
+
+async def run_clamav_scan(extracted_root: str) -> list[SecurityFinding]:
+    """Scan extracted firmware with ClamAV (async, optional).
+
+    Returns findings for infected files. Returns empty list if
+    ClamAV is unavailable.
+    """
+    from app.services import clamav_service
+
+    available = await clamav_service.check_available()
+    if not available:
+        logger.info("ClamAV not available — skipping antivirus scan")
+        return []
+
+    results = await clamav_service.scan_directory(extracted_root, max_files=500)
+    findings: list[SecurityFinding] = []
+
+    for sr in results:
+        if sr.infected:
+            rel = "/" + os.path.relpath(sr.file_path, extracted_root)
+            findings.append(SecurityFinding(
+                title=f"Malware detected: {sr.signature}",
+                severity="critical",
+                description=(
+                    f"ClamAV detected malware signature '{sr.signature}' "
+                    f"in file {rel}. This file should be quarantined and "
+                    f"analyzed further."
+                ),
+                evidence=f"ClamAV signature: {sr.signature}",
+                file_path=rel,
+                cwe_ids=["CWE-506"],
+            ))
+
+    logger.info("ClamAV scan: %d findings from %d files", len(findings), len(results))
+    return findings
+
+
+async def run_virustotal_scan(extracted_root: str) -> list[SecurityFinding]:
+    """Hash-check firmware binaries against VirusTotal (async, optional).
+
+    Returns findings for detected files. Returns empty list if
+    VT API key is not configured.
+    """
+    import asyncio
+    from app.config import get_settings
+    from app.services import virustotal_service
+
+    settings = get_settings()
+    if not settings.virustotal_api_key:
+        logger.info("VT API key not configured — skipping VirusTotal scan")
+        return []
+
+    loop = asyncio.get_running_loop()
+    hashes = await loop.run_in_executor(
+        None, virustotal_service.collect_binary_hashes,
+        extracted_root, 50,
+    )
+    if not hashes:
+        return []
+
+    vt_results = await virustotal_service.batch_check_hashes(hashes)
+    findings: list[SecurityFinding] = []
+
+    for vr in vt_results:
+        if vr.found and vr.detection_count > 0:
+            if vr.detection_count > 10:
+                severity = "critical"
+            elif vr.detection_count > 5:
+                severity = "high"
+            elif vr.detection_count > 1:
+                severity = "medium"
+            else:
+                severity = "low"
+
+            top_detections = ", ".join(vr.detections[:5])
+            findings.append(SecurityFinding(
+                title=f"VirusTotal detection: {vr.file_path} ({vr.detection_count}/{vr.total_engines})",
+                severity=severity,
+                description=(
+                    f"VirusTotal reports {vr.detection_count}/{vr.total_engines} "
+                    f"engines flagging this binary. Top detections: {top_detections}"
+                ),
+                evidence=f"SHA-256: {vr.sha256}\nPermalink: {vr.permalink}",
+                file_path=vr.file_path,
+                cwe_ids=["CWE-506"],
+            ))
+
+    logger.info("VirusTotal scan: %d findings from %d hashes", len(findings), len(hashes))
+    return findings

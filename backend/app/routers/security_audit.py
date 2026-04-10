@@ -14,7 +14,12 @@ from app.models.finding import Finding
 from app.models.project import Project
 from app.schemas.finding import FindingResponse, Severity
 from app.services.finding_service import FindingService
-from app.services.security_audit_service import SecurityFinding, run_security_audit
+from app.services.security_audit_service import (
+    SecurityFinding,
+    run_security_audit,
+    run_clamav_scan,
+    run_virustotal_scan,
+)
 from app.services.yara_service import scan_firmware as yara_scan_firmware
 
 router = APIRouter(
@@ -120,6 +125,24 @@ async def run_audit(
         total_checks += scan_result.checks_run
         all_findings.extend((sf, firmware.id) for sf in scan_result.findings)
         all_errors.extend(scan_result.errors)
+
+    # Run optional async threat intelligence scans (ClamAV, VirusTotal)
+    for firmware in firmware_list:
+        try:
+            clamav_findings = await run_clamav_scan(firmware.extracted_path)
+            all_findings.extend((sf, firmware.id) for sf in clamav_findings)
+            if clamav_findings:
+                total_checks += 1
+        except Exception as e:
+            all_errors.append(f"clamav: {e}")
+
+        try:
+            vt_findings = await run_virustotal_scan(firmware.extracted_path)
+            all_findings.extend((sf, firmware.id) for sf in vt_findings)
+            if vt_findings:
+                total_checks += 1
+        except Exception as e:
+            all_errors.append(f"virustotal: {e}")
 
     # Persist findings
     svc = FindingService(db)
@@ -478,6 +501,249 @@ async def run_yara_scan(
 # ---------------------------------------------------------------------------
 # Update mechanism detection
 # ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# ClamAV scan
+# ---------------------------------------------------------------------------
+
+
+class ClamScanResponse(BaseModel):
+    status: str
+    files_scanned: int
+    infected_count: int
+    infected_files: list[dict] = []
+    findings_created: int = 0
+    errors: list[str] = []
+
+
+@router.post("/clamav-scan", response_model=ClamScanResponse)
+async def run_clamav_scan(
+    project_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+):
+    """Scan extracted firmware with ClamAV antivirus.
+
+    Uses the ClamAV Docker sidecar to scan all extracted files for
+    known malware, trojans, and backdoors. Results are persisted as
+    findings with source='clamav_scan'.
+    """
+    from app.services import clamav_service
+
+    available = await clamav_service.check_available()
+    if not available:
+        return ClamScanResponse(
+            status="unavailable",
+            files_scanned=0,
+            infected_count=0,
+            errors=["ClamAV daemon is not reachable. Check that the clamav service is running."],
+        )
+
+    result = await db.execute(select(Project).where(Project.id == project_id))
+    project = result.scalar_one_or_none()
+    if not project:
+        raise HTTPException(404, "Project not found")
+
+    result = await db.execute(
+        select(Firmware)
+        .where(
+            Firmware.project_id == project_id,
+            Firmware.extracted_path.isnot(None),
+        )
+        .order_by(Firmware.created_at.desc())
+    )
+    firmware_list = result.scalars().all()
+    if not firmware_list:
+        raise HTTPException(400, "No extracted firmware available — unpack first")
+
+    # Clear previous clamav_scan findings
+    await db.execute(
+        delete(Finding).where(
+            Finding.project_id == project_id,
+            Finding.source == "clamav_scan",
+        )
+    )
+    await db.flush()
+
+    total_scanned = 0
+    all_infected: list[dict] = []
+    all_errors: list[str] = []
+    all_findings: list[tuple[SecurityFinding, uuid.UUID]] = []
+
+    for firmware in firmware_list:
+        scan_results = await clamav_service.scan_directory(firmware.extracted_path)
+        total_scanned += len(scan_results)
+
+        for sr in scan_results:
+            if sr.error:
+                all_errors.append(sr.error)
+            if sr.infected:
+                import os
+                rel = "/" + os.path.relpath(sr.file_path, firmware.extracted_path)
+                all_infected.append({
+                    "path": rel,
+                    "signature": sr.signature,
+                })
+                all_findings.append((
+                    SecurityFinding(
+                        title=f"Malware detected: {sr.signature}",
+                        severity="critical",
+                        description=(
+                            f"ClamAV detected malware signature '{sr.signature}' "
+                            f"in file {rel}. This file should be quarantined and "
+                            f"analyzed further."
+                        ),
+                        evidence=f"ClamAV signature: {sr.signature}",
+                        file_path=rel,
+                        cwe_ids=["CWE-506"],
+                    ),
+                    firmware.id,
+                ))
+
+    # Persist findings
+    svc = FindingService(db)
+    for sf, fw_id in all_findings:
+        await _persist_finding_with_source(svc, project_id, sf, "clamav_scan", fw_id)
+    await db.commit()
+
+    return ClamScanResponse(
+        status="success",
+        files_scanned=total_scanned,
+        infected_count=len(all_infected),
+        infected_files=all_infected[:100],
+        findings_created=len(all_findings),
+        errors=all_errors[:20],
+    )
+
+
+# ---------------------------------------------------------------------------
+# VirusTotal hash scan
+# ---------------------------------------------------------------------------
+
+
+class VtScanResponse(BaseModel):
+    status: str
+    binaries_checked: int
+    detected_count: int
+    detected_files: list[dict] = []
+    findings_created: int = 0
+    errors: list[str] = []
+
+
+@router.post("/vt-scan", response_model=VtScanResponse)
+async def run_vt_scan(
+    project_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+):
+    """Hash-check extracted firmware binaries against VirusTotal.
+
+    Privacy-first: only SHA-256 hashes are sent, never file contents.
+    Requires VT_API_KEY in .env. Rate-limited to 4 req/min (free tier).
+    Results are persisted as findings with source='vt_scan'.
+    """
+    from app.config import get_settings
+    from app.services import virustotal_service
+
+    settings = get_settings()
+    if not settings.virustotal_api_key:
+        return VtScanResponse(
+            status="not_configured",
+            binaries_checked=0,
+            detected_count=0,
+            errors=["VT_API_KEY not configured in .env. Set it to enable VirusTotal lookups."],
+        )
+
+    result = await db.execute(select(Project).where(Project.id == project_id))
+    project = result.scalar_one_or_none()
+    if not project:
+        raise HTTPException(404, "Project not found")
+
+    result = await db.execute(
+        select(Firmware)
+        .where(
+            Firmware.project_id == project_id,
+            Firmware.extracted_path.isnot(None),
+        )
+        .order_by(Firmware.created_at.desc())
+    )
+    firmware_list = result.scalars().all()
+    if not firmware_list:
+        raise HTTPException(400, "No extracted firmware available — unpack first")
+
+    # Clear previous vt_scan findings
+    await db.execute(
+        delete(Finding).where(
+            Finding.project_id == project_id,
+            Finding.source == "vt_scan",
+        )
+    )
+    await db.flush()
+
+    loop = asyncio.get_running_loop()
+    total_checked = 0
+    all_detected: list[dict] = []
+    all_findings: list[tuple[SecurityFinding, uuid.UUID]] = []
+    all_errors: list[str] = []
+
+    for firmware in firmware_list:
+        hashes = await loop.run_in_executor(
+            None, virustotal_service.collect_binary_hashes,
+            firmware.extracted_path, 50,
+        )
+        if not hashes:
+            continue
+
+        vt_results = await virustotal_service.batch_check_hashes(hashes)
+        total_checked += len(vt_results)
+
+        for vr in vt_results:
+            if vr.found and vr.detection_count > 0:
+                all_detected.append({
+                    "path": vr.file_path,
+                    "sha256": vr.sha256,
+                    "detections": f"{vr.detection_count}/{vr.total_engines}",
+                    "permalink": vr.permalink,
+                })
+                # Determine severity from detection ratio
+                if vr.detection_count > 10:
+                    severity = "critical"
+                elif vr.detection_count > 5:
+                    severity = "high"
+                elif vr.detection_count > 1:
+                    severity = "medium"
+                else:
+                    severity = "low"
+
+                top_detections = ", ".join(vr.detections[:5])
+                all_findings.append((
+                    SecurityFinding(
+                        title=f"VirusTotal detection: {vr.file_path} ({vr.detection_count}/{vr.total_engines})",
+                        severity=severity,
+                        description=(
+                            f"VirusTotal reports {vr.detection_count}/{vr.total_engines} "
+                            f"engines flagging this binary. Top detections: {top_detections}"
+                        ),
+                        evidence=f"SHA-256: {vr.sha256}\nPermalink: {vr.permalink}",
+                        file_path=vr.file_path,
+                        cwe_ids=["CWE-506"],
+                    ),
+                    firmware.id,
+                ))
+
+    # Persist findings
+    svc = FindingService(db)
+    for sf, fw_id in all_findings:
+        await _persist_finding_with_source(svc, project_id, sf, "vt_scan", fw_id)
+    await db.commit()
+
+    return VtScanResponse(
+        status="success",
+        binaries_checked=total_checked,
+        detected_count=len(all_detected),
+        detected_files=all_detected[:100],
+        findings_created=len(all_findings),
+        errors=all_errors,
+    )
 
 
 class UpdateMechanismDetail(BaseModel):

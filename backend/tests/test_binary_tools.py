@@ -252,6 +252,10 @@ class TestRegistration:
             "get_global_layout",
             "cross_binary_dataflow",
             "detect_capabilities",
+            "list_binary_capabilities",
+            "analyze_raw_binary",
+            "analyze_binary_format",
+            "detect_rtos",
         }
 
     def test_tool_schemas_valid(self, registry):
@@ -271,7 +275,9 @@ class TestRegistration:
 
     def test_all_tools_require_binary_path(self, registry):
         # Tools that operate on directories/multiple binaries don't require binary_path
-        multi_binary_tools = {"check_all_binary_protections", "cross_binary_dataflow"}
+        multi_binary_tools = {"check_all_binary_protections", "cross_binary_dataflow",
+                               "detect_rtos", "analyze_raw_binary", "analyze_binary_format",
+                               "list_binary_capabilities"}
         for tool in registry.get_anthropic_tools():
             if tool["name"] in multi_binary_tools:
                 continue
