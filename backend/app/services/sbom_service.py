@@ -16,7 +16,7 @@ from app.utils.sandbox import safe_walk, validate_path
 
 logger = logging.getLogger(__name__)
 
-MAX_BINARIES_SCAN = 200
+MAX_BINARIES_SCAN = 500
 MAX_BINARY_READ = 256 * 1024  # 256KB for strings extraction
 MAX_LIBC_READ = 512 * 1024  # 512KB — C library binaries are large
 
@@ -242,6 +242,22 @@ VERSION_PATTERNS: list[tuple[str, re.Pattern]] = [
     ("mongoose", re.compile(rb"Mongoose[/ ](\d+\.\d+(?:\.\d+)?)")),
 ]
 
+# Names that should NOT be detected by the generic fallback.  These are
+# library / toolchain identifiers whose version strings appear inside many
+# unrelated binaries (symbol version requirements, copyright notices, …).
+_GENERIC_EXCLUDE_NAMES: frozenset[str] = frozenset([
+    "glibc", "libc", "gcc", "linux", "openssl", "libssl", "libcrypto",
+    "libpthread", "musl", "uclibc", "ld-linux", "libgcc", "libstdc++",
+    "libm", "libdl", "librt", "libz", "libpng", "libxml2", "zlib",
+    "glib", "pcre",
+])
+
+# Pre-compiled generic version regex: matches "{name} {version}" or
+# "{name}/{version}" or "{name} v{version}" at a word boundary.
+_GENERIC_SEMVER_RE = re.compile(
+    rb"\b(\d+\.\d+(?:\.\d+)?(?:[a-z]\d*)?)\b"
+)
+
 # Library SONAME -> component name mapping for well-known libraries
 SONAME_COMPONENT_MAP: dict[str, str] = {
     # SSL/TLS & crypto
@@ -335,6 +351,15 @@ KNOWN_SERVICE_RISKS: dict[str, str] = {
     "hostapd": "medium",
     "openvpn": "medium",
     "mosquitto": "medium",
+    "rssh": "medium",  # Restricted shell — CVE-2019-3463 command injection
+    "stunnel": "medium",  # TLS wrapper — attack surface
+    "socat": "medium",  # Socket relay — attack surface
+    "ncat": "medium",  # Nmap netcat — attack surface
+    "xinetd": "medium",  # Super-server — attack surface
+    # HIGH — legacy unencrypted protocols
+    "rsh": "high",  # Remote shell — cleartext
+    "rexec": "high",  # Remote exec — cleartext
+    "inetd": "high",  # Legacy super-server
     # LOW — generally safe
     "ntpd": "low",
     "crond": "low",
@@ -1775,6 +1800,7 @@ class SbomService:
         strings = self._extract_printable_strings(data, min_length=4)
         combined = b"\n".join(strings)
 
+        curated_matched = False
         for component_name, pattern in VERSION_PATTERNS:
             match = pattern.search(combined)
             if match:
@@ -1784,6 +1810,7 @@ class SbomService:
                 key = (component_name.lower(), version)
                 existing = self._components.get(key)
                 if existing and existing.detection_confidence == "high":
+                    curated_matched = True
                     continue
 
                 vendor_product = CPE_VENDOR_MAP.get(component_name.lower())
@@ -1804,6 +1831,92 @@ class SbomService:
                     metadata={},
                 )
                 self._add_component(comp)
+                curated_matched = True
+
+        # --- Generic fallback: filename-anchored version detection ---
+        # If no curated pattern matched, check whether the binary's own name
+        # appears alongside a semver string in its extracted strings.
+        if not curated_matched:
+            self._try_generic_binary_detection(abs_path, rel_path, strings)
+
+    def _try_generic_binary_detection(
+        self,
+        abs_path: str,
+        rel_path: str,
+        strings: list[bytes],
+    ) -> None:
+        """Fallback: detect component when binary name appears with a version.
+
+        Matches patterns like ``rssh 2.3.4`` or ``rssh/2.3.4`` where the
+        first token matches the binary's filename.  False positives are
+        filtered by excluding library/toolchain names and requiring the
+        detected name to match the filesystem filename.
+        """
+        basename = os.path.basename(abs_path)
+        # Primary name: the filename itself (e.g. "rssh")
+        primary = basename.split(".")[0].lower()
+        # Yocto-style suffix: hexdump.util-linux → "util-linux"
+        suffix = basename.rsplit(".", 1)[-1].lower() if "." in basename else None
+
+        candidates: list[str] = [primary]
+        if suffix and suffix != primary:
+            candidates.append(suffix)
+
+        for name in candidates:
+            if not name or len(name) < 2:
+                continue
+            if name in _GENERIC_EXCLUDE_NAMES:
+                continue
+            # Require the name not to start with "lib" (library deps)
+            if name.startswith("lib") and len(name) > 3:
+                continue
+
+            # Build a regex anchored to this name
+            name_bytes = re.escape(name.encode("ascii"))
+            pattern = re.compile(
+                rb"(?:^|\s)" + name_bytes + rb"[\s/v_:-]+(\d+\.\d+(?:\.\d+)?(?:[a-z]\d*)?)\b",
+                re.IGNORECASE,
+            )
+            combined = b"\n".join(strings)
+            match = pattern.search(combined)
+            if not match:
+                continue
+
+            version = match.group(1).decode("ascii", errors="replace")
+
+            # Skip if version contains wildcards (protocol compat strings)
+            if "*" in version or "?" in version:
+                continue
+
+            # Skip if we already have this from a better source
+            key = (name, version)
+            existing = self._components.get(key)
+            if existing:
+                continue
+
+            vendor_product = CPE_VENDOR_MAP.get(name)
+            cpe = None
+            if vendor_product:
+                cpe = self._build_cpe(vendor_product[0], vendor_product[1], version)
+
+            comp = IdentifiedComponent(
+                name=name,
+                version=version,
+                type="application",
+                cpe=cpe,
+                purl=self._build_purl(name, version),
+                supplier=vendor_product[0] if vendor_product else None,
+                detection_source="binary_strings",
+                detection_confidence="low",
+                file_paths=[rel_path],
+                metadata={"detection_method": "generic_filename_match"},
+            )
+            self._add_component(comp)
+            logger.info(
+                "Generic binary detection: %s %s from %s",
+                name, version, rel_path,
+            )
+            return  # One detection per binary is sufficient
 
     @staticmethod
     def _extract_printable_strings(data: bytes, min_length: int = 4) -> list[bytes]:
@@ -1945,6 +2058,19 @@ class SbomService:
                             enriched = True
                     except (ValueError, TypeError):
                         pass
+
+            # Promote generic detections validated by CPE enrichment
+            if (
+                enriched
+                and comp.detection_confidence == "low"
+                and comp.metadata.get("detection_method") == "generic_filename_match"
+            ):
+                comp.detection_confidence = "medium"
+                comp.metadata["generic_detection_validated"] = True
+                logger.info(
+                    "Promoted generic detection %s %s to medium (CPE validated)",
+                    comp.name, comp.version,
+                )
 
             if not enriched:
                 comp.metadata["enrichment_source"] = "none"
