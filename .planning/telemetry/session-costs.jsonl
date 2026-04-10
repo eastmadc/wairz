@@ -86,3 +86,9 @@
 {"schema":2,"timestamp":"2026-04-10T00:36:25.751Z","campaign_slug":null,"session_id":"a8750f05-19dc-456d-b74a-7f01ad872ead","agent_count":0,"duration_minutes":10,"estimated_cost":2,"override_cost":null}
 {"schema":2,"timestamp":"2026-04-10T02:04:33.308Z","campaign_slug":null,"session_id":"1c186faf-30f8-43de-9215-4a2092c8f452","agent_count":0,"duration_minutes":10,"estimated_cost":2,"override_cost":null}
 {"schema":2,"timestamp":"2026-04-10T02:48:51.135Z","campaign_slug":null,"session_id":"b29ab40a-f256-4705-9f9c-0480670c690a","agent_count":0,"duration_minutes":10,"estimated_cost":2,"override_cost":null}
+{"schema":2,"timestamp":"2026-04-10T03:30:52.950Z","campaign_slug":null,"session_id":"d2a97153-cd37-4f62-a78c-2d69ff890c3b","agent_count":0,"duration_minutes":10,"estimated_cost":2,"override_cost":null}
+{"schema":2,"timestamp":"2026-04-10T04:31:50.015Z","campaign_slug":null,"session_id":"034c69f2-9d4c-4c48-9767-400702c615b3","agent_count":0,"duration_minutes":10,"estimated_cost":2,"override_cost":null}
+{"schema":2,"timestamp":"2026-04-10T05:17:40.324Z","campaign_slug":null,"session_id":"6365ac0d-4737-42b0-8b32-078a1d344ee7","agent_count":0,"duration_minutes":10,"estimated_cost":2,"override_cost":null}
+{"schema":2,"timestamp":"2026-04-10T05:41:30.391Z","campaign_slug":null,"session_id":"1b1bc4b1-14e3-4ae1-92e1-51f21e4e072b","agent_count":0,"duration_minutes":10,"estimated_cost":2,"override_cost":null}
+{"schema":2,"timestamp":"2026-04-10T06:05:54.472Z","campaign_slug":null,"session_id":"8ccb45a0-ea5a-4697-bc7a-c3dd690d585a","agent_count":0,"duration_minutes":10,"estimated_cost":2,"override_cost":null}
+{"schema":2,"timestamp":"2026-04-10T06:54:22.920Z","campaign_slug":null,"session_id":"198d42db-65d7-4f05-ad22-676277340ad8","agent_count":0,"duration_minutes":10,"estimated_cost":2,"override_cost":null}

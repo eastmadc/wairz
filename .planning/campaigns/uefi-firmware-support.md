@@ -1,5 +1,5 @@
 ---
-Status: completed
+Status: completed (all phases)
 Direction: Add UEFI/BIOS firmware unpacking, analysis, and security assessment
 Estimated Sessions: 2
 Type: build
@@ -20,7 +20,7 @@ and security assessment via VulHunt integration.
 | 1 | build | UEFI detection + UEFIExtract in Docker + extraction pipeline | complete |
 | 2 | build | UEFI MCP tools (5 tools) + REST endpoints | complete |
 | 3 | build | VulHunt Docker sidecar + UEFI security assessment | complete |
-| 4 | verify | Test with real UEFI firmware (D3633-S1.ROM, Framework BIOS) | pending |
+| 4 | verify | Test with real UEFI firmware (D3633-S1.ROM, Framework BIOS) | complete |
 
 ## Phase End Conditions
 
@@ -70,19 +70,28 @@ and security assessment via VulHunt integration.
 
 ## Active Context
 
-- Phase 1-3 code complete and committed
+- All phases complete (1-4)
 - VulHunt container running (`vulhunt 1.0.0`), tools registered, scans execute
-- Tested VulHunt on real firmware (OpenWrt uhttpd, dropbear, busybox) — pipeline works end-to-end
-- VulHunt CE returns package metadata but no vulnerability findings for tested binaries (limited community ruleset)
-- Fixed parser bug: package metadata JSONL records no longer counted as findings
-- Phase 4 (real UEFI firmware verification) not yet started — needs D3633-S1.ROM or Framework BIOS
+- Phase 4 verified on 2026-04-10 with real firmware in live Docker:
+
+**D3633-S1.ROM (project `D3633-S1`):**
+- `list_firmware_volumes`: 18 firmware volumes found (IFD, FVH, nested volumes)
+- `list_uefi_modules`: 550 modules (DXE drivers, SMM modules, freeform, DXE core)
+- `extract_nvram_variables`: 48 NVRAM variables (Setup, Timeout, UsbSupport, etc.)
+- `identify_uefi_module`: GUID lookup works (B601F8C4... → RuntimeDxe)
+- `vulhunt_scan_binary`: Scanned SataController PE32 module — pipeline works
+- `list_directory`: File explorer shows firmware volumes in extraction tree
+
+**Framework Laptop 16 AMD BIOS 4.03 (project `freamework uefi`):**
+- ZIP extraction: Inner `.cap` file correctly extracted from `.zip`
+- `list_firmware_volumes`: 13 volumes (Insyde H2O FlashDeviceMap detected)
+- `list_uefi_modules`: 400 modules (DXE, SMM, Combined SMM/DXE including UsbBusDxe)
 
 ## Continuation State
 
-- All phases 1-3 built, tested, running
+- All 4 phases complete. Campaign finished.
 - 26 UEFI tests passing
-- Phase 4 blocked on UEFI firmware images for testing
-- Next: acquire test UEFI firmware and verify full extraction + module listing + VulHunt scan
+- VulHunt firmware-wide scan times out on large UEFI images (550+ modules) — individual binary scan works fine. Consider adding a module count limit or progress indication in future.
 
 <!-- session-end: 2026-04-04T01:45:31.697Z -->
 
