@@ -156,7 +156,7 @@ export interface BinaryInfoResponse {
 
 export type Severity = 'critical' | 'high' | 'medium' | 'low' | 'info'
 export type FindingStatus = 'open' | 'confirmed' | 'false_positive' | 'fixed'
-export type FindingSource = 'manual' | 'ai_discovered' | 'sbom_scan' | 'fuzzing' | 'security_review' | 'security_audit' | 'yara_scan'
+export type FindingSource = 'manual' | 'ai_discovered' | 'sbom_scan' | 'fuzzing' | 'security_review' | 'security_audit' | 'yara_scan' | 'abusech_scan' | 'known_good_scan'
 
 export interface Finding {
   id: string

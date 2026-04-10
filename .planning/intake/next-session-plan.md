@@ -1,11 +1,40 @@
 # Wairz Master Plan
 
 > Created: 2026-04-01
-> Updated: 2026-04-10 (session 26 -- S26 Threat Intel Phases 4-5)
+> Updated: 2026-04-10 (session 27 -- S27 intake cleanup + threat intel frontend)
 > Resume with: /do continue
-> Plans: .planning/intake/plan-*.md (detailed plans for remaining items)
+> Plans: .planning/archive/plan-*.md (all 14 completed plans archived)
 > Active campaign: none
 > Commit: pending on clean-history
+
+---
+
+## Session 27 Handoff (2026-04-10)
+
+**What was done this session:**
+1. **Intake queue cleanup**: Verified all 15 intake items completed. Updated status markers on CRA compliance and frontend gaps plans. Archived all 14 completed plans to `.planning/archive/`.
+2. **Threat Intel Frontend**: New `ThreatIntelTab` component on SecurityScanPage with:
+   - **abuse.ch scan button**: Triggers MalwareBazaar + ThreatFox + YARAify lookups, displays hit counts per service, auto-loads findings
+   - **CIRCL Hashlookup button**: Identifies known-good binaries via NSRL, shows progress bar and sortable file table with product/vendor info
+   - Severity badges, findings table with links to Findings page and file explorer
+3. **FindingSource updates**: Added `abusech_scan` and `known_good_scan` to `FindingSource` type, `FindingDetail.tsx`, and `FindingsList.tsx` source config maps.
+
+**Files changed:**
+- `frontend/src/components/security/ThreatIntelTab.tsx` (new, 250 lines)
+- `frontend/src/pages/SecurityScanPage.tsx` (new tab + content)
+- `frontend/src/api/findings.ts` (API functions + types)
+- `frontend/src/types/index.ts` (FindingSource union)
+- `frontend/src/components/findings/FindingDetail.tsx` (source config)
+- `frontend/src/components/findings/FindingsList.tsx` (source config)
+- `.planning/archive/` (14 plan files moved)
+- `.planning/intake/next-session-plan.md` (updated)
+
+**TypeScript clean. Docker rebuilt. Frontend deployed. API smoke tested.**
+
+**What to do next:**
+1. **README update** — document 113 tools, threat intel features, new env vars
+2. **Optional: visual polish** — loading skeleton, tooltip details on abuse.ch hit badges
+3. **Remaining roadmap**: Device Acquisition v2 Phase 10 (blocked on hardware)
 
 ---
 
@@ -24,8 +53,8 @@
 **Test suite: 386 passed, 0 failures.** TypeScript clean. 1 pre-existing YARA test failure (YARA Forge dir provides rules when custom dir monkeypatched empty — not a regression).
 
 **What to do next:**
-1. **Clean up intake queue** — 12 of 15 items are completed; archive or remove stale plan files
-2. **Frontend: threat intel display** — abuse.ch and CIRCL results on SecurityScanPage (new "Threat Intel" tab or section)
+1. ~~**Clean up intake queue**~~ — ✅ Done (S27): all 14 completed plans archived to `.planning/archive/`, status markers updated on CRA + frontend gaps plans
+2. **Frontend: threat intel display** — abuse.ch and CIRCL results on SecurityScanPage (new "Threat Intel" tab or section) — **in progress S27**
 3. **README update** — document 113 tools, threat intel features, new env vars
 4. **Remaining roadmap items** (from intake):
    - `plan-cicd-github-action.md` — all acceptance criteria met in S25, can be closed
