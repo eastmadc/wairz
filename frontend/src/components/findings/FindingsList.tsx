@@ -1,50 +1,14 @@
 import { useState, useMemo } from 'react'
 import {
-  AlertTriangle,
-  AlertCircle,
-  Info,
-  ShieldAlert,
-  ShieldX,
   ChevronDown,
   ChevronUp,
-  Package,
-  Bot,
-  User,
-  Search,
-  Bug,
-  Shield,
+  ShieldAlert,
 } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import type { Finding, Severity, FindingStatus, FindingSource } from '@/types'
 import { formatDate } from '@/utils/format'
-
-const SEVERITY_CONFIG: Record<Severity, { icon: React.ElementType; className: string; order: number }> = {
-  critical: { icon: ShieldX, className: 'bg-red-600 text-white', order: 0 },
-  high: { icon: ShieldAlert, className: 'bg-orange-500 text-white', order: 1 },
-  medium: { icon: AlertTriangle, className: 'bg-yellow-500 text-black', order: 2 },
-  low: { icon: AlertCircle, className: 'bg-blue-500 text-white', order: 3 },
-  info: { icon: Info, className: 'bg-gray-500 text-white', order: 4 },
-}
-
-const STATUS_CONFIG: Record<FindingStatus, { label: string; className: string }> = {
-  open: { label: 'Open', className: 'border-yellow-500/50 text-yellow-600 dark:text-yellow-400' },
-  confirmed: { label: 'Confirmed', className: 'border-red-500/50 text-red-600 dark:text-red-400' },
-  false_positive: { label: 'False Positive', className: 'border-gray-500/50 text-gray-500' },
-  fixed: { label: 'Fixed', className: 'border-green-500/50 text-green-600 dark:text-green-400' },
-}
-
-const SOURCE_CONFIG: Record<FindingSource, { icon: React.ElementType; label: string; className: string }> = {
-  manual: { icon: User, label: 'Manual', className: 'border-gray-500/50 text-gray-500' },
-  ai_discovered: { icon: Bot, label: 'AI', className: 'border-purple-500/50 text-purple-600 dark:text-purple-400' },
-  sbom_scan: { icon: Package, label: 'SBOM Scan', className: 'border-teal-500/50 text-teal-600 dark:text-teal-400' },
-  fuzzing: { icon: Bug, label: 'Fuzzing', className: 'border-orange-500/50 text-orange-600 dark:text-orange-400' },
-  security_review: { icon: Search, label: 'Review', className: 'border-blue-500/50 text-blue-600 dark:text-blue-400' },
-  security_audit: { icon: Shield, label: 'Security Audit', className: 'border-red-500/50 text-red-600 dark:text-red-400' },
-  yara_scan: { icon: Shield, label: 'YARA Scan', className: 'border-amber-500/50 text-amber-600 dark:text-amber-400' },
-  abusech_scan: { icon: Shield, label: 'abuse.ch', className: 'border-rose-500/50 text-rose-600 dark:text-rose-400' },
-  known_good_scan: { icon: Shield, label: 'Known Good', className: 'border-green-500/50 text-green-600 dark:text-green-400' },
-}
+import { SEVERITY_CONFIG, FINDING_STATUS_CONFIG, FINDING_SOURCE_CONFIG } from '@/constants/statusConfig'
 
 interface FindingsListProps {
   findings: Finding[]
@@ -115,7 +79,7 @@ export default function FindingsList({
               onClick={() => onSeverityFilter(active ? null : sev)}
               className={`rounded-full border px-2 py-0.5 text-xs font-medium transition-colors ${
                 active
-                  ? config.className
+                  ? config.bg
                   : 'border-border text-muted-foreground hover:text-foreground'
               }`}
             >
@@ -126,7 +90,7 @@ export default function FindingsList({
 
         <span className="ml-2 text-xs text-muted-foreground">Status:</span>
         {(['open', 'confirmed', 'false_positive', 'fixed'] as FindingStatus[]).map((st) => {
-          const config = STATUS_CONFIG[st]
+          const config = FINDING_STATUS_CONFIG[st]
           const active = statusFilter === st
           return (
             <button
@@ -146,7 +110,7 @@ export default function FindingsList({
 
         <span className="ml-2 text-xs text-muted-foreground">Source:</span>
         {(['manual', 'ai_discovered', 'sbom_scan', 'security_review', 'security_audit', 'yara_scan', 'fuzzing'] as FindingSource[]).map((src) => {
-          const config = SOURCE_CONFIG[src]
+          const config = FINDING_SOURCE_CONFIG[src]
           const active = sourceFilter === src
           const SourceIcon = config.icon
           return (
@@ -202,7 +166,7 @@ export default function FindingsList({
         <div className="space-y-1">
           {sorted.map((f) => {
             const sevConfig = SEVERITY_CONFIG[f.severity]
-            const statConfig = STATUS_CONFIG[f.status]
+            const statConfig = FINDING_STATUS_CONFIG[f.status]
             const Icon = sevConfig.icon
             const isSelected = selectedId === f.id
 
@@ -217,7 +181,7 @@ export default function FindingsList({
                     : 'border-transparent hover:bg-accent'
                 }`}
               >
-                <span className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded ${sevConfig.className}`}>
+                <span className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded ${sevConfig.bg}`}>
                   <Icon className="h-3 w-3" />
                 </span>
                 <div className="min-w-0 flex-1">
@@ -227,7 +191,7 @@ export default function FindingsList({
                       {statConfig.label}
                     </Badge>
                     {f.source && f.source !== 'manual' && (() => {
-                      const srcConfig = SOURCE_CONFIG[f.source as FindingSource] ?? SOURCE_CONFIG.manual
+                      const srcConfig = FINDING_SOURCE_CONFIG[f.source as FindingSource] ?? FINDING_SOURCE_CONFIG.manual
                       const SrcIcon = srcConfig.icon
                       return (
                         <Badge variant="outline" className={`shrink-0 text-[10px] ${srcConfig.className}`}>

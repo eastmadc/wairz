@@ -3,10 +3,6 @@ import { useParams } from 'react-router-dom'
 import {
   Package,
   ShieldAlert,
-  AlertTriangle,
-  AlertCircle,
-  ShieldX,
-  Info,
   Loader2,
   RefreshCw,
   Download,
@@ -43,16 +39,7 @@ import type {
   VulnerabilityResolutionStatus,
   VulnerabilityScanResult,
 } from '@/types'
-
-// ── Severity display config ──
-
-const SEVERITY_CONFIG: Record<Severity, { icon: React.ElementType; className: string; bg: string }> = {
-  critical: { icon: ShieldX, className: 'text-red-600', bg: 'bg-red-600 text-white' },
-  high: { icon: ShieldAlert, className: 'text-orange-500', bg: 'bg-orange-500 text-white' },
-  medium: { icon: AlertTriangle, className: 'text-yellow-500', bg: 'bg-yellow-500 text-black' },
-  low: { icon: AlertCircle, className: 'text-blue-500', bg: 'bg-blue-500 text-white' },
-  info: { icon: Info, className: 'text-gray-500', bg: 'bg-gray-500 text-white' },
-}
+import { SEVERITY_CONFIG } from '@/constants/statusConfig'
 
 
 const CONFIDENCE_STYLE: Record<string, string> = {
