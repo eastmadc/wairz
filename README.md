@@ -21,7 +21,8 @@ Connect any MCP-compatible AI agent to Wairz's 160+ analysis tools — [Claude C
 - **SAST** — ShellCheck for shell scripts and Bandit for Python scripts, with CWE mapping
 - **cwe_checker** — Binary vulnerability pattern detection (17 CWEs) via Docker sidecar with ARM/MIPS/x86 support
 - **YARA Scanning** — Custom rules + ~5000 YARA Forge community rules, with on-demand updates
-- **SBOM & CVE Scanning** — Generate Software Bill of Materials (CycloneDX 1.7, SPDX 2.3, CycloneDX VEX) and scan components against the NVD with CPE enrichment
+- **Threat Intelligence** — ClamAV malware scanning, VirusTotal hash lookups (privacy-first, no file upload), abuse.ch suite (MalwareBazaar, ThreatFox, URLhaus, YARAify), and CIRCL Hashlookup for known-good binary identification via NSRL
+- **SBOM & CVE Scanning** — Generate Software Bill of Materials (CycloneDX 1.7, SPDX 2.3, CycloneDX VEX) with generic binary version detection fallback, CPE enrichment via NVD dictionary, and vulnerability scanning against the NVD
 - **Firmware Emulation** — User-mode (QEMU) for single binaries, system-mode (FirmAE) for full OS boot in isolated containers, with GDB, pcap capture, and web endpoint interaction
 - **Network Protocol Analysis** — Capture and analyze traffic from emulated firmware: protocol breakdown, insecure protocol detection, DNS queries, TLS metadata
 - **Fuzzing** — AFL++ with QEMU mode for cross-architecture binary fuzzing, with automatic dictionary/corpus generation and crash triage
@@ -172,9 +173,10 @@ Once connected, your AI agent can autonomously explore firmware, analyze binarie
 
 | Category | Count | Tools |
 |----------|-------|-------|
-| **Emulation** | 26 | `start_emulation`, `run_command_in_emulation`, `stop_emulation`, `check_emulation_status`, `get_emulation_logs`, `diagnose_emulation_environment`, `troubleshoot_emulation`, `enumerate_emulation_services`, `get_crash_dump`, `run_gdb_command`, `save_emulation_preset`, `list_emulation_presets`, `start_emulation_from_preset`, `emulate_with_qiling`, `check_qiling_rootfs`, `start_system_emulation`, `system_emulation_status`, `list_firmware_services`, `run_command_in_firmware`, `stop_system_emulation`, `capture_network_traffic`, `get_nvram_state`, `interact_web_endpoint`, `list_available_kernels`, `download_kernel` |
 | **Security** | 26 | `check_known_cves`, `analyze_config_security`, `check_setuid_binaries`, `analyze_init_scripts`, `check_filesystem_permissions`, `analyze_certificate`, `check_kernel_hardening`, `scan_with_yara`, `extract_kernel_config`, `check_kernel_config`, `analyze_selinux_policy`, `check_selinux_enforcement`, `check_compliance`, `scan_scripts`, `shellcheck_scan`, `bandit_scan`, `check_secure_boot`, `update_yara_rules`, `detect_network_dependencies`, `detect_update_mechanisms`, `analyze_update_config`, `create_cra_assessment`, `auto_populate_cra`, `update_cra_requirement`, `export_cra_checklist`, `generate_article14_notification` |
-| **Binary Analysis** | 23 | `list_functions`, `disassemble_function`, `decompile_function`, `list_imports`, `list_exports`, `xrefs_to`, `xrefs_from`, `get_binary_info`, `analyze_binary_format`, `check_binary_protections`, `check_all_binary_protections`, `find_string_refs`, `resolve_import`, `find_callers`, `search_binary_content`, `get_stack_layout`, `get_global_layout`, `trace_dataflow`, `cross_binary_dataflow`, `detect_capabilities`, `list_binary_capabilities`, `analyze_raw_binary` |
+| **Threat Intelligence** | 10 | `scan_with_clamav`, `scan_firmware_clamav`, `check_virustotal`, `scan_firmware_virustotal`, `check_malwarebazaar_hash`, `check_threatfox_ioc`, `check_urlhaus_url`, `enrich_firmware_threat_intel`, `check_known_good_hash`, `scan_firmware_known_good` |
+| **Emulation** | 25 | `start_emulation`, `run_command_in_emulation`, `stop_emulation`, `check_emulation_status`, `get_emulation_logs`, `diagnose_emulation_environment`, `troubleshoot_emulation`, `enumerate_emulation_services`, `get_crash_dump`, `run_gdb_command`, `save_emulation_preset`, `list_emulation_presets`, `start_emulation_from_preset`, `emulate_with_qiling`, `check_qiling_rootfs`, `start_system_emulation`, `system_emulation_status`, `list_firmware_services`, `run_command_in_firmware`, `stop_system_emulation`, `capture_network_traffic`, `get_nvram_state`, `interact_web_endpoint`, `list_available_kernels`, `download_kernel` |
+| **Binary Analysis** | 23 | `list_functions`, `disassemble_function`, `decompile_function`, `list_imports`, `list_exports`, `xrefs_to`, `xrefs_from`, `get_binary_info`, `analyze_binary_format`, `check_binary_protections`, `check_all_binary_protections`, `find_string_refs`, `resolve_import`, `find_callers`, `search_binary_content`, `get_stack_layout`, `get_global_layout`, `trace_dataflow`, `cross_binary_dataflow`, `detect_capabilities`, `list_binary_capabilities`, `detect_rtos`, `analyze_raw_binary` |
 | **Fuzzing** | 9 | `analyze_fuzzing_target`, `generate_fuzzing_dictionary`, `generate_seed_corpus`, `generate_fuzzing_harness`, `start_fuzzing_campaign`, `check_fuzzing_status`, `stop_fuzzing_campaign`, `triage_fuzzing_crash`, `diagnose_fuzzing_campaign` |
 | **SBOM** | 9 | `generate_sbom`, `get_sbom_components`, `check_component_cves`, `run_vulnerability_scan`, `list_vulnerabilities_for_assessment`, `export_sbom`, `push_to_dependency_track`, `assess_vulnerabilities`, `set_vulnerability_status` |
 | **Filesystem** | 8 | `list_directory`, `read_file`, `search_files`, `file_info`, `find_files_by_type`, `get_component_map`, `get_firmware_metadata`, `extract_bootloader_env` |
@@ -244,6 +246,7 @@ Setup is the same pattern as the UART bridge: set `DEVICE_BRIDGE_HOST=host.docke
 | Binary Analysis | radare2 (r2pipe), pyelftools, LIEF, capa |
 | Decompilation | Ghidra 11.3.1 (headless) with custom analysis scripts |
 | Vulnerability Detection | cwe_checker (17 CWEs), VulHunt, YARA (~5000 Forge rules), ShellCheck, Bandit |
+| Threat Intelligence | ClamAV, VirusTotal, abuse.ch (MalwareBazaar, ThreatFox, URLhaus, YARAify), CIRCL Hashlookup (NSRL) |
 | Emulation | QEMU user-mode + system-mode, FirmAE, Qiling (ARM, MIPS, MIPSel, AArch64) |
 | Network Analysis | Scapy (pcap capture + protocol analysis from emulated firmware) |
 | Fuzzing | AFL++ with QEMU mode |
@@ -319,6 +322,10 @@ All settings are configured via environment variables or `.env` file:
 | `DEVICE_BRIDGE_HOST` | `host.docker.internal` | Device acquisition bridge hostname |
 | `DEVICE_BRIDGE_PORT` | `9998` | Device acquisition bridge TCP port |
 | `NVD_API_KEY` | *(empty)* | Optional NVD API key for higher rate limits |
+| `VIRUSTOTAL_API_KEY` | *(empty)* | Optional VirusTotal API key (hash-only lookups, no file upload) |
+| `ABUSECH_AUTH_KEY` | *(empty)* | Optional abuse.ch auth key for higher rate limits |
+| `CLAMAV_HOST` | `clamav` | ClamAV daemon hostname (Docker service) |
+| `CLAMAV_PORT` | `3310` | ClamAV daemon TCP port |
 | `API_KEY` | *(empty)* | Optional API key for REST endpoint authentication |
 | `LOG_LEVEL` | `INFO` | Logging level |
 
