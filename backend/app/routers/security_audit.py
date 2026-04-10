@@ -167,7 +167,7 @@ async def run_audit(
     for sf, fw_id in all_findings:
         await _persist_finding(svc, project_id, sf, fw_id)
 
-    await db.commit()
+    await db.flush()
 
     return SecurityScanResponse(
         status="success",
@@ -417,7 +417,7 @@ async def scan_uefi_modules(
     svc = FindingService(db)
     for sf, fw_id in all_findings:
         await _persist_finding_with_source(svc, project_id, sf, "uefi_scan", fw_id)
-    await db.commit()
+    await db.flush()
 
     # Summary by type
     summary: dict[str, int] = {}
@@ -504,7 +504,7 @@ async def run_yara_scan(
     for sf, fw_id in all_yara_findings:
         await _persist_finding_with_source(svc, project_id, sf, "yara_scan", fw_id)
 
-    await db.commit()
+    await db.flush()
 
     return YaraScanResponse(
         status="success",
@@ -622,7 +622,7 @@ async def run_clamav_scan_endpoint(
     svc = FindingService(db)
     for sf, fw_id in all_findings:
         await _persist_finding_with_source(svc, project_id, sf, "clamav_scan", fw_id)
-    await db.commit()
+    await db.flush()
 
     return ClamScanResponse(
         status="success",
@@ -752,7 +752,7 @@ async def run_vt_scan(
     svc = FindingService(db)
     for sf, fw_id in all_findings:
         await _persist_finding_with_source(svc, project_id, sf, "vt_scan", fw_id)
-    await db.commit()
+    await db.flush()
 
     return VtScanResponse(
         status="success",
@@ -924,7 +924,7 @@ async def run_abusech_scan_endpoint(
     svc = FindingService(db)
     for sf, fw_id in all_findings:
         await _persist_finding_with_source(svc, project_id, sf, "abusech_scan", fw_id)
-    await db.commit()
+    await db.flush()
 
     return AbusechScanResponse(
         status="success",

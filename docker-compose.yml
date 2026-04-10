@@ -174,6 +174,7 @@ services:
 
   clamav:
     image: clamav/clamav:latest
+    profiles: ["clamav"]
     restart: unless-stopped
     volumes:
       - clamav-db:/var/lib/clamav

@@ -328,7 +328,7 @@ async def upload_rootfs(
         raise HTTPException(400, str(e))
 
     project.status = "ready"
-    await db.commit()
+    await db.flush()
     return firmware
 
 

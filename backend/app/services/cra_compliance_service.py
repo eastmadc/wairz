@@ -351,7 +351,7 @@ class CRAComplianceService:
             )
             self.db.add(result)
 
-        await self.db.commit()
+        await self.db.flush()
         await self.db.refresh(assessment)
 
         # Re-fetch with eager-loaded results
@@ -476,7 +476,7 @@ class CRAComplianceService:
         assessment.manual_count = manual_count
         assessment.not_tested_count = not_tested_count
 
-        await self.db.commit()
+        await self.db.flush()
         return await self.get_assessment(assessment_id)  # type: ignore[return-value]
 
     # ------------------------------------------------------------------
@@ -512,7 +512,7 @@ class CRAComplianceService:
             req_result.manual_evidence = manual_evidence
         req_result.assessed_at = datetime.utcnow()
 
-        await self.db.commit()
+        await self.db.flush()
         await self.db.refresh(req_result)
 
         # Recalculate assessment summary counts
@@ -830,4 +830,4 @@ class CRAComplianceService:
         assessment.manual_count = manual_count
         assessment.not_tested_count = not_tested_count
 
-        await self.db.commit()
+        await self.db.flush()
