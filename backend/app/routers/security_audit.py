@@ -536,7 +536,7 @@ class ClamScanResponse(BaseModel):
 
 
 @router.post("/clamav-scan", response_model=ClamScanResponse)
-async def run_clamav_scan(
+async def run_clamav_scan_endpoint(
     project_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
 ):
