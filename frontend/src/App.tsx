@@ -1,5 +1,6 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import AppLayout from '@/components/layout/AppLayout'
+import ErrorBoundary from '@/components/ErrorBoundary'
 import DisclaimerDialog from '@/components/DisclaimerDialog'
 import ProjectsPage from '@/pages/ProjectsPage'
 import ProjectDetailPage from '@/pages/ProjectDetailPage'
@@ -19,6 +20,7 @@ import NotFoundPage from '@/pages/NotFoundPage'
 export default function App() {
   return (
     <BrowserRouter>
+      <ErrorBoundary>
       <DisclaimerDialog />
       <Routes>
         <Route path="/" element={<Navigate to="/projects" replace />} />
@@ -39,6 +41,7 @@ export default function App() {
           <Route path="*" element={<NotFoundPage />} />
         </Route>
       </Routes>
+      </ErrorBoundary>
     </BrowserRouter>
   )
 }

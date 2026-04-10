@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { Loader2, Shield, ShieldAlert, ShieldCheck } from 'lucide-react'
+import { AlertCircle, CheckCircle2, Loader2, Shield, ShieldAlert, ShieldCheck } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
+import { Progress } from '@/components/ui/progress'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import {
   runAbusechScan,
   runKnownGoodScan,
@@ -122,17 +124,43 @@ export default function ThreatIntelTab({ projectId, selectedFirmwareId }: Threat
                   Checked <strong>{abusechResult.binaries_checked}</strong> firmware image{abusechResult.binaries_checked !== 1 ? 's' : ''}
                 </span>
                 <span className="text-muted-foreground">|</span>
-                <span className={abusechResult.malwarebazaar_hits > 0 ? 'text-red-500 font-semibold' : ''}>
-                  MalwareBazaar: {abusechResult.malwarebazaar_hits}
-                </span>
-                <span className={abusechResult.threatfox_hits > 0 ? 'text-orange-500 font-semibold' : ''}>
-                  ThreatFox: {abusechResult.threatfox_hits}
-                </span>
-                <span className={abusechResult.yaraify_hits > 0 ? 'text-yellow-600 font-semibold' : ''}>
-                  YARAify: {abusechResult.yaraify_hits}
-                </span>
+                <TooltipProvider>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <span className={`cursor-help ${abusechResult.malwarebazaar_hits > 0 ? 'text-red-500 font-semibold' : ''}`}>
+                        MalwareBazaar: {abusechResult.malwarebazaar_hits}
+                      </span>
+                    </TooltipTrigger>
+                    <TooltipContent>Malware sample database — matches indicate known malware</TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+                <TooltipProvider>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <span className={`cursor-help ${abusechResult.threatfox_hits > 0 ? 'text-orange-500 font-semibold' : ''}`}>
+                        ThreatFox: {abusechResult.threatfox_hits}
+                      </span>
+                    </TooltipTrigger>
+                    <TooltipContent>IOC database — tracks malicious IPs, domains, URLs, and file hashes</TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+                <TooltipProvider>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <span className={`cursor-help ${abusechResult.yaraify_hits > 0 ? 'text-yellow-600 font-semibold' : ''}`}>
+                        YARAify: {abusechResult.yaraify_hits}
+                      </span>
+                    </TooltipTrigger>
+                    <TooltipContent>Community YARA rule matches from abuse.ch</TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
                 <span className="text-muted-foreground">|</span>
-                <span>{abusechResult.findings_created} finding{abusechResult.findings_created !== 1 ? 's' : ''} created</span>
+                <span className="inline-flex items-center gap-1">
+                  {abusechResult.errors.length > 0
+                    ? <AlertCircle className="h-3.5 w-3.5 text-amber-500" />
+                    : <CheckCircle2 className="h-3.5 w-3.5 text-green-500" />}
+                  {abusechResult.findings_created} finding{abusechResult.findings_created !== 1 ? 's' : ''} created
+                </span>
                 {abusechResult.errors.length > 0 && (
                   <span className="text-xs text-destructive">
                     ({abusechResult.errors.length} error{abusechResult.errors.length !== 1 ? 's' : ''})
@@ -166,11 +194,23 @@ export default function ThreatIntelTab({ projectId, selectedFirmwareId }: Threat
                   Checked <strong>{knownGoodResult.binaries_checked}</strong> binar{knownGoodResult.binaries_checked !== 1 ? 'ies' : 'y'}
                 </span>
                 <span className="text-muted-foreground">|</span>
-                <span className="text-green-600 font-semibold">
-                  {knownGoodResult.known_good_count} known-good
-                </span>
+                <TooltipProvider>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <span className="cursor-help text-green-600 font-semibold">
+                        {knownGoodResult.known_good_count} known-good
+                      </span>
+                    </TooltipTrigger>
+                    <TooltipContent>NIST National Software Reference Library — identifies known legitimate software</TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
                 <span className="text-yellow-600">
                   {knownGoodResult.unknown_count} unknown
+                </span>
+                <span className="inline-flex items-center gap-1">
+                  {knownGoodResult.errors.length > 0
+                    ? <AlertCircle className="h-3.5 w-3.5 text-amber-500" />
+                    : <CheckCircle2 className="h-3.5 w-3.5 text-green-500" />}
                 </span>
                 {knownGoodResult.errors.length > 0 && (
                   <span className="text-xs text-destructive">
@@ -180,12 +220,10 @@ export default function ThreatIntelTab({ projectId, selectedFirmwareId }: Threat
               </div>
 
               {knownGoodResult.binaries_checked > 0 && (
-                <div className="h-2 bg-muted rounded-full overflow-hidden">
-                  <div
-                    className="h-full bg-green-500 rounded-full transition-all duration-300"
-                    style={{ width: `${(knownGoodResult.known_good_count / knownGoodResult.binaries_checked) * 100}%` }}
-                  />
-                </div>
+                <Progress
+                  value={(knownGoodResult.known_good_count / knownGoodResult.binaries_checked) * 100}
+                  className="h-2"
+                />
               )}
 
               {knownGoodToShow.length > 0 && (

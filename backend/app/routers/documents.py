@@ -1,7 +1,7 @@
 import os
 import uuid
 
-from fastapi import APIRouter, Depends, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, Form, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -108,11 +108,13 @@ async def update_document_content(
 @router.get("", response_model=list[DocumentResponse])
 async def list_documents(
     project_id: uuid.UUID,
+    limit: int = Query(100, ge=1, le=1000, description="Maximum results to return"),
+    offset: int = Query(0, ge=0, description="Number of results to skip"),
     db: AsyncSession = Depends(get_db),
 ):
     await _get_project_or_404(project_id, db)
     svc = DocumentService(db)
-    return await svc.list_by_project(project_id)
+    return await svc.list_by_project(project_id, limit=limit, offset=offset)
 
 
 @router.get("/{document_id}", response_model=DocumentResponse)

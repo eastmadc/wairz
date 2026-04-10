@@ -1,11 +1,34 @@
 # Wairz Master Plan
 
 > Created: 2026-04-01
-> Updated: 2026-04-10 (session 27 -- S27 intake cleanup + threat intel frontend)
+> Updated: 2026-04-10 (session 28 -- S28 README update, ClamAV endpoint fix, intake housekeeping)
 > Resume with: /do continue
-> Plans: .planning/archive/plan-*.md (all 14 completed plans archived)
+> Plans: .planning/archive/plan-*.md (all 15 completed plans archived)
 > Active campaign: none
-> Commit: pending on clean-history
+> Commit: e0cf3d3 on clean-history
+
+---
+
+## Session 28 Handoff (2026-04-10)
+
+**What was done this session:**
+1. **README update**: Updated tool counts for threat intel features, added new env vars (`ABUSECH_AUTH_KEY`, `NVD_API_KEY`), accurate tool category table.
+2. **ClamAV endpoint fix** (`e0cf3d3`): Renamed `run_clamav_scan` endpoint function in `security_audit.py` to avoid shadowing the imported service function. The shadowing caused ClamAV-unavailable responses (Pydantic model) to be iterated as tuples, crashing finding persistence.
+3. **Knowledge extraction**: S27 generic binary detection patterns and antipatterns written to `.planning/knowledge/`.
+4. **Intake housekeeping**: Archived `plan-generic-binary-detection.md` (completed S27). 15 plans now archived.
+
+**Files changed:**
+- `README.md` (tool counts, env vars)
+- `.env.example` (new env vars)
+- `backend/app/routers/security_audit.py` (endpoint rename fix)
+- `.planning/knowledge/session27-*` (2 new knowledge files)
+
+**What to do next:**
+1. **Optional: visual polish** — loading skeleton, tooltip details on abuse.ch hit badges in ThreatIntelTab
+2. **Review backlog** — R1-R10 items (fix when touching adjacent code)
+3. **Remaining roadmap**: Device Acquisition v2 Phase 10 (blocked on hardware), UEFI Phase 4 (blocked on firmware images)
+
+**All intake items processed. No pending work items.**
 
 ---
 

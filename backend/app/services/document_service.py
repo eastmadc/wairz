@@ -89,11 +89,15 @@ class DocumentService:
         await self.db.flush()
         return document
 
-    async def list_by_project(self, project_id: uuid.UUID) -> list[Document]:
+    async def list_by_project(
+        self, project_id: uuid.UUID, *, limit: int = 100, offset: int = 0,
+    ) -> list[Document]:
         result = await self.db.execute(
             select(Document)
             .where(Document.project_id == project_id)
             .order_by(Document.created_at.desc())
+            .limit(limit)
+            .offset(offset)
         )
         return list(result.scalars().all())
 
