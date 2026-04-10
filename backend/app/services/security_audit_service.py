@@ -1070,3 +1070,107 @@ async def run_virustotal_scan(extracted_root: str) -> list[SecurityFinding]:
 
     logger.info("VirusTotal scan: %d findings from %d hashes", len(findings), len(hashes))
     return findings
+
+
+async def run_abusech_scan(extracted_root: str) -> list[SecurityFinding]:
+    """Check firmware hashes against abuse.ch services (async, optional).
+
+    Returns findings for known malware (MalwareBazaar), IOC matches
+    (ThreatFox), and community YARA matches (YARAify).
+    """
+    import asyncio
+    from app.services import abusech_service, virustotal_service
+
+    loop = asyncio.get_running_loop()
+    hashes = await loop.run_in_executor(
+        None, virustotal_service.collect_binary_hashes,
+        extracted_root, 30,
+    )
+    if not hashes:
+        return []
+
+    summary = await abusech_service.enrich_iocs(hashes=hashes, max_hashes=30)
+    findings: list[SecurityFinding] = []
+
+    for mb in summary.get("malwarebazaar", []):
+        findings.append(SecurityFinding(
+            title=f"MalwareBazaar: known malware — {mb.signature or 'unknown'}",
+            severity="critical",
+            description=(
+                f"MalwareBazaar identifies this binary as a known malware sample. "
+                f"Signature: {mb.signature or 'N/A'}. "
+                f"Tags: {', '.join(mb.tags[:5]) if mb.tags else 'none'}. "
+                f"First seen: {mb.first_seen or 'unknown'}."
+            ),
+            evidence=f"SHA-256: {mb.sha256}",
+            file_path=mb.file_path,
+            cwe_ids=["CWE-506"],
+        ))
+
+    for tf in summary.get("threatfox", []):
+        findings.append(SecurityFinding(
+            title=f"ThreatFox IOC: {tf.malware} ({tf.threat_type})",
+            severity="high" if tf.confidence_level >= 75 else "medium",
+            description=(
+                f"ThreatFox links this IOC to {tf.malware} ({tf.threat_type}). "
+                f"Confidence: {tf.confidence_level}%."
+            ),
+            evidence=f"IOC: {tf.ioc}\nType: {tf.ioc_type}",
+            cwe_ids=["CWE-506"],
+        ))
+
+    for yf in summary.get("yaraify", []):
+        rules = ", ".join(yf.rule_matches[:5])
+        findings.append(SecurityFinding(
+            title=f"YARAify: community YARA match — {rules}",
+            severity="medium",
+            description=(
+                f"YARAify reports {len(yf.rule_matches)} community YARA rule "
+                f"matches for this binary: {rules}."
+            ),
+            evidence=f"SHA-256: {yf.sha256}",
+            file_path=yf.file_path,
+            cwe_ids=["CWE-506"],
+        ))
+
+    logger.info("abuse.ch scan: %d findings from %d hashes", len(findings), len(hashes))
+    return findings
+
+
+async def run_known_good_scan(extracted_root: str) -> list[SecurityFinding]:
+    """Identify known-good files via CIRCL hashlookup (informational).
+
+    Returns informational findings for files identified as known-good.
+    These are useful for reducing false positives in other scans.
+    """
+    import asyncio
+    from app.services import hashlookup_service, virustotal_service
+
+    loop = asyncio.get_running_loop()
+    hashes = await loop.run_in_executor(
+        None, virustotal_service.collect_binary_hashes,
+        extracted_root, 100,
+    )
+    if not hashes:
+        return []
+
+    results = await hashlookup_service.batch_check_known_good(hashes)
+    findings: list[SecurityFinding] = []
+
+    known = [r for r in results if r.known]
+    if known:
+        # Single summary finding rather than one per file
+        file_list = ", ".join(r.file_path for r in known[:20])
+        findings.append(SecurityFinding(
+            title=f"CIRCL Hashlookup: {len(known)}/{len(results)} binaries are known-good",
+            severity="info",
+            description=(
+                f"{len(known)} of {len(results)} checked binaries are recognized in "
+                f"the NSRL known-good database. These can be deprioritized during "
+                f"manual analysis. Files: {file_list}"
+            ),
+            evidence=f"Checked {len(results)} binaries against CIRCL hashlookup.circl.lu",
+        ))
+
+    logger.info("CIRCL hashlookup: %d known-good from %d checked", len(known), len(results))
+    return findings

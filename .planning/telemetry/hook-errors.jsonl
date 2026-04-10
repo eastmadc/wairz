@@ -49,3 +49,38 @@
 {"schema":1,"timestamp":"2026-04-05T01:56:06.137Z","hook":"protect-files","action":"blocked","detail":"Read /home/kali/.cache/uv/archive-v0/_jmd_eWIEQBURZpqHwOUG/lib/python3.13/site-packages/ouroboros/codex/ouroboros.md (outside project root)"}
 {"schema":1,"timestamp":"2026-04-05T01:56:06.708Z","hook":"protect-files","action":"blocked","detail":"Read /home/kali/.cache/uv/archive-v0/_jmd_eWIEQBURZpqHwOUG/lib/python3.13/site-packages/ouroboros/codex/skills/run/SKILL.md (outside project root)"}
 {"schema":1,"timestamp":"2026-04-05T13:56:40.886Z","hook":"protect-files","action":"blocked","detail":"Read /home/kali/.claude/plugins/marketplaces/ouroboros/skills/interview/SKILL.md (outside project root)"}
+{"schema":1,"timestamp":"2026-04-08T14:53:38.843Z","hook":"protect-files","action":"blocked","detail":"Read /tmp/claude-1000/-home-kali-code-wairz/5a0dd9e1-a7a5-4ac2-98ed-2754257ade88/tasks/abd6e6c7ec783adcc.output (outside project root)"}
+{"schema":1,"timestamp":"2026-04-08T14:53:39.778Z","hook":"protect-files","action":"blocked","detail":"Read /tmp/claude-1000/-home-kali-code-wairz/5a0dd9e1-a7a5-4ac2-98ed-2754257ade88/tasks/ad49765b56fb57d04.output (outside project root)"}
+{"schema":1,"timestamp":"2026-04-08T15:16:19.606Z","hook":"protect-files","action":"blocked","detail":"Edit .claude/harness.json (pattern: .claude/harness.json)"}
+{"schema":1,"timestamp":"2026-04-08T16:07:56.870Z","hook":"protect-files","action":"blocked","detail":"Read /tmp/cwe_checker/src/caller/src/main.rs (outside project root)"}
+{"schema":1,"timestamp":"2026-04-08T16:31:57.176Z","hook":"protect-files","action":"blocked","detail":"Read /home/kali/.claude/projects/-home-kali-code-wairz/9c343b0a-0c74-44c6-8a43-b7e9dee49d5f/tool-results/bo1qbjyl9.txt (outside project root)"}
+{"schema":1,"timestamp":"2026-04-08T16:40:35.243Z","hook":"protect-files","action":"blocked","detail":"Read /home/kali/.claude/projects/-home-kali-code-wairz/memory/MEMORY.md (outside project root)"}
+{"schema":1,"timestamp":"2026-04-08T16:40:53.466Z","hook":"protect-files","action":"blocked","detail":"Write /home/kali/.claude/projects/-home-kali-code-wairz/memory/project_attack_surface_strategy.md (outside project root)"}
+{"schema":1,"timestamp":"2026-04-08T17:18:57.809Z","hook":"external-action-gate","action":"blocked","detail":"grep .env (secrets): # Check if API key auth is required\necho \"=== Check Auth ===\"\ncurl -s -o /dev/null -w \"%{http_code}\" http://localhost:8000/api/v1/projects/\n\n# Check with common header patterns\necho \"\"\ncurl -s http://"}
+{"schema":1,"timestamp":"2026-04-08T17:43:51.460Z","hook":"external-action-gate","action":"first-encounter","detail":"git push: git push myfork clean-history 2>&1"}
+{"schema":1,"timestamp":"2026-04-08T17:50:06.250Z","hook":"protect-files","action":"blocked","detail":"Edit .claude/harness.json (pattern: .claude/harness.json)"}
+{"schema":1,"timestamp":"2026-04-08T17:54:00.717Z","hook":"protect-files","action":"blocked","detail":"Read /home/kali/.claude/projects/-home-kali-code-wairz/memory/project_attack_surface_strategy.md (outside project root)"}
+{"schema":1,"timestamp":"2026-04-08T17:54:01.138Z","hook":"protect-files","action":"blocked","detail":"Read /home/kali/.claude/projects/-home-kali-code-wairz/memory/user_role.md (outside project root)"}
+{"schema":1,"timestamp":"2026-04-08T17:54:01.611Z","hook":"protect-files","action":"blocked","detail":"Read /home/kali/.claude/projects/-home-kali-code-wairz/memory/feedback_deep_research.md (outside project root)"}
+{"schema":1,"timestamp":"2026-04-08T17:55:33.590Z","hook":"protect-files","action":"blocked","detail":"Read /tmp/claude-1000/-home-kali-code-wairz/4919ff6b-98e6-4ca0-984b-d0e89da8079f/tasks/a52e656808a6285d8.output (outside project root)"}
+{"schema":1,"timestamp":"2026-04-08T18:05:27.410Z","hook":"protect-files","action":"blocked","detail":"Read /home/kali/.claude/plugins/cache/ouroboros/ouroboros/0.27.0/skills/interview/SKILL.md (outside project root)"}
+{"schema":1,"timestamp":"2026-04-08T18:39:30.789Z","hook":"protect-files","action":"blocked","detail":"Read .env.example (.env secrets)"}
+{"schema":1,"timestamp":"2026-04-08T18:39:34.682Z","hook":"external-action-gate","action":"blocked","detail":"cat .env (secrets): cat /home/kali/code/wairz/.env.example 2>/dev/null | tail -15"}
+{"schema":1,"timestamp":"2026-04-08T19:47:47.350Z","hook":"protect-files","action":"blocked","detail":"Write /home/kali/.claude/projects/-home-kali-code-wairz/memory/project_rapidfuzz_opportunities.md (outside project root)"}
+{"schema":1,"timestamp":"2026-04-08T19:53:26.962Z","hook":"external-action-gate","action":"first-encounter","detail":"git push: git push myfork clean-history 2>&1"}
+{"schema":1,"timestamp":"2026-04-08T19:54:58.236Z","hook":"external-action-gate","action":"first-encounter","detail":"git push: git push myfork clean-history"}
+{"schema":1,"timestamp":"2026-04-08T19:55:02.517Z","hook":"external-action-gate","action":"first-encounter","detail":"git push: git push myfork clean-history"}
+{"schema":1,"timestamp":"2026-04-09T00:53:24.236Z","hook":"external-action-gate","action":"first-encounter","detail":"git push: git push myfork clean-history"}
+{"schema":1,"timestamp":"2026-04-09T00:53:26.691Z","hook":"external-action-gate","action":"first-encounter","detail":"git push: git push myfork clean-history"}
+{"schema":1,"timestamp":"2026-04-09T01:47:19.361Z","hook":"external-action-gate","action":"first-encounter","detail":"git push: git push myfork clean-history"}
+{"schema":1,"timestamp":"2026-04-09T01:51:07.288Z","hook":"protect-files","action":"blocked","detail":"Edit .claude/harness.json (pattern: .claude/harness.json)"}
+{"schema":1,"timestamp":"2026-04-09T15:22:01.093Z","hook":"protect-files","action":"blocked","detail":"Read /tmp/claude-1000/-home-kali-code-wairz/4cdcfb29-fbf9-4ea2-85b4-5fc244a8161c/tasks/bf0x8p6mx.output (outside project root)"}
+{"schema":1,"timestamp":"2026-04-09T15:22:01.817Z","hook":"protect-files","action":"blocked","detail":"Read /tmp/claude-1000/-home-kali-code-wairz/4cdcfb29-fbf9-4ea2-85b4-5fc244a8161c/tasks/bxi5veqzw.output (outside project root)"}
+{"schema":1,"timestamp":"2026-04-09T21:15:43.078Z","hook":"protect-files","action":"blocked","detail":"Edit .claude/harness.json (pattern: .claude/harness.json)"}
+{"schema":1,"timestamp":"2026-04-10T02:00:26.259Z","hook":"external-action-gate","action":"first-encounter","detail":"git push: git push myfork clean-history 2>&1"}
+{"schema":1,"timestamp":"2026-04-10T02:00:28.943Z","hook":"external-action-gate","action":"first-encounter","detail":"git push: git push myfork clean-history"}
+{"schema":1,"timestamp":"2026-04-10T02:36:44.488Z","hook":"external-action-gate","action":"blocked","detail":"head .env (secrets): ls /home/kali/code/wairz/.env.example 2>/dev/null && head -5 /home/kali/code/wairz/.env.example || echo \"no .env.example\""}
+{"schema":1,"timestamp":"2026-04-10T02:36:53.685Z","hook":"protect-files","action":"blocked","detail":"Read .env.example (.env secrets)"}
+{"schema":1,"timestamp":"2026-04-10T02:45:29.890Z","hook":"protect-files","action":"blocked","detail":"Read /home/kali/.claude/projects/-home-kali-code-wairz/memory/MEMORY.md (outside project root)"}
+{"schema":1,"timestamp":"2026-04-10T02:45:46.598Z","hook":"protect-files","action":"blocked","detail":"Write /home/kali/.claude/projects/-home-kali-code-wairz/memory/feedback_update_plans.md (outside project root)"}
+{"schema":1,"timestamp":"2026-04-10T02:45:54.625Z","hook":"protect-files","action":"blocked","detail":"Write /home/kali/.claude/projects/-home-kali-code-wairz/memory/feedback_update_plans.md (outside project root)"}

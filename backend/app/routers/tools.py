@@ -156,6 +156,12 @@ ALLOWED_TOOLS: set[str] = {
     "scan_firmware_clamav",
     "check_virustotal",
     "scan_firmware_virustotal",
+    "check_malwarebazaar_hash",
+    "check_threatfox_ioc",
+    "check_urlhaus_url",
+    "enrich_firmware_threat_intel",
+    "check_known_good_hash",
+    "scan_firmware_known_good",
 }
 
 

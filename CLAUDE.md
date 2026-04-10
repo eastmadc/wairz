@@ -155,6 +155,17 @@ wairz/
 - **Frontend:** Zustand for state, API functions in `src/api/`, pages poll with `useEffect` + `setInterval` for long-running operations (see EmulationPage, FuzzingPage, ProjectDetailPage for the pattern).
 - **Docker:** Backend has access to Docker socket for managing emulation/fuzzing containers. Emulation containers run on an internal `emulation_net` network.
 
+### Learned Rules (from `.planning/knowledge/`)
+
+These rules were extracted from recurring bugs and failures across 20+ development sessions:
+
+1. **Use `docker compose up -d` not `restart` after code changes.** `restart` reuses the old container image. `up -d` recreates it with the new build. This mistake has caused false "it works locally" debugging in multiple sessions.
+2. **Add new Python dependencies to `pyproject.toml` immediately.** Code that imports a new package must update `pyproject.toml` in the same commit. Verify in Docker: `docker compose exec backend python -c "import <module>"`.
+3. **Use `flush()` not `commit()` in MCP tool handlers.** The outer MCP dispatch in `mcp_server.py` owns the transaction. Tool handlers should use `context.db.flush()` so writes are visible within the session but rollback works on exceptions.
+4. **Match Pydantic response schemas to ORM model fields exactly.** When adding a new backend service for an existing MCP endpoint, read the response schema first and construct the return dict to match. Schema/model mismatches cause silent 500 errors.
+5. **Wrap sync filesystem I/O in `run_in_executor()` inside async handlers.** Large firmware (10K+ files) stalls the uvicorn event loop. CPU-bound or filesystem-heavy operations must use `await loop.run_in_executor(None, sync_fn, args)`.
+6. **Verify CLI tool flags when upgrading versions.** Before swapping any CLI tool (e.g., binwalk v2→v3), grep the codebase for ALL flags used and verify each exists in the new version's `--help`. Test with real data.
+
 ---
 
 ## MCP Server

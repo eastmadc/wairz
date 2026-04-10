@@ -66,6 +66,7 @@ class Settings(BaseSettings):
     clamav_port: int = 3310
     clamav_enabled: bool = True
     virustotal_api_key: str = ""
+    abusech_auth_key: str = ""
     api_key: str = ""
     log_level: str = "INFO"
 

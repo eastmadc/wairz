@@ -19,6 +19,8 @@ from app.services.security_audit_service import (
     run_security_audit,
     run_clamav_scan,
     run_virustotal_scan,
+    run_abusech_scan,
+    run_known_good_scan,
 )
 from app.services.yara_service import scan_firmware as yara_scan_firmware
 
@@ -143,6 +145,22 @@ async def run_audit(
                 total_checks += 1
         except Exception as e:
             all_errors.append(f"virustotal: {e}")
+
+        try:
+            abusech_findings = await run_abusech_scan(firmware.extracted_path)
+            all_findings.extend((sf, firmware.id) for sf in abusech_findings)
+            if abusech_findings:
+                total_checks += 1
+        except Exception as e:
+            all_errors.append(f"abusech: {e}")
+
+        try:
+            known_good_findings = await run_known_good_scan(firmware.extracted_path)
+            all_findings.extend((sf, firmware.id) for sf in known_good_findings)
+            if known_good_findings:
+                total_checks += 1
+        except Exception as e:
+            all_errors.append(f"hashlookup: {e}")
 
     # Persist findings
     svc = FindingService(db)
@@ -822,4 +840,183 @@ async def get_update_mechanisms(
         status="success",
         mechanisms=details,
         total=len(details),
+    )
+
+
+# ---------------------------------------------------------------------------
+# abuse.ch threat intel scan
+# ---------------------------------------------------------------------------
+
+
+class AbusechScanResponse(BaseModel):
+    status: str
+    binaries_checked: int
+    malwarebazaar_hits: int = 0
+    threatfox_hits: int = 0
+    yaraify_hits: int = 0
+    findings_created: int = 0
+    details: dict = {}
+    errors: list[str] = []
+
+
+@router.post("/abusech-scan", response_model=AbusechScanResponse)
+async def run_abusech_scan_endpoint(
+    project_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+):
+    """Check firmware binaries against abuse.ch threat intelligence.
+
+    Runs hash-only lookups against MalwareBazaar, ThreatFox, and YARAify.
+    No file data is uploaded. Results are persisted as findings with
+    source='abusech_scan'. No API key required (ABUSECH_AUTH_KEY optional).
+    """
+    result = await db.execute(select(Project).where(Project.id == project_id))
+    project = result.scalar_one_or_none()
+    if not project:
+        raise HTTPException(404, "Project not found")
+
+    result = await db.execute(
+        select(Firmware)
+        .where(
+            Firmware.project_id == project_id,
+            Firmware.extracted_path.isnot(None),
+        )
+        .order_by(Firmware.created_at.desc())
+    )
+    firmware_list = result.scalars().all()
+    if not firmware_list:
+        raise HTTPException(400, "No extracted firmware available — unpack first")
+
+    # Clear previous abusech_scan findings
+    await db.execute(
+        delete(Finding).where(
+            Finding.project_id == project_id,
+            Finding.source == "abusech_scan",
+        )
+    )
+    await db.flush()
+
+    loop = asyncio.get_running_loop()
+    all_findings: list[tuple[SecurityFinding, uuid.UUID]] = []
+    all_errors: list[str] = []
+    total_checked = 0
+    mb_total = 0
+    tf_total = 0
+    yf_total = 0
+
+    for firmware in firmware_list:
+        try:
+            findings = await run_abusech_scan(firmware.extracted_path)
+            all_findings.extend((sf, firmware.id) for sf in findings)
+            # Count by source in title
+            for sf in findings:
+                if "MalwareBazaar" in sf.title:
+                    mb_total += 1
+                elif "ThreatFox" in sf.title:
+                    tf_total += 1
+                elif "YARAify" in sf.title:
+                    yf_total += 1
+            total_checked += 1
+        except Exception as e:
+            all_errors.append(f"abusech: {e}")
+
+    # Persist findings
+    svc = FindingService(db)
+    for sf, fw_id in all_findings:
+        await _persist_finding_with_source(svc, project_id, sf, "abusech_scan", fw_id)
+    await db.commit()
+
+    return AbusechScanResponse(
+        status="success",
+        binaries_checked=total_checked,
+        malwarebazaar_hits=mb_total,
+        threatfox_hits=tf_total,
+        yaraify_hits=yf_total,
+        findings_created=len(all_findings),
+        errors=all_errors,
+    )
+
+
+# ---------------------------------------------------------------------------
+# CIRCL Hashlookup (known-good identification)
+# ---------------------------------------------------------------------------
+
+
+class KnownGoodScanResponse(BaseModel):
+    status: str
+    binaries_checked: int
+    known_good_count: int = 0
+    unknown_count: int = 0
+    known_good_files: list[dict] = []
+    errors: list[str] = []
+
+
+@router.post("/known-good-scan", response_model=KnownGoodScanResponse)
+async def run_known_good_scan_endpoint(
+    project_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+):
+    """Identify known-good binaries via CIRCL hashlookup (NSRL database).
+
+    Helps reduce analyst workload by flagging legitimate open-source
+    and vendor binaries. No API key required.
+    """
+    result = await db.execute(select(Project).where(Project.id == project_id))
+    project = result.scalar_one_or_none()
+    if not project:
+        raise HTTPException(404, "Project not found")
+
+    result = await db.execute(
+        select(Firmware)
+        .where(
+            Firmware.project_id == project_id,
+            Firmware.extracted_path.isnot(None),
+        )
+        .order_by(Firmware.created_at.desc())
+    )
+    firmware_list = result.scalars().all()
+    if not firmware_list:
+        raise HTTPException(400, "No extracted firmware available — unpack first")
+
+    from app.services import hashlookup_service, virustotal_service
+
+    loop = asyncio.get_running_loop()
+    all_known: list[dict] = []
+    total_checked = 0
+    total_unknown = 0
+    all_errors: list[str] = []
+
+    for firmware in firmware_list:
+        try:
+            hashes = await loop.run_in_executor(
+                None, virustotal_service.collect_binary_hashes,
+                firmware.extracted_path, 100,
+            )
+            if not hashes:
+                continue
+
+            results = await hashlookup_service.batch_check_known_good(hashes)
+            total_checked += len(results)
+
+            for r in results:
+                if r.known:
+                    all_known.append({
+                        "path": r.file_path,
+                        "sha256": r.sha256,
+                        "source": r.source,
+                        "product": r.product_name,
+                        "vendor": r.vendor,
+                    })
+                else:
+                    total_unknown += 1
+        except Exception as e:
+            all_errors.append(f"hashlookup: {e}")
+
+    return KnownGoodScanResponse(
+        status="success",
+        binaries_checked=total_checked,
+        known_good_count=len(all_known),
+        unknown_count=total_unknown,
+        known_good_files=all_known[:200],
+        errors=all_errors,
     )

@@ -1,9 +1,11 @@
 # Plan: Hardcoded IP Address Detection
 
 > Created: 2026-04-08
-> Priority: High
+> Priority: High | **Status:** completed (2026-04-08, S20)
 > Effort: Medium (1 session)
 > Dependencies: None (standalone)
+>
+> **Completed S20:** `find_hardcoded_ips` MCP tool with validated IP regex, classification (public/private/well-known/loopback), false positive filtering, context-based severity, symlink dedup.
 
 ---
 

@@ -1,10 +1,12 @@
 # Plan: Attack Surface Map + Script SAST
 
 > Created: 2026-04-08
-> Priority: Critical (force multiplier for all downstream tools)
+> Priority: Critical (force multiplier for all downstream tools) | **Status:** completed (2026-04-08, S19)
 > Effort: 2 sessions
 > Source: Ouroboros interview (10 rounds) + Citadel research fleet (4 scouts)
 > Dependencies: None (standalone)
+>
+> **Completed S19:** Attack surface scoring 0-100 with 5 signal categories, DB table + migration, service (497 lines), 2 MCP tools, REST API (3 endpoints), frontend AttackSurfaceTab. Also: ShellCheck + Bandit SAST integration.
 
 ---
 
