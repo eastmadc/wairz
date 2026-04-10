@@ -59,7 +59,7 @@ async def create_campaign(
     }
     try:
         campaign = await svc.create_campaign(firmware, request.binary_path, config)
-        await db.commit()
+        await db.flush()
     except ValueError as exc:
         raise HTTPException(400, str(exc))
     return campaign
@@ -75,7 +75,7 @@ async def start_campaign(
     svc = FuzzingService(db)
     try:
         campaign = await svc.start_campaign(campaign_id, project_id)
-        await db.commit()
+        await db.flush()
     except ValueError as exc:
         raise HTTPException(400, str(exc))
     return campaign
@@ -91,7 +91,7 @@ async def stop_campaign(
     svc = FuzzingService(db)
     try:
         campaign = await svc.stop_campaign(campaign_id, project_id)
-        await db.commit()
+        await db.flush()
     except ValueError as exc:
         raise HTTPException(400, str(exc))
     return campaign
@@ -127,7 +127,7 @@ async def get_campaign(
     svc = FuzzingService(db)
     try:
         campaign = await svc.get_campaign_status(campaign_id, project_id)
-        await db.commit()
+        await db.flush()
     except ValueError as exc:
         raise HTTPException(404, str(exc))
     return campaign
@@ -183,7 +183,7 @@ async def triage_crash(
     svc = FuzzingService(db)
     try:
         crash = await svc.triage_crash(campaign_id, crash_id, project_id)
-        await db.commit()
+        await db.flush()
     except ValueError as exc:
         raise HTTPException(400, str(exc))
     return crash

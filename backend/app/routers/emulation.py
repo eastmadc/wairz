@@ -92,7 +92,7 @@ async def delete_session(
     svc = EmulationService(db)
     try:
         await svc.delete_session(session_id)
-        await db.commit()
+        await db.flush()
     except ValueError as exc:
         raise HTTPException(400, str(exc))
 
@@ -251,7 +251,7 @@ async def create_preset(
             pre_init_script=request.pre_init_script,
             stub_profile=request.stub_profile,
         )
-        await db.commit()
+        await db.flush()
     except ValueError as exc:
         raise HTTPException(400, str(exc))
     return preset
@@ -305,7 +305,7 @@ async def update_preset(
     try:
         updates = request.model_dump(exclude_unset=True)
         preset = await svc.update_preset(preset_id, updates)
-        await db.commit()
+        await db.flush()
     except ValueError as exc:
         raise HTTPException(404, str(exc))
     return preset
@@ -329,7 +329,7 @@ async def delete_preset(
     svc = EmulationService(db)
     try:
         await svc.delete_preset(preset_id)
-        await db.commit()
+        await db.flush()
     except ValueError as exc:
         raise HTTPException(404, str(exc))
 
@@ -432,7 +432,7 @@ async def stop_system_emulation(
     svc = SystemEmulationService(db)
     try:
         await svc.stop_system_emulation(session_id)
-        await db.commit()
+        await db.flush()
     except ValueError as exc:
         raise HTTPException(400, str(exc))
 

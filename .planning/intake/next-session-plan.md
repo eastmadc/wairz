@@ -1,11 +1,43 @@
 # Wairz Master Plan
 
 > Created: 2026-04-01
-> Updated: 2026-04-10 (session 28 -- S28 README update, ClamAV endpoint fix, intake housekeeping)
+> Updated: 2026-04-10 (session 29 -- S29 visual polish, Error Boundary, config centralization, pagination, firmware dedup)
 > Resume with: /do continue
-> Plans: .planning/archive/plan-*.md (all 15 completed plans archived)
+> Plans: .planning/archive/plan-*.md (all 16 completed plans archived)
 > Active campaign: none
-> Commit: e0cf3d3 on clean-history
+> Commit: 181ea32 on clean-history
+
+---
+
+## Session 29 Handoff (2026-04-10)
+
+**What was done this session:**
+1. **ThreatIntelTab visual polish**: Tooltips on service names, shadcn Progress component, status icons.
+2. **Error Boundary** (R4): Route-level crash isolation via `ErrorBoundary` component wrapping routes in `App.tsx`.
+3. **Config centralization** (R5): Created `constants/statusConfig.ts` with `SEVERITY_CONFIG`, `FINDING_STATUS_CONFIG`, `FINDING_SOURCE_CONFIG`. Removed duplication from `FindingDetail.tsx`, `FindingsList.tsx`, `VulnerabilityRow.tsx`, `SbomPage.tsx`.
+4. **Pagination** (R7): `list_projects` and `list_documents` endpoints now accept `offset`/`limit` query params.
+5. **Firmware resolution** (R10): `files.py` uses `Depends(resolve_firmware)` from `deps.py`.
+6. **Knowledge extraction**: S28 security audit fix + S29 parallel refactoring patterns/antipatterns.
+
+**Files changed (18 files, +563 / -166):**
+- `frontend/src/components/ErrorBoundary.tsx` (new)
+- `frontend/src/constants/statusConfig.ts` (new)
+- `frontend/src/App.tsx`, `frontend/src/components/findings/FindingDetail.tsx`, `FindingsList.tsx`, `sbom/VulnerabilityRow.tsx`, `SbomPage.tsx` (config dedup)
+- `frontend/src/components/security/ThreatIntelTab.tsx` (visual polish)
+- `backend/app/routers/projects.py`, `documents.py`, `files.py` (pagination, deps)
+- `backend/app/services/document_service.py` (pagination support)
+- `.planning/knowledge/session28-*`, `session29-*` (4 knowledge files)
+
+**What to do next:**
+1. **Remaining backlog** (opportunistic, fix when touching adjacent code):
+   - R1: Split `emulation_service.py` (~1637 lines) — when touching emulation
+   - R2: Split `FileViewer.tsx` (~846 lines) — when touching explorer UI
+   - R3: Split `ProjectDetailPage.tsx` (~593 lines) — when touching project page
+   - R8: Standardize error handling hierarchy — opportunistic
+   - R9: Standardize commit pattern across routers — opportunistic
+2. **Remaining roadmap**: Device Acquisition v2 Phase 10 (blocked on hardware), UEFI Phase 4 (blocked on firmware images)
+
+**All intake items processed. No pending work items.**
 
 ---
 
@@ -24,8 +56,8 @@
 - `.planning/knowledge/session27-*` (2 new knowledge files)
 
 **What to do next:**
-1. **Optional: visual polish** — loading skeleton, tooltip details on abuse.ch hit badges in ThreatIntelTab
-2. **Review backlog** — R1-R10 items (fix when touching adjacent code)
+1. ~~**Optional: visual polish**~~ — ✅ Done (S29): tooltips, Progress, status icons
+2. ~~**Review backlog R4, R5, R7, R10**~~ — ✅ Done (S29): Error Boundary, config centralization, pagination, firmware deps
 3. **Remaining roadmap**: Device Acquisition v2 Phase 10 (blocked on hardware), UEFI Phase 4 (blocked on firmware images)
 
 **All intake items processed. No pending work items.**

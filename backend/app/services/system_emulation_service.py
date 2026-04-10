@@ -631,7 +631,7 @@ class SystemEmulationService:
 
         # Update the session's pcap_path column
         session.pcap_path = pcap_file
-        await self.db.commit()
+        await self.db.flush()
 
         return {
             "packet_count": packet_count,

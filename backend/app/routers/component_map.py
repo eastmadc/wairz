@@ -77,7 +77,7 @@ async def get_component_map(
             result={"nodes": nodes_data, "edges": edges_data, "truncated": graph.truncated},
         )
         db.add(cache_entry)
-        await db.commit()
+        await db.flush()
 
     return ComponentGraphResponse(
         nodes=[ComponentNodeResponse(**n) for n in nodes_data],

@@ -172,7 +172,7 @@ async def generate_sbom(
         )
         db.add(db_comp)
 
-    await db.commit()
+    await db.flush()
 
     # Return with vuln counts
     components = await _get_components_with_vuln_counts(db, firmware.id)
@@ -436,7 +436,7 @@ async def update_vulnerability(
     if body.resolution_justification is not None:
         vuln.resolution_justification = body.resolution_justification
 
-    await db.commit()
+    await db.flush()
     await db.refresh(vuln)
 
     # Build response with component info
