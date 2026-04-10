@@ -2493,3 +2493,12 @@
 {"schema":1,"hook":"quality-gate","event":"counter","metric":"violations","timestamp":"2026-04-10T02:51:50.513Z"}
 {"schema":1,"hook":"quality-gate","event":"counter","metric":"count","timestamp":"2026-04-10T03:00:09.485Z"}
 {"schema":1,"hook":"quality-gate","event":"counter","metric":"violations","timestamp":"2026-04-10T03:00:09.509Z"}
+{"schema":1,"hook":"quality-gate","event":"counter","metric":"count","timestamp":"2026-04-10T03:00:54.865Z"}
+{"schema":1,"hook":"quality-gate","event":"counter","metric":"count","timestamp":"2026-04-10T03:02:58.618Z"}
+{"schema":1,"hook":"circuit-breaker","event":"counter","metric":"count","timestamp":"2026-04-10T03:17:44.346Z"}
+{"schema":1,"hook":"post-edit","event":"timing","duration_ms":2,"timestamp":"2026-04-10T03:20:12.708Z","file":".planning/knowledge/standalone-binary-env-synthesis-patterns.md","lenses":"cross-reference","typecheck":"pass"}
+{"schema":1,"hook":"post-edit","event":"timing","duration_ms":2,"timestamp":"2026-04-10T03:20:15.152Z","file":".planning/knowledge/standalone-binary-env-synthesis-antipatterns.md","lenses":"cross-reference","typecheck":"pass"}
+{"schema":1,"hook":"post-edit","event":"timing","duration_ms":2,"timestamp":"2026-04-10T03:20:23.061Z","file":".planning/knowledge/android-sbom-antipatterns.md","lenses":"cross-reference","typecheck":"pass"}
+{"schema":1,"hook":"post-edit","event":"timing","duration_ms":1,"timestamp":"2026-04-10T03:20:34.812Z","file":".planning/knowledge/network-protocol-analysis-antipatterns.md","lenses":"cross-reference","typecheck":"pass"}
+{"schema":1,"hook":"post-edit","event":"timing","duration_ms":2,"timestamp":"2026-04-10T03:20:48.077Z","file":".planning/knowledge/security-hardening-antipatterns.md","lenses":"cross-reference","typecheck":"pass"}
+{"schema":1,"hook":"quality-gate","event":"counter","metric":"count","timestamp":"2026-04-10T03:21:09.677Z"}
