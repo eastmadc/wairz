@@ -266,7 +266,7 @@ See `.env.example` for defaults. Key variables:
 | `REDIS_HOST_PORT` | Host-side port for Redis (default 6379, change if port conflicts) |
 | `DOCKER_GID` | Docker socket GID for container access (run `stat -c %g /var/run/docker.sock`) |
 | `STORAGE_ROOT` | Where firmware files are stored on disk |
-| `MAX_UPLOAD_SIZE_MB` | Maximum firmware upload size (default 500) |
+| `MAX_UPLOAD_SIZE_MB` | Maximum firmware upload size (default 2048) |
 | `MAX_TOOL_OUTPUT_KB` | MCP tool output truncation limit (default 30) |
 | `GHIDRA_PATH` / `GHIDRA_SCRIPTS_PATH` | Ghidra headless installation paths |
 | `GHIDRA_TIMEOUT` | Decompilation timeout in seconds (default 120) |

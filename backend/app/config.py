@@ -15,7 +15,7 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+asyncpg://wairz:wairz@localhost:5432/wairz"
     redis_url: str = "redis://localhost:6379/0"
     storage_root: str = "/data/firmware"
-    max_upload_size_mb: int = 500
+    max_upload_size_mb: int = 2048
     max_tool_output_kb: int = 30
     max_tool_iterations: int = 25
     ghidra_path: str = "/opt/ghidra"
