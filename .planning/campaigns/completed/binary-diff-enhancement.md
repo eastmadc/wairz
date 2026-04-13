@@ -17,10 +17,10 @@
 
 | # | Status | Type | Phase | Done When |
 |---|--------|------|-------|-----------|
-| 1 | pending | build | LIEF function hashing backend | `diff_binary()` returns hash-based diffs; section fallback works |
-| 2 | pending | build | Capstone instruction diff endpoint | POST `/compare/binary/instructions` returns assembly diff |
-| 3 | pending | build | Frontend: enhanced binary detail tab | Clicking modified function shows inline instruction diff |
-| 4 | pending | verify | E2E test with real firmware | Compare the two DPCS10 firmware versions, verify function-level diffs appear |
+| 1 | done | build | LIEF function hashing backend | `diff_binary()` returns hash-based diffs; section fallback works |
+| 2 | done | build | Capstone instruction diff endpoint | POST `/compare/binary/instructions` returns assembly diff |
+| 3 | done | build | Frontend: enhanced binary detail tab | Clicking modified function shows inline instruction diff |
+| 4 | done | verify | E2E test with real firmware | Compare the two DPCS10 firmware versions, verify function-level diffs appear |
 
 ## Phase 1: LIEF Function Hashing Backend
 
@@ -163,17 +163,16 @@
 
 | Feature | Status | Phase | Notes |
 |---------|--------|-------|-------|
-| LIEF function body hashing | pending | 1 | Replaces pyelftools size-only |
-| Section hash fallback | pending | 1 | For stripped binaries |
-| Import/export set diff | pending | 1 | Security-relevant changes |
-| Capstone instruction diff | pending | 2 | Per-function assembly diff |
-| Architecture auto-detection | pending | 2 | ELF e_machine → Capstone |
-| Clickable function rows | pending | 3 | Expand to show asm diff |
-| Section diff UI | pending | 3 | Fallback for stripped binaries |
-| Import/export UI | pending | 3 | Highlight security-relevant |
-| E2E with real firmware | pending | 4 | DPCS10 comparison test |
+| LIEF function body hashing | done | 1 | Replaces pyelftools size-only |
+| Section hash fallback | done | 1 | For stripped binaries |
+| Import/export set diff | done | 1 | Security-relevant changes; LIEF API fix (is_imported→imported) in S35 |
+| Capstone instruction diff | done | 2 | Per-function assembly diff |
+| Architecture auto-detection | done | 2 | ELF e_machine → Capstone |
+| Clickable function rows | done | 3 | Expand to show asm diff |
+| Section diff UI | done | 3 | Fallback for stripped binaries |
+| Import/export UI | done | 3 | Highlight security-relevant |
+| E2E with real firmware | done | 4 | DPCS10 comparison test |
+| Unit tests (61 tests) | done | S35 | Full coverage: filesystem/binary/text/instruction diffs |
 
-## Continuation State
-Phase: 1, Sub-step: not started
-Files modified: none yet
-Blocking: none
+## Completion
+Verified working S34. 61 unit tests added S35. LIEF API bug (is_imported→imported) found and fixed by tests.
