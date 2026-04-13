@@ -328,7 +328,7 @@ def _format_findings(findings: list[dict], binary_name: str) -> str:
         return f"  {binary_name}: No vulnerabilities found."
 
     lines = [f"  {binary_name}: {len(findings)} finding(s)"]
-    for f in findings[:20]:  # Limit output
+    for f in findings[:50]:
         severity = f.get("severity", "unknown")
         rule_id = f.get("rule_id", f.get("id", "unknown"))
         desc = f.get("description", f.get("message", ""))
@@ -346,8 +346,8 @@ def _format_findings(findings: list[dict], binary_name: str) -> str:
         if desc:
             lines.append(f"              {desc[:120]}")
 
-    if len(findings) > 20:
-        lines.append(f"    ... and {len(findings) - 20} more")
+    if len(findings) > 50:
+        lines.append(f"    ... and {len(findings) - 50} more")
 
     return "\n".join(lines)
 

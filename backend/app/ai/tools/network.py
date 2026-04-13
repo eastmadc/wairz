@@ -192,7 +192,7 @@ async def _handle_analyze_network_traffic(input: dict, context: ToolContext) -> 
     # Top conversations
     if analysis.conversations:
         lines.append("\n## Top Conversations")
-        for c in analysis.conversations[:20]:
+        for c in analysis.conversations[:50]:
             lines.append(
                 f"  {c.src}:{c.src_port} <-> {c.dst}:{c.dst_port} "
                 f"({c.protocol}) -- {c.packet_count} pkts, {c.byte_count} bytes"

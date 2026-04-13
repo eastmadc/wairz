@@ -391,8 +391,8 @@ async def _handle_generate_executive_summary(input: dict, context: ToolContext) 
         f for f in findings if f.severity in ("critical", "high")
     ]
     if top_issues:
-        lines.append(f"\n--- Top Critical/High Issues (up to 5) ---")
-        for f in top_issues[:5]:
+        lines.append(f"\n--- Top Critical/High Issues ---")
+        for f in top_issues[:20]:
             file_info = f" in {f.file_path}" if f.file_path else ""
             cves = f" ({', '.join(f.cve_ids)})" if f.cve_ids else ""
             lines.append(f"  [{f.severity.upper()}] {f.title}{file_info}{cves}")

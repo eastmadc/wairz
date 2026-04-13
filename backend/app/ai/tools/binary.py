@@ -106,11 +106,11 @@ def _extract_ghidra_error(raw_output: str, script_name: str) -> str:
         )
 
     # Cap at 10 lines
-    shown = diagnostic_lines[:10]
+    shown = diagnostic_lines[:30]
     result = f"Ghidra {script_name} failed. Diagnostic output:\n\n"
     result += "\n".join(f"  {line}" for line in shown)
-    if len(diagnostic_lines) > 10:
-        result += f"\n  ... ({len(diagnostic_lines) - 10} more diagnostic lines)"
+    if len(diagnostic_lines) > 30:
+        result += f"\n  ... ({len(diagnostic_lines) - 30} more diagnostic lines)"
     return result
 
 
@@ -347,20 +347,19 @@ async def _handle_analyze_binary_format(input: dict, context: ToolContext) -> st
                 lines.append(f"  Imports ({total_funcs} functions from {len(imports_by_dll)} DLLs):")
                 for dll, funcs in sorted(imports_by_dll.items()):
                     lines.append(f"    [{dll}] ({len(funcs)} functions)")
-                    # Show first 10 per DLL to keep output manageable
-                    for func in funcs[:10]:
+                    for func in funcs[:30]:
                         lines.append(f"      {func}")
-                    if len(funcs) > 10:
-                        lines.append(f"      ... ({len(funcs) - 10} more)")
+                    if len(funcs) > 30:
+                        lines.append(f"      ... ({len(funcs) - 30} more)")
 
             exports = pe_info.get("exports", [])
             if exports:
                 lines.append("")
                 lines.append(f"  Exports ({len(exports)}):")
-                for exp in exports[:20]:
+                for exp in exports[:50]:
                     lines.append(f"    {exp}")
-                if len(exports) > 20:
-                    lines.append(f"    ... ({len(exports) - 20} more)")
+                if len(exports) > 50:
+                    lines.append(f"    ... ({len(exports) - 50} more)")
 
     return "\n".join(lines)
 
@@ -1559,13 +1558,13 @@ async def _handle_cross_binary_dataflow(input: dict, context: ToolContext) -> st
 
         for ipc_func, entries in func_map.items():
             lines.append(f"  {ipc_func}():")
-            for e in entries[:10]:
+            for e in entries[:30]:
                 lines.append(
                     f"    [{e['role']}] {e['binary']}:{e['function']} "
                     f"@ {e['call_site']}"
                 )
-            if len(entries) > 10:
-                lines.append(f"    ... and {len(entries) - 10} more")
+            if len(entries) > 30:
+                lines.append(f"    ... and {len(entries) - 30} more")
         lines.append("")
 
     if cross_flows:

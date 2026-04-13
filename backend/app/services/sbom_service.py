@@ -998,6 +998,62 @@ class SbomService:
             except OSError:
                 continue
 
+    @staticmethod
+    def _parse_build_id_date(build_id: str) -> str | None:
+        """Extract the AOSP base patch date from a Google-format build ID.
+
+        Google build IDs follow the pattern: XXYY.YYMMDD.NNN[.suffix]
+        e.g. AP3A.240905.015.A2 → 2024-09-05
+        """
+        import re
+
+        m = re.match(r"^[A-Z0-9]{3,4}\.(\d{6})\.", build_id)
+        if not m:
+            return None
+        yymmdd = m.group(1)
+        try:
+            yy, mm, dd = int(yymmdd[:2]), int(yymmdd[2:4]), int(yymmdd[4:6])
+            year = 2000 + yy
+            if 1 <= mm <= 12 and 1 <= dd <= 31:
+                return f"{year}-{mm:02d}-{dd:02d}"
+        except (ValueError, IndexError):
+            pass
+        return None
+
+    # Known AOSP build ID → tag version mapping (major releases).
+    # Source: https://source.android.com/docs/setup/reference/build-numbers
+    _AOSP_BUILD_TAG_MAP: dict[str, str] = {
+        # Android 15
+        "AP3A": "android-15.0.0_r1",
+        "AP4A": "android-15.0.0_r2",
+        "AE3A": "android-15.0.0_r5",
+        "BP31": "android-15.0.0_r8",
+        "BP3A": "android-15.0.0_r11",
+        "BD3A": "android-15.0.0_r17",
+        # Android 14
+        "UP1A": "android-14.0.0_r1",
+        "UD1A": "android-14.0.0_r14",
+        "AP1A": "android-14.0.0_r29",
+        "AP2A": "android-14.0.0_r53",
+        # Android 13
+        "TP1A": "android-13.0.0_r1",
+        "TQ3A": "android-13.0.0_r35",
+        "TD4A": "android-13.0.0_r75",
+        # Android 12
+        "SP1A": "android-12.0.0_r1",
+        "SQ3A": "android-12.0.0_r26",
+        "SD2A": "android-12.0.0_r34",
+    }
+
+    def _resolve_aosp_tag(self, build_id: str) -> str | None:
+        """Resolve a build ID prefix to its AOSP tag version."""
+        import re
+
+        m = re.match(r"^([A-Z0-9]{3,4})\.", build_id)
+        if m:
+            return self._AOSP_BUILD_TAG_MAP.get(m.group(1))
+        return None
+
     def _parse_build_prop(self, abs_path: str) -> None:
         """Parse Android build.prop for version info and platform details."""
         props: dict[str, str] = {}
@@ -1015,14 +1071,40 @@ class SbomService:
         # Android OS version
         android_version = props.get("ro.build.version.release") or props.get("ro.system.build.version.release")
         security_patch = props.get("ro.build.version.security_patch")
-        build_id = props.get("ro.build.display.id") or props.get("ro.system.build.id")
+        build_id = (
+            props.get("ro.build.id")
+            or props.get("ro.system.build.id")
+            or props.get("ro.build.display.id")
+        )
         platform = props.get("ro.board.platform", "")
         model = props.get("ro.product.model") or props.get("ro.product.system.model", "")
 
         if android_version:
+            sdk_version = props.get("ro.build.version.sdk")
+            incremental = (
+                props.get("ro.build.version.incremental")
+                or props.get("ro.system.build.version.incremental")
+            )
+
+            # Resolve AOSP tag and base patch date from build ID
+            aosp_tag = self._resolve_aosp_tag(build_id) if build_id else None
+            build_id_date = self._parse_build_id_date(build_id) if build_id else None
+
+            # Build a precise version string
+            # e.g. "15.0.0_r1 (patch 2026-02-05, build AP3A.240905.015.A2)"
+            if aosp_tag:
+                # Extract version from tag: "android-15.0.0_r1" → "15.0.0_r1"
+                tag_version = aosp_tag.replace("android-", "")
+                display_version = tag_version
+            else:
+                display_version = android_version
+
+            if security_patch:
+                display_version = f"{display_version} (patch {security_patch})"
+
             comp = IdentifiedComponent(
                 name="android",
-                version=android_version,
+                version=display_version,
                 type="operating-system",
                 cpe=f"cpe:2.3:o:google:android:{android_version}:*:*:*:*:*:*:*",
                 purl=None,
@@ -1033,8 +1115,16 @@ class SbomService:
                 metadata={
                     "security_patch": security_patch,
                     "build_id": build_id,
+                    "aosp_tag": aosp_tag,
+                    "build_id_base_date": build_id_date,
+                    "sdk_version": sdk_version,
+                    "incremental": incremental,
                     "platform": platform,
                     "model": model,
+                    "build_fingerprint": (
+                        props.get("ro.build.fingerprint")
+                        or props.get("ro.system.build.fingerprint")
+                    ),
                     "source": "android",
                 },
             )

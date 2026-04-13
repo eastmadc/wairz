@@ -1000,7 +1000,7 @@ async def _handle_scan_with_yara(input: dict, context: ToolContext) -> str:
         if not findings:
             continue
         lines.append(f"[{sev.upper()}] ({len(findings)} finding(s)):")
-        for f in findings[:20]:
+        for f in findings[:50]:
             lines.append(f"  • {f.title}")
             if f.file_path:
                 lines.append(f"    File: {f.file_path}")
@@ -1009,8 +1009,8 @@ async def _handle_scan_with_yara(input: dict, context: ToolContext) -> str:
                 ev_lines = f.evidence.split("\n")[:2]
                 for ev in ev_lines:
                     lines.append(f"    {ev}")
-        if len(findings) > 20:
-            lines.append(f"  ... and {len(findings) - 20} more")
+        if len(findings) > 50:
+            lines.append(f"  ... and {len(findings) - 50} more")
         lines.append("")
 
     return "\n".join(lines)
@@ -1823,7 +1823,7 @@ async def _handle_scan_scripts(input: dict, context: ToolContext) -> str:
     for category, findings in sorted(by_category.items()):
         label = category.replace("_", " ").upper()
         lines.append(f"== {label} ({len(findings)}) ==")
-        for f in findings[:25]:
+        for f in findings[:50]:
             severity = f.get("extra", {}).get("severity", "WARNING")
             rule_id = f.get("check_id", "unknown")
             file_path = _rel(f.get("path", ""), extracted_root)
@@ -1841,8 +1841,8 @@ async def _handle_scan_scripts(input: dict, context: ToolContext) -> str:
             if message:
                 lines.append(f"    {message}")
             lines.append("")
-        if len(findings) > 25:
-            lines.append(f"  ... and {len(findings) - 25} more")
+        if len(findings) > 50:
+            lines.append(f"  ... and {len(findings) - 50} more")
             lines.append("")
 
     return "\n".join(lines)
@@ -2021,7 +2021,7 @@ async def _handle_shellcheck_scan(input: dict, context: ToolContext) -> str:
             if cwe_info:
                 lines.append(f"    Security: {cwe_info[1]}")
 
-            for f in findings[:10]:
+            for f in findings[:30]:
                 file_path = _rel(f.get("file", ""), extracted_root)
                 line_num = f.get("line", "?")
                 end_line = f.get("endLine", "?")
@@ -2029,8 +2029,8 @@ async def _handle_shellcheck_scan(input: dict, context: ToolContext) -> str:
                 lines.append(f"    {file_path}:{line_num}-{end_line}")
                 if message:
                     lines.append(f"      {message}")
-            if len(findings) > 10:
-                lines.append(f"    ... and {len(findings) - 10} more")
+            if len(findings) > 30:
+                lines.append(f"    ... and {len(findings) - 30} more")
             lines.append("")
 
     return truncate_output("\n".join(lines))
@@ -2197,7 +2197,7 @@ async def _handle_bandit_scan(input: dict, context: ToolContext) -> str:
         findings = by_severity[sev]
         lines.append(f"== {sev} SEVERITY ({len(findings)}) ==")
 
-        for f in findings[:25]:
+        for f in findings[:50]:
             test_id = f.get("test_id", "?")
             test_name = f.get("test_name", "unknown")
             issue_text = f.get("issue_text", "")
@@ -2227,8 +2227,8 @@ async def _handle_bandit_scan(input: dict, context: ToolContext) -> str:
                 lines.append(f"    Firmware risk: {desc}")
             lines.append("")
 
-        if len(findings) > 25:
-            lines.append(f"  ... and {len(findings) - 25} more")
+        if len(findings) > 50:
+            lines.append(f"  ... and {len(findings) - 50} more")
             lines.append("")
 
     return truncate_output("\n".join(lines))

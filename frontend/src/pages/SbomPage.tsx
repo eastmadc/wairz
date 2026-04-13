@@ -603,6 +603,64 @@ function ComponentsTab({ components, typeFilter, nameSearch, onTypeFilter, onNam
                         <span className="font-mono">{comp.file_paths.join(', ')}</span>
                       </div>
                     )}
+                    {comp.metadata && Object.keys(comp.metadata).filter(k => k !== 'source' && comp.metadata[k]).length > 0 && (
+                      <div className="border-t border-border/50 pt-2 mt-2 grid grid-cols-2 gap-x-4 gap-y-1">
+                        {(comp.metadata.aosp_tag as string) && (
+                          <>
+                            <span className="font-medium text-muted-foreground">AOSP Tag:</span>
+                            <span className="font-mono">{comp.metadata.aosp_tag as string}</span>
+                          </>
+                        )}
+                        {(comp.metadata.security_patch as string) && (
+                          <>
+                            <span className="font-medium text-muted-foreground">Security Patch:</span>
+                            <span className="font-mono">{comp.metadata.security_patch as string}</span>
+                          </>
+                        )}
+                        {(comp.metadata.build_id as string) && (
+                          <>
+                            <span className="font-medium text-muted-foreground">Build ID:</span>
+                            <span className="font-mono">{comp.metadata.build_id as string}</span>
+                          </>
+                        )}
+                        {(comp.metadata.build_id_base_date as string) && (
+                          <>
+                            <span className="font-medium text-muted-foreground">AOSP Base Patch:</span>
+                            <span className="font-mono">{comp.metadata.build_id_base_date as string}</span>
+                          </>
+                        )}
+                        {(comp.metadata.sdk_version as string) && (
+                          <>
+                            <span className="font-medium text-muted-foreground">SDK/API Level:</span>
+                            <span className="font-mono">{comp.metadata.sdk_version as string}</span>
+                          </>
+                        )}
+                        {(comp.metadata.model as string) && (
+                          <>
+                            <span className="font-medium text-muted-foreground">Model:</span>
+                            <span>{comp.metadata.model as string}</span>
+                          </>
+                        )}
+                        {(comp.metadata.platform as string) && (
+                          <>
+                            <span className="font-medium text-muted-foreground">Platform:</span>
+                            <span className="font-mono">{comp.metadata.platform as string}</span>
+                          </>
+                        )}
+                        {(comp.metadata.build_fingerprint as string) && (
+                          <>
+                            <span className="font-medium text-muted-foreground">Fingerprint:</span>
+                            <span className="font-mono text-[10px] break-all">{comp.metadata.build_fingerprint as string}</span>
+                          </>
+                        )}
+                        {(comp.metadata.incremental as string) && (
+                          <>
+                            <span className="font-medium text-muted-foreground">Incremental:</span>
+                            <span className="font-mono">{comp.metadata.incremental as string}</span>
+                          </>
+                        )}
+                      </div>
+                    )}
                   </div>
                 )}
               </div>

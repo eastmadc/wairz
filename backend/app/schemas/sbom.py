@@ -13,7 +13,7 @@ class VulnerabilityResolutionStatus(str, Enum):
 
 
 class SbomComponentResponse(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(from_attributes=True, populate_by_name=True)
 
     id: uuid.UUID
     firmware_id: uuid.UUID
@@ -26,7 +26,7 @@ class SbomComponentResponse(BaseModel):
     detection_source: str
     detection_confidence: str | None
     file_paths: list[str] | None
-    metadata: dict = Field(alias="metadata_", default={})
+    metadata: dict = Field(validation_alias="metadata_", default={})
     vulnerability_count: int = 0
     created_at: datetime
 
