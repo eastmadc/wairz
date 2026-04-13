@@ -45,11 +45,11 @@ def _format_result(result: CweCheckResult) -> str:
         for cwe_id, warnings in sorted(by_cwe.items()):
             lines.append(f"### {cwe_id} ({len(warnings)} occurrence{'s' if len(warnings) > 1 else ''})")
             lines.append(f"  {warnings[0].name}")
-            for w in warnings[:10]:  # Limit to 10 per CWE
+            for w in warnings[:50]:
                 sym = w.symbols[0] if w.symbols else "unknown"
                 lines.append(f"  - {sym} @ {w.address}: {w.description[:120]}")
-            if len(warnings) > 10:
-                lines.append(f"  ... and {len(warnings) - 10} more")
+            if len(warnings) > 50:
+                lines.append(f"  ... and {len(warnings) - 50} more")
             lines.append("")
 
     if result.elapsed_seconds > 0:

@@ -816,7 +816,7 @@ async def _handle_check_status(input: dict, context: ToolContext) -> str:
         if campaign.crashes_count > 0:
             crashes = await svc.get_crashes(UUID(campaign_id), context.project_id)
             lines.append(f"\n  Crashes ({len(crashes)}):")
-            for c in crashes[:10]:
+            for c in crashes[:30]:
                 expl = f" [{c.exploitability}]" if c.exploitability else ""
                 sig = f" ({c.signal})" if c.signal else ""
                 lines.append(f"    {c.crash_filename}{sig}{expl} — ID: {c.id}")
@@ -832,7 +832,7 @@ async def _handle_check_status(input: dict, context: ToolContext) -> str:
         return "No fuzzing campaigns found for this project."
 
     lines = [f"Fuzzing campaigns ({len(campaigns)}):\n"]
-    for c in campaigns[:10]:
+    for c in campaigns[:30]:
         status_icon = {
             "running": "[RUNNING]",
             "created": "[CREATED]",

@@ -310,10 +310,10 @@ def _format_apk_analysis(info: dict) -> str:
         items = info.get(key, [])
         if items:
             lines.append(f"\n{label} ({len(items)}):")
-            for item in items[:10]:
+            for item in items[:50]:
                 lines.append(f"  - {item}")
-            if len(items) > 10:
-                lines.append(f"  ... and {len(items) - 10} more")
+            if len(items) > 50:
+                lines.append(f"  ... and {len(items) - 50} more")
 
     # Signatures
     sigs = info.get("signatures", [])

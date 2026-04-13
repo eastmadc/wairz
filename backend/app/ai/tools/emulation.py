@@ -1168,7 +1168,7 @@ async def _handle_check_status(input: dict, context: ToolContext) -> str:
         return "No emulation sessions found for this project."
 
     lines = [f"Emulation sessions ({len(sessions)}):\n"]
-    for s in sessions[:10]:
+    for s in sessions[:30]:
         status_icon = {
             "running": "[RUNNING]",
             "starting": "[STARTING]",
@@ -1184,8 +1184,8 @@ async def _handle_check_status(input: dict, context: ToolContext) -> str:
             line += f" [{s.architecture}]"
         lines.append(line)
 
-    if len(sessions) > 10:
-        lines.append(f"  ... and {len(sessions) - 10} more")
+    if len(sessions) > 30:
+        lines.append(f"  ... and {len(sessions) - 30} more")
 
     return "\n".join(lines)
 
@@ -1479,7 +1479,7 @@ async def _handle_diagnose_environment(input: dict, context: ToolContext) -> str
             f"MTD FLASH DEPENDENCY: {len(mtd_binaries)} binaries reference "
             f"MTD flash functions (get_mtd_size/get_mtd_num) that will fail "
             f"in QEMU (no MTD support):\n"
-            + "\n".join(f"    {b}" for b in mtd_binaries[:10])
+            + "\n".join(f"    {b}" for b in mtd_binaries[:30])
         )
         suggestions.append(
             "Use the fake MTD stub library via pre_init_script:\n"
@@ -2645,7 +2645,7 @@ async def _handle_emulate_with_qiling(input: dict, context: ToolContext) -> str:
 
     if result.memory_errors:
         lines.extend(["", "=== MEMORY ERRORS ==="])
-        for err in result.memory_errors[:10]:
+        for err in result.memory_errors[:30]:
             lines.append(f"  {err}")
 
     if result.syscall_trace:
@@ -2762,7 +2762,7 @@ async def _handle_system_emulation_status(input: dict, context: ToolContext) -> 
         lines.append(f"  Kernel: {session.kernel_used}")
     if session.discovered_services:
         lines.append(f"  Services found: {len(session.discovered_services)}")
-        for svc_info in session.discovered_services[:10]:
+        for svc_info in session.discovered_services[:30]:
             port = svc_info.get("port")
             service = svc_info.get("service", "unknown")
             host_port = svc_info.get("host_port")

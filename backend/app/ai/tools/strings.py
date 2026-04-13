@@ -875,11 +875,11 @@ async def _handle_find_hardcoded_ips(input: dict, context: ToolContext) -> str:
             file_count = len(data["files"])
             lines.append(f"  {ip}{cat_tag} — found in {file_count} file(s)")
             # Show up to 5 files, summarize the rest
-            for fpath, is_bin in data["files"][:5]:
+            for fpath, is_bin in data["files"][:20]:
                 bin_tag = " (binary)" if is_bin else ""
                 lines.append(f"    {fpath}{bin_tag}")
-            if file_count > 5:
-                lines.append(f"    ... and {file_count - 5} more files")
+            if file_count > 20:
+                lines.append(f"    ... and {file_count - 20} more files")
             # Show context for high/medium
             if sev in ("high", "medium") and data["contexts"]:
                 lines.append(f"    context: {data['contexts'][0]}")

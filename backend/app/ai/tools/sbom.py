@@ -495,9 +495,9 @@ async def _handle_get_sbom_components(
         cpe_str = f"\n    CPE: {comp.cpe}" if comp.cpe else ""
         paths_str = ""
         if comp.file_paths:
-            paths_str = f"\n    Files: {', '.join(comp.file_paths[:3])}"
-            if len(comp.file_paths) > 3:
-                paths_str += f" (+{len(comp.file_paths) - 3} more)"
+            paths_str = f"\n    Files: {', '.join(comp.file_paths[:15])}"
+            if len(comp.file_paths) > 15:
+                paths_str += f" (+{len(comp.file_paths) - 15} more)"
 
         lines.append(
             f"- {comp.name}{version_str} [{comp.type}]"
@@ -568,7 +568,7 @@ async def _handle_check_component_cves(
         f"Found {len(cves)} CVE(s) for {component_name} {version}:\n"
     ]
 
-    for cve in cves[:25]:  # Cap display at 25
+    for cve in cves[:50]:
         cve_id = cve.id
 
         # Extract score
@@ -606,8 +606,8 @@ async def _handle_check_component_cves(
         if desc:
             lines.append(f"    {desc}")
 
-    if len(cves) > 25:
-        lines.append(f"\n... and {len(cves) - 25} more CVEs")
+    if len(cves) > 50:
+        lines.append(f"\n... and {len(cves) - 50} more CVEs")
 
     return "\n".join(lines)
 
