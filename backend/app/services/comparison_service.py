@@ -479,7 +479,7 @@ def _extract_imports(binary_path: str) -> set[str] | None:
             return None
         imports: set[str] = set()
         for sym in binary.dynamic_symbols:
-            if sym.is_function and sym.name and sym.is_imported:
+            if sym.is_function and sym.name and sym.imported:
                 imports.add(sym.name)
         return imports
     except Exception:
@@ -494,7 +494,7 @@ def _extract_exports(binary_path: str) -> set[str] | None:
             return None
         exports: set[str] = set()
         for sym in binary.dynamic_symbols:
-            if sym.is_function and sym.name and sym.is_exported:
+            if sym.is_function and sym.name and sym.exported:
                 exports.add(sym.name)
         return exports
     except Exception:
