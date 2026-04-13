@@ -157,7 +157,7 @@ wairz/
 
 ### Learned Rules (from `.planning/knowledge/`)
 
-These rules were extracted from recurring bugs and failures across 20+ development sessions:
+These rules were extracted from recurring bugs and failures across 30+ development sessions:
 
 1. **Use `docker compose up -d` not `restart` after code changes.** `restart` reuses the old container image. `up -d` recreates it with the new build. This mistake has caused false "it works locally" debugging in multiple sessions.
 2. **Add new Python dependencies to `pyproject.toml` immediately.** Code that imports a new package must update `pyproject.toml` in the same commit. Verify in Docker: `docker compose exec backend python -c "import <module>"`.
@@ -165,6 +165,10 @@ These rules were extracted from recurring bugs and failures across 20+ developme
 4. **Match Pydantic response schemas to ORM model fields exactly.** When adding a new backend service for an existing MCP endpoint, read the response schema first and construct the return dict to match. Schema/model mismatches cause silent 500 errors.
 5. **Wrap sync filesystem I/O in `run_in_executor()` inside async handlers.** Large firmware (10K+ files) stalls the uvicorn event loop. CPU-bound or filesystem-heavy operations must use `await loop.run_in_executor(None, sync_fn, args)`.
 6. **Verify CLI tool flags when upgrading versions.** Before swapping any CLI tool (e.g., binwalk v2→v3), grep the codebase for ALL flags used and verify each exists in the new version's `--help`. Test with real data.
+7. **Never `asyncio.gather()` on coroutines sharing a SQLAlchemy `AsyncSession`.** `AsyncSession` is not safe for concurrent coroutine access. Gather'd coroutines that share a session cause state corruption, lost writes, or runtime exceptions. Use sequential `await` calls, or create independent sessions per task via `async_session_factory()`.
+8. **Rebuild `worker` whenever you rebuild `backend`.** They share the same Dockerfile and codebase. A stale worker image causes Alembic migration failures (worker can't find new revisions) and silently blocks ALL background jobs (unpack, Ghidra, vuln scan). Use `docker compose up -d --build backend worker`, never just `backend` alone.
+9. **When adding new backend enum/source values, update all frontend `Record<Type, ...>` lookups.** TypeScript `Record<UnionType, Config>` maps are exhaustive — a new backend value not present in the map returns `undefined`, crashing React with a blank page. Grep for `Record<{TypeName},` across the frontend before deploying. Add `?? fallback` to strict lookups as defense in depth.
+10. **Never name a router endpoint function the same as an imported service function.** Python silently rebinds the name: the `def` at module scope overwrites the import. Callers of the "service function" get the router function instead, with completely wrong parameter types. Convention: suffix router functions with `_endpoint` (e.g., `run_clamav_scan_endpoint`) when they share a conceptual name with a service import.
 
 ---
 
@@ -258,6 +262,9 @@ See `.env.example` for defaults. Key variables:
 |----------|-------------|
 | `DATABASE_URL` | PostgreSQL connection string (asyncpg) |
 | `REDIS_URL` | Redis connection string |
+| `POSTGRES_HOST_PORT` | Host-side port for PostgreSQL (default 5432, change if port conflicts) |
+| `REDIS_HOST_PORT` | Host-side port for Redis (default 6379, change if port conflicts) |
+| `DOCKER_GID` | Docker socket GID for container access (run `stat -c %g /var/run/docker.sock`) |
 | `STORAGE_ROOT` | Where firmware files are stored on disk |
 | `MAX_UPLOAD_SIZE_MB` | Maximum firmware upload size (default 500) |
 | `MAX_TOOL_OUTPUT_KB` | MCP tool output truncation limit (default 30) |

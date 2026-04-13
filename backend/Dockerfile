@@ -40,8 +40,21 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && printf '#!/bin/sh\n# Wrapper: translates cramfsck -x <dir> <file> to fsck.cramfs --extract=<dir> <file>\nif [ "$1" = "-x" ]; then shift; dir="$1"; shift; exec fsck.cramfs --extract="$dir" "$@"; fi\nexec fsck.cramfs "$@"\n' > /usr/local/bin/cramfsck \
     && chmod +x /usr/local/bin/cramfsck
 
-# Install binwalk3 (Rust rewrite — 2-5x faster, fewer false positives)
-# and Python-based firmware extraction tools used by binwalk/unblob
+# Install binwalk3 Rust CLI from source (multi-arch: builds natively on both
+# x86_64 and ARM64). The pip package only ships Windows binaries; Linux needs
+# a source build. Requires pkg-config + fontconfig dev headers for Rust deps.
+RUN apt-get update && apt-get install -y --no-install-recommends pkg-config libfontconfig1-dev \
+    && curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --profile minimal \
+    && . "$HOME/.cargo/env" \
+    && git clone --depth 1 --branch v3.1.0 https://github.com/ReFirmLabs/binwalk.git /tmp/binwalk3-src \
+    && cd /tmp/binwalk3-src \
+    && cargo build --release \
+    && cp target/release/binwalk /usr/local/bin/binwalk3 \
+    && chmod +x /usr/local/bin/binwalk3 \
+    && rm -rf /tmp/binwalk3-src "$HOME/.cargo" "$HOME/.rustup" /var/lib/apt/lists/* \
+    && binwalk3 --version \
+    || echo "WARN: binwalk3 Rust build failed — will fall back to unblob"
+
 RUN pip3 install --no-cache-dir --break-system-packages \
     binwalk3 \
     jefferson \
