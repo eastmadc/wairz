@@ -4,15 +4,49 @@
 # Wraps FirmAE (https://github.com/pr0v3rbs/FirmAE) in a Docker container
 # with a Flask API shim for automated full-system firmware emulation.
 #
-# Includes:
-#   - FirmAE with all dependencies (binwalk, QEMU system, PostgreSQL)
-#   - Internal ephemeral PostgreSQL 15 instance (FirmAE's state DB)
-#   - Flask API shim on port 5000
-#   - nmap for service discovery, socat for serial console proxying
+# Multi-stage build:
+#   Stage 1 — Build libnvram cross-compiled .so files (cross-compilers discarded)
+#   Stage 2 — Runtime image with FirmAE, QEMU, PostgreSQL, Flask shim
 #
 # Requires: --privileged (or NET_ADMIN + SYS_ADMIN + MKNOD caps + /dev/net/tun)
 # =============================================================================
 
+# ---------------------------------------------------------------------------
+# Builder stage: cross-compile libnvram for all target architectures
+# ---------------------------------------------------------------------------
+FROM ubuntu:22.04 AS libnvram-builder
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    gcc-mipsel-linux-gnu gcc-mips-linux-gnu \
+    gcc-arm-linux-gnueabi gcc-aarch64-linux-gnu \
+    git ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN git clone --depth 1 https://github.com/pr0v3rbs/FirmAE.git /opt/FirmAE
+
+RUN mkdir -p /out && \
+    if [ -d "/opt/FirmAE/src/libnvram" ]; then \
+        cd /opt/FirmAE/src/libnvram && \
+        CC=mipsel-linux-gnu-gcc make 2>/dev/null && \
+            cp libnvram.so /out/libnvram.so.mipsel; \
+        make clean 2>/dev/null; \
+        CC=mips-linux-gnu-gcc make 2>/dev/null && \
+            cp libnvram.so /out/libnvram.so.mips; \
+        make clean 2>/dev/null; \
+        CC=arm-linux-gnueabi-gcc make 2>/dev/null && \
+            cp libnvram.so /out/libnvram.so.armel; \
+        make clean 2>/dev/null; \
+    fi && \
+    if [ -d "/opt/FirmAE/src/console" ]; then \
+        cd /opt/FirmAE/src/console && make 2>/dev/null || true; \
+    fi
+
+# ---------------------------------------------------------------------------
+# Runtime stage
+# ---------------------------------------------------------------------------
 FROM ubuntu:22.04
 
 ENV DEBIAN_FRONTEND=noninteractive
@@ -55,10 +89,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     uml-utilities \
     sudo bc file cpio fdisk bash-static \
     lsof procps \
-    # Build tools (for FirmAE's libnvram etc.)
-    build-essential gcc-mipsel-linux-gnu gcc-mips-linux-gnu \
-    gcc-arm-linux-gnueabi gcc-aarch64-linux-gnu \
-    liblzma-dev liblzo2-dev zlib1g-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # ---------------------------------------------------------------------------
@@ -69,29 +99,11 @@ RUN git clone --depth 1 https://github.com/pr0v3rbs/FirmAE.git ${FIRMAE_DIR}
 WORKDIR ${FIRMAE_DIR}
 
 # ---------------------------------------------------------------------------
-# 3. Build FirmAE's native components (libnvram, console, etc.)
+# 3. Copy pre-built libnvram binaries from builder stage
 # ---------------------------------------------------------------------------
-# FirmAE's install.sh tries to install system packages and start postgres;
-# we've already handled those above. Build just the native binaries.
-RUN cd ${FIRMAE_DIR}/firmae-kernel-v4.1 2>/dev/null || true && \
-    # Build libnvram for each architecture if the source exists
-    if [ -d "${FIRMAE_DIR}/src/libnvram" ]; then \
-        cd ${FIRMAE_DIR}/src/libnvram && \
-        make clean 2>/dev/null; \
-        CC=mipsel-linux-gnu-gcc make 2>/dev/null && \
-            cp libnvram.so ${FIRMAE_DIR}/binaries/libnvram.so.mipsel 2>/dev/null; \
-        make clean 2>/dev/null; \
-        CC=mips-linux-gnu-gcc make 2>/dev/null && \
-            cp libnvram.so ${FIRMAE_DIR}/binaries/libnvram.so.mips 2>/dev/null; \
-        make clean 2>/dev/null; \
-        CC=arm-linux-gnueabi-gcc make 2>/dev/null && \
-            cp libnvram.so ${FIRMAE_DIR}/binaries/libnvram.so.armel 2>/dev/null; \
-        make clean 2>/dev/null; \
-    fi && \
-    # Build console helper if it exists
-    if [ -d "${FIRMAE_DIR}/src/console" ]; then \
-        cd ${FIRMAE_DIR}/src/console && make 2>/dev/null || true; \
-    fi
+# Cross-compilers are only in the builder stage — not in the final image.
+RUN mkdir -p ${FIRMAE_DIR}/binaries
+COPY --from=libnvram-builder /out/libnvram.so.* ${FIRMAE_DIR}/binaries/
 
 # ---------------------------------------------------------------------------
 # 3b. Patch FirmAE for Docker compatibility (no kpartx/loop partitions)

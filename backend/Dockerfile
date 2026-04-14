@@ -1,3 +1,23 @@
+# ---------------------------------------------------------------------------
+# Builder stage: UEFIExtract + UEFIFind (cmake + qt6 only needed at build time)
+# ---------------------------------------------------------------------------
+FROM python:3.12-slim AS uefi-builder
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    cmake qt6-base-dev git ca-certificates build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN git clone --depth 1 https://github.com/LongSoft/UEFITool.git /tmp/UEFITool && \
+    cd /tmp/UEFITool && \
+    cmake -DCMAKE_BUILD_TYPE=Release . && \
+    make -j$(nproc) UEFIExtract UEFIFind && \
+    cp UEFIExtract/uefiextract /out-uefiextract && \
+    cp UEFIFind/uefifind /out-uefifind && \
+    chmod +x /out-uefiextract /out-uefifind
+
+# ---------------------------------------------------------------------------
+# Main image
+# ---------------------------------------------------------------------------
 FROM python:3.12-slim AS base
 
 # Install system dependencies for firmware analysis
@@ -36,15 +56,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libffi-dev \
     libyara-dev \
     shellcheck \
+    pkg-config \
+    libfontconfig1-dev \
+    cmake \
     && rm -rf /var/lib/apt/lists/* \
     && printf '#!/bin/sh\n# Wrapper: translates cramfsck -x <dir> <file> to fsck.cramfs --extract=<dir> <file>\nif [ "$1" = "-x" ]; then shift; dir="$1"; shift; exec fsck.cramfs --extract="$dir" "$@"; fi\nexec fsck.cramfs "$@"\n' > /usr/local/bin/cramfsck \
     && chmod +x /usr/local/bin/cramfsck
 
 # Install binwalk3 Rust CLI from source (multi-arch: builds natively on both
 # x86_64 and ARM64). The pip package only ships Windows binaries; Linux needs
-# a source build. Requires pkg-config + fontconfig dev headers for Rust deps.
-RUN apt-get update && apt-get install -y --no-install-recommends pkg-config libfontconfig1-dev \
-    && curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --profile minimal \
+# a source build. pkg-config + libfontconfig1-dev installed in base apt block.
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --profile minimal \
     && . "$HOME/.cargo/env" \
     && git clone --depth 1 --branch v3.1.0 https://github.com/ReFirmLabs/binwalk.git /tmp/binwalk3-src \
     && cd /tmp/binwalk3-src \
@@ -85,7 +107,7 @@ RUN mkdir -p /data/yara-forge \
 # Uses the onekey-sec fork (maintained by the unblob team) which handles
 # vendor-modified SquashFS variants from Rockchip, Broadcom, etc.
 # Also provides sasquatch-v4be for big-endian SquashFS v4 images.
-RUN git clone https://github.com/onekey-sec/sasquatch.git /tmp/sasquatch \
+RUN git clone --depth 1 https://github.com/onekey-sec/sasquatch.git /tmp/sasquatch \
     && cd /tmp/sasquatch/squashfs-tools \
     && make -j$(nproc) \
     && make install \
@@ -93,9 +115,12 @@ RUN git clone https://github.com/onekey-sec/sasquatch.git /tmp/sasquatch \
     && rm -rf /tmp/sasquatch \
     && sasquatch -version 2>&1 | head -1
 
-# Install OpenJDK 21 for Ghidra (JDK 17 not available in Trixie)
+# Install OpenJDK 21 for Ghidra + Android firmware extraction tools
 RUN apt-get update && apt-get install -y --no-install-recommends \
     openjdk-21-jdk-headless \
+    android-sdk-libsparse-utils \
+    erofs-utils \
+    python3-protobuf \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Ghidra
@@ -174,26 +199,9 @@ RUN ARCH=$(uname -m) && \
         | tar xz -C /usr/local ./bin/noseyparker && \
     chmod +x /usr/local/bin/noseyparker || echo "WARN: noseyparker install failed"
 
-# Install UEFIExtract for UEFI/BIOS firmware analysis (multi-arch)
-# UEFITool NE builds UEFIExtract and UEFIFind as CLI tools for UEFI parsing.
-# Note: cmake/qt6 are kept because purging them removes shared libs UEFIExtract needs.
-RUN apt-get update && apt-get install -y --no-install-recommends cmake qt6-base-dev && \
-    git clone --depth 1 https://github.com/LongSoft/UEFITool.git /tmp/UEFITool && \
-    cd /tmp/UEFITool && \
-    cmake -DCMAKE_BUILD_TYPE=Release . && \
-    make -j$(nproc) UEFIExtract UEFIFind && \
-    cp /tmp/UEFITool/UEFIExtract/uefiextract /usr/local/bin/UEFIExtract && \
-    cp /tmp/UEFITool/UEFIFind/uefifind /usr/local/bin/UEFIFind && \
-    chmod +x /usr/local/bin/UEFIExtract /usr/local/bin/UEFIFind && \
-    rm -rf /tmp/UEFITool && rm -rf /var/lib/apt/lists/* && \
-    UEFIExtract 2>&1 | head -1 || echo "UEFIExtract installed"
-
-# Install Android firmware extraction tools (multi-arch)
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    android-sdk-libsparse-utils \
-    erofs-utils \
-    python3-protobuf \
-    && rm -rf /var/lib/apt/lists/*
+# Copy pre-built UEFIExtract + UEFIFind from builder stage (no cmake/qt6 in final image)
+COPY --from=uefi-builder /out-uefiextract /usr/local/bin/UEFIExtract
+COPY --from=uefi-builder /out-uefifind /usr/local/bin/UEFIFind
 
 # Install payload-dumper-go for A/B OTA extraction (multi-arch)
 ARG PAYLOAD_DUMPER_VERSION=1.3.0
@@ -215,6 +223,7 @@ RUN pip3 install --no-cache-dir --break-system-packages flare-capa \
 RUN git clone --depth 1 https://github.com/airbus-seclab/cpu_rec.git /opt/cpu_rec \
     && cd /opt/cpu_rec \
     && for f in cpu_rec_corpus/*.xz; do unxz "$f" 2>/dev/null || true; done \
+    && rm -rf /opt/cpu_rec/.git \
     && echo "cpu_rec installed at /opt/cpu_rec" \
     || echo "WARN: cpu_rec install failed — raw binary architecture detection won't work"
 
