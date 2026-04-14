@@ -612,6 +612,8 @@ export interface FileDiffEntry {
   size_b: number | null
   perms_a: string | null
   perms_b: string | null
+  hash_a: string | null
+  hash_b: string | null
 }
 
 export interface FirmwareDiff {

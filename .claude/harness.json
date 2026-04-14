@@ -56,7 +56,7 @@
         "name": "auto-review-no-commit-in-tool-handler",
         "pattern": "context\\.db\\.commit\\(\\)",
         "filePattern": "backend/app/ai/tools/*.py",
-        "message": "Learned from review K1: Use context.db.flush() in tool handlers. The outer MCP dispatch handles commit — committing here prevents rollback on partial failures."
+        "message": "Learned from review K1: Use context.db.flush() in tool handlers. The outer MCP dispatch handles commit \u2014 committing here prevents rollback on partial failures."
       },
       {
         "name": "auto-standalone-dockerignore-venv",
@@ -75,6 +75,24 @@
         "pattern": "shutil\\.which\\(\"[a-z]+\"\\)$",
         "filePattern": "backend/app/**/*.py",
         "message": "Learned from session 19: In Docker with uv/venv, CLI tools from pip packages land in /app/.venv/bin/ not system PATH. Use: shutil.which(tool) or shutil.which(tool, path=\"/app/.venv/bin\")"
+      },
+      {
+        "name": "auto-docker-opt-verify-ldd",
+        "pattern": "# Note:.*kept because.*needs",
+        "filePattern": "**/Dockerfile",
+        "message": "Learned from docker-image-optimization: Verify runtime deps with ldd before trusting comments about which packages are needed. Comments rot faster than code."
+      },
+      {
+        "name": "auto-fwid-api-function-missing-firmwareId",
+        "pattern": "export async function \\w+\\(\\s*projectId: string,(?:(?!firmwareId).)*\\).*Promise",
+        "filePattern": "frontend/src/api/files.ts",
+        "message": "Learned from S37 firmware-id bug: Every file API function must accept firmwareId param since the backend resolve_firmware dependency uses it for scoping."
+      },
+      {
+        "name": "auto-s37-case-insensitive-fnmatch",
+        "pattern": "fnmatch\\.fnmatch\\(\\w+,\\s*pattern\\)",
+        "filePattern": "backend/app/services/*.py",
+        "message": "Learned from S37: User-facing file search should be case-insensitive. Use fnmatch.fnmatch(name.lower(), pattern.lower()) instead."
       }
     ]
   },

@@ -3,6 +3,7 @@ import { Loader2, FileSearch, Save, Download } from 'lucide-react'
 import Editor from '@monaco-editor/react'
 import { useParams } from 'react-router-dom'
 import { useExplorerStore } from '@/stores/explorerStore'
+import { useProjectStore } from '@/stores/projectStore'
 import { formatFileSize } from '@/utils/format'
 import { getFileDownloadUrl } from '@/api/files'
 import { getDocumentDownloadUrl } from '@/api/documents'
@@ -37,6 +38,7 @@ function isDocumentEditable(filename: string): boolean {
 
 export default function FileViewer() {
   const { projectId } = useParams<{ projectId: string }>()
+  const selectedFirmwareId = useProjectStore((s) => s.selectedFirmwareId)
   const {
     selectedNode, selectedPath, selectedDocumentId, documents,
     fileContent, fileInfo, contentLoading, infoLoading,
@@ -176,7 +178,7 @@ export default function FileViewer() {
           {infoLoading && <Loader2 className="h-3 w-3 animate-spin" />}
           {projectId && selectedPath && (
             <a
-              href={getFileDownloadUrl(projectId, selectedPath)}
+              href={getFileDownloadUrl(projectId, selectedPath, selectedFirmwareId || undefined)}
               download
               className="flex items-center gap-1 rounded px-2 py-1 text-xs hover:bg-accent hover:text-accent-foreground"
               title="Download file"

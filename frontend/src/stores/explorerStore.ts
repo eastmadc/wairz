@@ -202,7 +202,8 @@ export const useExplorerStore = create<ExplorerState & ExplorerActions>(
 
       // Fetch file info first to determine if binary
       try {
-        const info = await getFileInfo(projectId, node.id)
+        const fwId = useProjectStore.getState().selectedFirmwareId || undefined
+        const info = await getFileInfo(projectId, node.id, fwId)
         if (get().selectedPath !== node.id) return
         set({ fileInfo: info, infoLoading: false })
 

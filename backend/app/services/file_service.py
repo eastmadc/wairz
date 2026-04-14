@@ -532,7 +532,7 @@ class FileService:
 
         for root, dirs, files in safe_walk(full_path):
             for name in files + dirs:
-                if fnmatch.fnmatch(name, pattern):
+                if fnmatch.fnmatch(name.lower(), pattern.lower()):
                     abs_path = os.path.join(root, name)
                     # Return path relative to the appropriate root
                     rel_path = prefix + "/" + os.path.relpath(abs_path, real_root)

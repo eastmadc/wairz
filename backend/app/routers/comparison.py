@@ -233,6 +233,8 @@ def _entry_to_dict(entry) -> dict:
         "size_b": entry.size_b,
         "perms_a": entry.perms_a,
         "perms_b": entry.perms_b,
+        "hash_a": entry.hash_a,
+        "hash_b": entry.hash_b,
     }
 
 

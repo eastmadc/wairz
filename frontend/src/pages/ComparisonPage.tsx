@@ -14,6 +14,7 @@ import {
   Package,
   ArrowRightLeft,
   Code,
+  Download,
 } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -156,6 +157,40 @@ export default function ComparisonPage() {
     }
   }
 
+  const handleDownloadReport = () => {
+    if (!fsDiff) return
+    const report = {
+      generated_at: new Date().toISOString(),
+      firmware_a: { id: fwAId, filename: fwALabel?.original_filename },
+      firmware_b: { id: fwBId, filename: fwBLabel?.original_filename },
+      summary: {
+        added: fsDiff.added.length,
+        removed: fsDiff.removed.length,
+        modified: fsDiff.modified.length,
+        permissions_changed: fsDiff.permissions_changed.length,
+        total_files_a: fsDiff.total_files_a,
+        total_files_b: fsDiff.total_files_b,
+      },
+      filesystem_diff: {
+        added: fsDiff.added,
+        removed: fsDiff.removed,
+        modified: fsDiff.modified,
+        permissions_changed: fsDiff.permissions_changed,
+      },
+      ...(binDiff ? { binary_diff: binDiff } : {}),
+      ...(textDiff ? { text_diff: textDiff } : {}),
+    }
+    const blob = new Blob([JSON.stringify(report, null, 2)], { type: 'application/json' })
+    const nameA = fwALabel?.original_filename?.replace(/\.[^.]+$/, '') || fwAId.slice(0, 8)
+    const nameB = fwBLabel?.original_filename?.replace(/\.[^.]+$/, '') || fwBId.slice(0, 8)
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `comparison-${nameA}-vs-${nameB}.json`
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
   const fwALabel = firmwareList.find((fw) => fw.id === fwAId)
   const fwBLabel = firmwareList.find((fw) => fw.id === fwBId)
 
@@ -226,6 +261,12 @@ export default function ComparisonPage() {
               {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
               Compare
             </Button>
+            {fsDiff && (
+              <Button variant="outline" onClick={handleDownloadReport}>
+                <Download className="mr-2 h-4 w-4" />
+                Export JSON
+              </Button>
+            )}
           </div>
           {fwAId === fwBId && fwAId && (
             <p className="text-xs text-destructive mt-2">Select two different firmware versions</p>
@@ -335,7 +376,8 @@ export default function ComparisonPage() {
                         <th className="pb-2 pr-3 font-medium w-24">Status</th>
                         <th className="pb-2 pr-3 font-medium w-20 text-right">Size A</th>
                         <th className="pb-2 pr-3 font-medium w-20 text-right">Size B</th>
-                        <th className="pb-2 font-medium w-16 text-right">Delta</th>
+                        <th className="pb-2 pr-3 font-medium w-16 text-right">Delta</th>
+                        <th className="pb-2 font-medium w-40">SHA256</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -364,11 +406,22 @@ export default function ComparisonPage() {
                             <td className="py-1.5 pr-3 text-right">
                               {entry.size_b != null ? formatFileSize(entry.size_b) : '-'}
                             </td>
-                            <td className="py-1.5 text-right">
+                            <td className="py-1.5 pr-3 text-right">
                               {delta != null ? (
                                 <span className={delta > 0 ? 'text-green-600' : delta < 0 ? 'text-red-600' : ''}>
                                   {delta > 0 ? '+' : ''}{delta.toFixed(1)}%
                                 </span>
+                              ) : '-'}
+                            </td>
+                            <td className="py-1.5 font-mono text-muted-foreground">
+                              {entry.hash_a && entry.hash_b && entry.hash_a !== entry.hash_b ? (
+                                <span title={`A: ${entry.hash_a}\nB: ${entry.hash_b}`}>
+                                  {entry.hash_a.slice(0, 8)}&rarr;{entry.hash_b.slice(0, 8)}
+                                </span>
+                              ) : entry.hash_a ? (
+                                <span title={entry.hash_a}>{entry.hash_a.slice(0, 8)}</span>
+                              ) : entry.hash_b ? (
+                                <span title={entry.hash_b}>{entry.hash_b.slice(0, 8)}</span>
                               ) : '-'}
                             </td>
                           </tr>
