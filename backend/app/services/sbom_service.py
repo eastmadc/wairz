@@ -1090,21 +1090,9 @@ class SbomService:
             aosp_tag = self._resolve_aosp_tag(build_id) if build_id else None
             build_id_date = self._parse_build_id_date(build_id) if build_id else None
 
-            # Build a precise version string
-            # e.g. "15.0.0_r1 (patch 2026-02-05, build AP3A.240905.015.A2)"
-            if aosp_tag:
-                # Extract version from tag: "android-15.0.0_r1" → "15.0.0_r1"
-                tag_version = aosp_tag.replace("android-", "")
-                display_version = tag_version
-            else:
-                display_version = android_version
-
-            if security_patch:
-                display_version = f"{display_version} (patch {security_patch})"
-
             comp = IdentifiedComponent(
                 name="android",
-                version=display_version,
+                version=android_version,
                 type="operating-system",
                 cpe=f"cpe:2.3:o:google:android:{android_version}:*:*:*:*:*:*:*",
                 purl=None,
