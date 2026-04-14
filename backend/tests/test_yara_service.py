@@ -28,7 +28,12 @@ class TestCompileRules:
 
     def test_raises_on_empty_rules_dir(self, tmp_path: Path, monkeypatch):
         import app.services.yara_service as mod
+        from app.config import get_settings
+
         monkeypatch.setattr(mod, "_RULES_DIR", tmp_path / "nonexistent")
+        # Also patch yara_forge_dir so the fallback doesn't find rules either
+        real_settings = get_settings()
+        monkeypatch.setattr(real_settings, "yara_forge_dir", str(tmp_path / "no-forge"))
         with pytest.raises(ValueError, match="No YARA rule files found"):
             compile_rules()
 

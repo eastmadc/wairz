@@ -45,6 +45,11 @@
 - YARA scanning: verified (4990 rules)
 
 ## Remaining Work (priority order)
-1. CI/CD pipeline improvements (Phase 5.2) — SARIF output, severity thresholds
-2. Docker image size optimization
-3. Pre-existing test failures to fix: test_android_sbom (version format), test_yara_service (empty rules dir)
+1. ~~CI/CD pipeline improvements (Phase 5.2)~~ — **DONE** (session 25: SARIF 2.1.0, --fail-on thresholds, GitHub Security tab upload)
+   - Polish: integrate ESLint + Bandit/Ruff into CI workflows, wire claude-triage.yml stub
+2. Docker image size optimization — **Campaign created: docker-image-optimization**
+   - Phase 1: Quick wins (.dockerignore, ghidra JRE, apt consolidation)
+   - Phase 2: Backend multi-stage (Rust/UEFITool builder stages)
+   - Phase 3: System-emulation refactor (Debian slim, externalize PostgreSQL)
+   - Phase 4: Verify all images build and services start
+3. ~~Pre-existing test failures~~ — **FIXED** (session 36: sbom version field, yara monkeypatch isolation)
