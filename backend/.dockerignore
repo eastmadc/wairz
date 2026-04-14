@@ -2,3 +2,12 @@
 __pycache__
 *.pyc
 .pytest_cache
+.git
+.github
+docs
+images
+.env*
+*.md
+.planning
+.citadel
+.claude

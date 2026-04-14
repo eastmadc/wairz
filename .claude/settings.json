@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node /home/kali/code/Citadel/hooks_src/protect-files.js",
+            "command": "node /home/dustin/code/Citadel/hooks_src/protect-files.js",
             "timeout": 5
           }
         ]
@@ -16,7 +16,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node /home/kali/code/Citadel/hooks_src/protect-files.js",
+            "command": "node /home/dustin/code/Citadel/hooks_src/protect-files.js",
             "timeout": 5
           }
         ]
@@ -26,7 +26,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node /home/kali/code/Citadel/hooks_src/external-action-gate.js",
+            "command": "node /home/dustin/code/Citadel/hooks_src/external-action-gate.js",
             "timeout": 5
           }
         ]
@@ -36,7 +36,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node /home/kali/code/Citadel/hooks_src/governance.js",
+            "command": "node /home/dustin/code/Citadel/hooks_src/governance.js",
             "timeout": 3
           }
         ]
@@ -47,7 +47,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node /home/kali/code/Citadel/hooks_src/post-edit.js",
+            "command": "node /home/dustin/code/Citadel/hooks_src/post-edit.js",
             "timeout": 30
           }
         ]
@@ -57,7 +57,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node /home/kali/code/Citadel/hooks_src/organize-enforce.js",
+            "command": "node /home/dustin/code/Citadel/hooks_src/organize-enforce.js",
             "timeout": 5
           }
         ]
@@ -67,7 +67,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node /home/kali/code/Citadel/hooks_src/circuit-breaker.js",
+            "command": "node /home/dustin/code/Citadel/hooks_src/circuit-breaker.js",
             "timeout": 5
           }
         ]
@@ -76,7 +76,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node /home/kali/code/Citadel/hooks_src/cost-tracker.js",
+            "command": "node /home/dustin/code/Citadel/hooks_src/cost-tracker.js",
             "timeout": 5
           }
         ]
@@ -87,7 +87,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node /home/kali/code/Citadel/hooks_src/circuit-breaker.js",
+            "command": "node /home/dustin/code/Citadel/hooks_src/circuit-breaker.js",
             "timeout": 5
           }
         ]
@@ -98,7 +98,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node /home/kali/code/Citadel/hooks_src/pre-compact.js",
+            "command": "node /home/dustin/code/Citadel/hooks_src/pre-compact.js",
             "timeout": 15
           }
         ]
@@ -109,7 +109,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node /home/kali/code/Citadel/hooks_src/post-compact.js",
+            "command": "node /home/dustin/code/Citadel/hooks_src/post-compact.js",
             "timeout": 10
           }
         ]
@@ -120,7 +120,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node /home/kali/code/Citadel/hooks_src/quality-gate.js",
+            "command": "node /home/dustin/code/Citadel/hooks_src/quality-gate.js",
             "timeout": 10
           }
         ]
@@ -131,7 +131,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node /home/kali/code/Citadel/hooks_src/stop-failure.js",
+            "command": "node /home/dustin/code/Citadel/hooks_src/stop-failure.js",
             "timeout": 5
           }
         ]
@@ -142,7 +142,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node /home/kali/code/Citadel/hooks_src/init-project.js",
+            "command": "node /home/dustin/code/Citadel/hooks_src/init-project.js",
             "timeout": 10
           }
         ]
@@ -152,7 +152,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node /home/kali/code/Citadel/hooks_src/restore-compact.js",
+            "command": "node /home/dustin/code/Citadel/hooks_src/restore-compact.js",
             "timeout": 5
           }
         ]
@@ -161,7 +161,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node /home/kali/code/Citadel/hooks_src/intake-scanner.js",
+            "command": "node /home/dustin/code/Citadel/hooks_src/intake-scanner.js",
             "timeout": 5
           }
         ]
@@ -172,7 +172,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node /home/kali/code/Citadel/hooks_src/session-end.js",
+            "command": "node /home/dustin/code/Citadel/hooks_src/session-end.js",
             "timeout": 10
           }
         ]
@@ -183,7 +183,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node /home/kali/code/Citadel/hooks_src/subagent-stop.js",
+            "command": "node /home/dustin/code/Citadel/hooks_src/subagent-stop.js",
             "timeout": 5
           }
         ]
@@ -194,7 +194,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node /home/kali/code/Citadel/hooks_src/task-events.js",
+            "command": "node /home/dustin/code/Citadel/hooks_src/task-events.js",
             "timeout": 5
           }
         ]
@@ -205,7 +205,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node /home/kali/code/Citadel/hooks_src/task-events.js",
+            "command": "node /home/dustin/code/Citadel/hooks_src/task-events.js",
             "timeout": 5
           }
         ]
@@ -216,7 +216,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node /home/kali/code/Citadel/hooks_src/worktree-setup.js",
+            "command": "node /home/dustin/code/Citadel/hooks_src/worktree-setup.js",
             "timeout": 120
           }
         ]
@@ -227,7 +227,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node /home/kali/code/Citadel/hooks_src/worktree-remove.js",
+            "command": "node /home/dustin/code/Citadel/hooks_src/worktree-remove.js",
             "timeout": 10
           }
         ]
