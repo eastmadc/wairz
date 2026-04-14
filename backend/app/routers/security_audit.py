@@ -868,7 +868,7 @@ async def run_abusech_scan_endpoint(
 
     Runs hash-only lookups against MalwareBazaar, ThreatFox, and YARAify.
     No file data is uploaded. Results are persisted as findings with
-    source='abusech_scan'. No API key required (ABUSECH_AUTH_KEY optional).
+    source='abusech_scan'. ABUSECH_AUTH_KEY required for MalwareBazaar/ThreatFox; YARAify works without.
     """
     result = await db.execute(select(Project).where(Project.id == project_id))
     project = result.scalar_one_or_none()

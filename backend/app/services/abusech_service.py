@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 MALWAREBAZAAR_API = "https://mb-api.abuse.ch/api/v1/"
 THREATFOX_API = "https://threatfox-api.abuse.ch/api/v1/"
 URLHAUS_API = "https://urlhaus-api.abuse.ch/v1"
-YARAIFY_API = "https://yaraify-api.abuse.ch/api/v2"
+YARAIFY_API = "https://yaraify-api.abuse.ch/api/v1"
 
 # Rate limiting: abuse.ch is generous but we still batch politely
 BATCH_DELAY = 0.5  # seconds between requests
@@ -83,17 +83,17 @@ class YARAifyResult:
 async def check_malwarebazaar(sha256: str) -> MalwareBazaarResult:
     """Look up a SHA-256 hash on MalwareBazaar.
 
-    Works without an API key. Returns whether the hash is a known
-    malware sample, with signature and tags if found.
+    Requires ABUSECH_AUTH_KEY (free account at https://bazaar.abuse.ch).
     """
+    auth_key = _get_auth_key()
+    if not auth_key:
+        return MalwareBazaarResult(sha256=sha256, found=False)
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
             data = {"query": "get_info", "hash": sha256}
-            auth_key = _get_auth_key()
-            if auth_key:
-                data["api_key"] = auth_key
+            headers = {"Auth-Key": auth_key}
 
-            resp = await client.post(MALWAREBAZAAR_API, data=data)
+            resp = await client.post(MALWAREBAZAAR_API, data=data, headers=headers)
             if resp.status_code != 200:
                 logger.warning("MalwareBazaar returned %d for %s", resp.status_code, sha256)
                 return MalwareBazaarResult(sha256=sha256, found=False)
@@ -127,15 +127,15 @@ async def check_threatfox(ioc: str, ioc_type: str = "sha256_hash") -> list[Threa
     """Look up an IOC on ThreatFox.
 
     ioc_type: ip:port, domain, url, md5_hash, sha256_hash
-    Works without an API key.
+    Requires ABUSECH_AUTH_KEY (free account at https://threatfox.abuse.ch).
     """
+    auth_key = _get_auth_key()
+    if not auth_key:
+        return []
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
             payload: dict = {"query": "search_ioc", "search_term": ioc}
-            auth_key = _get_auth_key()
-            headers = {}
-            if auth_key:
-                headers["Auth-Key"] = auth_key
+            headers = {"Auth-Key": auth_key}
 
             resp = await client.post(THREATFOX_API, json=payload, headers=headers)
             if resp.status_code != 200:
@@ -200,12 +200,13 @@ async def check_yaraify(sha256: str) -> YARAifyResult:
     """Look up a SHA-256 hash on YARAify.
 
     Returns community YARA rule matches for the given hash.
-    Works without an API key.
+    Uses v1 POST API (v2 GET endpoint was deprecated).
     """
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
-            resp = await client.get(
-                f"{YARAIFY_API}/query/hash/sha256/{sha256}/"
+            resp = await client.post(
+                f"{YARAIFY_API}/",
+                json={"query": "lookup_hash", "search_term": sha256},
             )
             if resp.status_code != 200:
                 logger.warning("YARAify returned %d for %s", resp.status_code, sha256)
@@ -215,15 +216,16 @@ async def check_yaraify(sha256: str) -> YARAifyResult:
             if body.get("query_status") != "ok":
                 return YARAifyResult(sha256=sha256, found=False)
 
-            data = body.get("data", [])
+            data = body.get("data", {})
             if not data:
                 return YARAifyResult(sha256=sha256, found=False)
 
-            # Collect unique rule names
+            # v1 response: data.tasks[].static_results[].rule_name
             rules: set[str] = set()
-            for entry in data:
-                for task in entry.get("tasks", []):
-                    rule_name = task.get("rule_name")
+            tasks = data.get("tasks", []) if isinstance(data, dict) else []
+            for task in tasks:
+                for match in task.get("static_results", []):
+                    rule_name = match.get("rule_name")
                     if rule_name:
                         rules.add(rule_name)
 
@@ -266,7 +268,14 @@ async def enrich_iocs(
     """Run all abuse.ch checks on extracted IOCs.
 
     Returns a summary dict with results from all four services.
+    MalwareBazaar and ThreatFox require ABUSECH_AUTH_KEY; YARAify works without.
     """
+    auth_key = _get_auth_key()
+    if not auth_key:
+        logger.warning(
+            "ABUSECH_AUTH_KEY not set — skipping MalwareBazaar and ThreatFox lookups. "
+            "Register at https://bazaar.abuse.ch for a free key."
+        )
     summary: dict = {
         "malwarebazaar": [],
         "threatfox": [],
