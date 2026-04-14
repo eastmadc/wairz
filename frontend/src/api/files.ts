@@ -11,10 +11,11 @@ export async function searchFiles(
   projectId: string,
   pattern: string,
   path: string = '/',
+  firmwareId?: string,
 ): Promise<SearchResult> {
   const { data } = await apiClient.get<SearchResult>(
     `/projects/${projectId}/files/search`,
-    { params: { pattern, path } },
+    { params: { pattern, path, firmware_id: firmwareId } },
   )
   return data
 }
@@ -46,8 +47,10 @@ export async function readFile(
   return data
 }
 
-export function getFileDownloadUrl(projectId: string, path: string): string {
-  return `/api/v1/projects/${projectId}/files/download?path=${encodeURIComponent(path)}`
+export function getFileDownloadUrl(projectId: string, path: string, firmwareId?: string): string {
+  const params = new URLSearchParams({ path })
+  if (firmwareId) params.set('firmware_id', firmwareId)
+  return `/api/v1/projects/${projectId}/files/download?${params.toString()}`
 }
 
 export interface UefiSection {
@@ -104,10 +107,11 @@ export async function scanUefiModules(projectId: string): Promise<UefiScanResult
 export async function getFileInfo(
   projectId: string,
   path: string,
+  firmwareId?: string,
 ): Promise<FileInfo> {
   const { data } = await apiClient.get<FileInfo>(
     `/projects/${projectId}/files/info`,
-    { params: { path } },
+    { params: { path, firmware_id: firmwareId } },
   )
   return data
 }

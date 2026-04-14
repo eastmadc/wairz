@@ -23,6 +23,8 @@ class FileDiffEntryResponse(BaseModel):
     size_b: int | None = None
     perms_a: str | None = None
     perms_b: str | None = None
+    hash_a: str | None = None
+    hash_b: str | None = None
 
 
 class FirmwareDiffResponse(BaseModel):

@@ -8,6 +8,7 @@ import {
   isPlaceholder,
   type TreeNode,
 } from '@/stores/explorerStore'
+import { useProjectStore } from '@/stores/projectStore'
 import { getFileIcon } from '@/utils/fileIcons'
 import { formatFileSize } from '@/utils/format'
 
@@ -273,7 +274,8 @@ export default function FileTree() {
     }
     setSearchLoading(true)
     try {
-      const result = await searchFiles(projectId, searchQuery.includes('*') ? searchQuery : `*${searchQuery}*`)
+      const fwId = useProjectStore.getState().selectedFirmwareId || undefined
+      const result = await searchFiles(projectId, searchQuery.includes('*') ? searchQuery : `*${searchQuery}*`, '/', fwId)
       setSearchResults(result.matches)
       setSearchTruncated(result.truncated)
     } catch {

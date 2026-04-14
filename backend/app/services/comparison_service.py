@@ -23,6 +23,8 @@ class FileDiffEntry:
     size_b: int | None = None
     perms_a: str | None = None
     perms_b: str | None = None
+    hash_a: str | None = None
+    hash_b: str | None = None
 
 
 @dataclass
@@ -135,7 +137,7 @@ def diff_filesystems(root_a: str, root_b: str) -> FirmwareDiff:
             break
         sha_b, size_b, perms_b = tree_b[path]
         result.added.append(FileDiffEntry(
-            path=path, status="added", size_b=size_b, perms_b=perms_b,
+            path=path, status="added", size_b=size_b, perms_b=perms_b, hash_b=sha_b,
         ))
 
     # Removed files (in A but not in B)
@@ -145,7 +147,7 @@ def diff_filesystems(root_a: str, root_b: str) -> FirmwareDiff:
             break
         sha_a, size_a, perms_a = tree_a[path]
         result.removed.append(FileDiffEntry(
-            path=path, status="removed", size_a=size_a, perms_a=perms_a,
+            path=path, status="removed", size_a=size_a, perms_a=perms_a, hash_a=sha_a,
         ))
 
     # Common files — check for modifications
@@ -164,12 +166,14 @@ def diff_filesystems(root_a: str, root_b: str) -> FirmwareDiff:
                 path=path, status="modified",
                 size_a=size_a, size_b=size_b,
                 perms_a=perms_a, perms_b=perms_b,
+                hash_a=sha_a, hash_b=sha_b,
             ))
         elif perm_changed and len(result.permissions_changed) < MAX_DIFF_ENTRIES:
             result.permissions_changed.append(FileDiffEntry(
                 path=path, status="permissions_changed",
                 size_a=size_a, size_b=size_b,
                 perms_a=perms_a, perms_b=perms_b,
+                hash_a=sha_a, hash_b=sha_b,
             ))
 
     return result

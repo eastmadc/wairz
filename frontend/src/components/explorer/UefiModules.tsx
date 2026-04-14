@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { Loader2, Cpu, Search, ChevronRight, ChevronDown, FileCode, Download, Shield, AlertTriangle } from 'lucide-react'
 import { getUefiModules, getFileDownloadUrl, scanUefiModules, type UefiModule, type UefiScanResult } from '@/api/files'
+import { useProjectStore } from '@/stores/projectStore'
 import { formatFileSize } from '@/utils/format'
 
 const TYPE_COLORS: Record<string, string> = {
@@ -45,6 +46,7 @@ interface Props {
 }
 
 export default function UefiModules({ projectId }: Props) {
+  const selectedFirmwareId = useProjectStore((s) => s.selectedFirmwareId)
   const [modules, setModules] = useState<UefiModule[]>([])
   const [loading, setLoading] = useState(true)
   const [isUefi, setIsUefi] = useState(false)
@@ -57,7 +59,7 @@ export default function UefiModules({ projectId }: Props) {
   useEffect(() => {
     let cancelled = false
     setLoading(true)
-    getUefiModules(projectId)
+    getUefiModules(projectId, selectedFirmwareId || undefined)
       .then((data) => {
         if (!cancelled) {
           setModules(data.modules)
@@ -69,7 +71,7 @@ export default function UefiModules({ projectId }: Props) {
         if (!cancelled) setLoading(false)
       })
     return () => { cancelled = true }
-  }, [projectId])
+  }, [projectId, selectedFirmwareId])
 
   if (loading) {
     return (
@@ -320,7 +322,7 @@ export default function UefiModules({ projectId }: Props) {
                           <div className="flex items-center gap-2 pt-1">
                             {m.has_pe32 && m.pe32_path && (
                               <a
-                                href={getFileDownloadUrl(projectId, '/' + m.pe32_path)}
+                                href={getFileDownloadUrl(projectId, '/' + m.pe32_path, selectedFirmwareId || undefined)}
                                 download
                                 className="inline-flex items-center gap-1 rounded bg-blue-600 px-2 py-1 text-[10px] font-medium text-white hover:bg-blue-500"
                                 onClick={(e) => e.stopPropagation()}
