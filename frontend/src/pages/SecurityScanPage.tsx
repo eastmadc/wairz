@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { useParams, Link } from 'react-router-dom'
+import { useParams, Link, useSearchParams } from 'react-router-dom'
 import { Shield, Loader2, RefreshCw, Smartphone } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -33,8 +33,11 @@ const SEVERITY_COLORS: Record<Severity, string> = {
 
 export default function SecurityScanPage() {
   const { projectId } = useParams<{ projectId: string }>()
+  const [searchParams] = useSearchParams()
   const selectedFirmwareId = useProjectStore((s) => s.selectedFirmwareId)
-  const [tab, setTab] = useState<Tab>('audit')
+  const initialTab = (searchParams.get('tab') as Tab) || 'audit'
+  const initialApk = searchParams.get('apk') || undefined
+  const [tab, setTab] = useState<Tab>(initialTab)
   const [firmwareList, setFirmwareList] = useState<FirmwareDetail[]>([])
   const [auditing, setAuditing] = useState(false)
   const [auditResult, setAuditResult] = useState<SecurityAuditResult | null>(null)
@@ -373,7 +376,7 @@ export default function SecurityScanPage() {
       )}
 
       {tab === 'apk-scan' && projectId && (
-        <ApkScanTab projectId={projectId} selectedFirmwareId={selectedFirmwareId} />
+        <ApkScanTab projectId={projectId} selectedFirmwareId={selectedFirmwareId} initialApk={initialApk} />
       )}
 
       {tab === 'attack-surface' && projectId && (

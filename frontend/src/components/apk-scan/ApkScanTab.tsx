@@ -98,9 +98,10 @@ const SEVERITY_THRESHOLD_OPTIONS: { value: string; label: string; description: s
 interface ApkScanTabProps {
   projectId: string
   selectedFirmwareId: string | null
+  initialApk?: string
 }
 
-export default function ApkScanTab({ projectId, selectedFirmwareId }: ApkScanTabProps) {
+export default function ApkScanTab({ projectId, selectedFirmwareId, initialApk }: ApkScanTabProps) {
   // ── APK discovery ──
   const [apkFiles, setApkFiles] = useState<string[]>([])
   const [discoveryLoading, setDiscoveryLoading] = useState(false)
@@ -211,9 +212,9 @@ export default function ApkScanTab({ projectId, selectedFirmwareId }: ApkScanTab
       const result = await searchFiles(projectId, '*.apk', '/', selectedFirmwareId)
       const files = result.matches || []
       setApkFiles(files)
-      // Auto-select first APK if none selected
+      // Auto-select: use initialApk from URL params, or fall back to first APK
       if (files.length > 0 && !selectedApk) {
-        setSelectedApk(files[0])
+        setSelectedApk(initialApk && files.includes(initialApk) ? initialApk : files[0])
       } else if (files.length === 0) {
         setSelectedApk(null)
       }
@@ -229,15 +230,21 @@ export default function ApkScanTab({ projectId, selectedFirmwareId }: ApkScanTab
     discoverApks()
   }, [discoverApks])
 
-  // Reset results when APK selection changes
+  // Reset results when APK selection changes via user click (not deep-link)
+  const initialApkHandled = useRef(false)
+  const prevApk = useRef<string | null>(null)
   useEffect(() => {
-    setManifestResult(null)
-    setBytecodeResult(null)
-    setSastResult(null)
-    setManifestPhase(INITIAL_PHASE)
-    setBytecodePhase(INITIAL_PHASE)
-    setSastPhase(INITIAL_PHASE)
-  }, [selectedApk])
+    // Skip reset on first render and when set by deep-link
+    if (prevApk.current !== null && prevApk.current !== selectedApk && selectedApk !== initialApk) {
+      setManifestResult(null)
+      setBytecodeResult(null)
+      setSastResult(null)
+      setManifestPhase(INITIAL_PHASE)
+      setBytecodePhase(INITIAL_PHASE)
+      setSastPhase(INITIAL_PHASE)
+    }
+    prevApk.current = selectedApk
+  }, [selectedApk, initialApk])
 
   // ── Derived state ──
   const isAnyScanning = batchScanning ||
@@ -368,6 +375,16 @@ export default function ApkScanTab({ projectId, selectedFirmwareId }: ApkScanTab
       setSastPhase({ status: 'idle' })
     }
   }, [projectId, selectedFirmwareId, minSeverity])
+
+  // Auto-select and load results when navigated to with an APK parameter
+  useEffect(() => {
+    if (initialApk && !initialApkHandled.current && selectedFirmwareId) {
+      initialApkHandled.current = true
+      setSelectedApk(initialApk)
+      // Delay to let React process the selectedApk state before loading
+      setTimeout(() => loadCachedResults(initialApk), 0)
+    }
+  }, [initialApk, selectedFirmwareId, loadCachedResults])
 
   const runAllScans = useCallback(async () => {
     if (!projectId || !selectedFirmwareId || !selectedApk) return
