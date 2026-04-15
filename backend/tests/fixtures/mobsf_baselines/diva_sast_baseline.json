@@ -1,0 +1,38 @@
+{
+  "_meta": {
+    "apk_name": "DIVA (Damn Insecure and Vulnerable App)",
+    "package": "jakhar.aseem.diva",
+    "phase": "sast",
+    "source": "https://github.com/payatu/diva-android",
+    "description": "Ground-truth SAST (jadx+mobsfscan) findings for DIVA APK."
+  },
+  "true_positive_rule_ids": [
+    "android_sql_injection",
+    "android_insecure_sharedprefs",
+    "android_world_readable",
+    "android_world_writable",
+    "android_external_storage",
+    "android_logging",
+    "android_hardcoded_secret"
+  ],
+  "expected_absent_rule_ids": [
+    {
+      "rule_id": "android_webview_javascript",
+      "reason": "DIVA has no WebView usage"
+    },
+    {
+      "rule_id": "android_ssl_pinning_bypass",
+      "reason": "DIVA does not implement SSL pinning"
+    },
+    {
+      "rule_id": "android_crypto_ecb",
+      "reason": "DIVA does not use cryptographic APIs"
+    }
+  ],
+  "summary": {
+    "total_true_positives": 7,
+    "false_positive_tolerance": 3,
+    "max_fp_rate": 0.20,
+    "notes": "SAST findings for DIVA overlap significantly with bytecode findings but with richer code-level context from decompiled source."
+  }
+}

@@ -23,7 +23,7 @@ class AnalysisCache(Base):
     )
     binary_path: Mapped[str | None] = mapped_column(String(512))
     binary_sha256: Mapped[str | None] = mapped_column(String(64), index=True)
-    operation: Mapped[str] = mapped_column(String(100), nullable=False)
+    operation: Mapped[str] = mapped_column(String(512), nullable=False)
     result: Mapped[dict | None] = mapped_column(JSONB)
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
 

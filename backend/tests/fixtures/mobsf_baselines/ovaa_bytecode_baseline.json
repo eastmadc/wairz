@@ -1,0 +1,36 @@
+{
+  "_meta": {
+    "apk_name": "OVAA (Oversecured Vulnerable Android App)",
+    "package": "oversecured.ovaa",
+    "phase": "bytecode",
+    "source": "https://github.com/nickcano/Oversecured-Vulnerable-Android-App",
+    "description": "Ground-truth bytecode-level findings for OVAA APK."
+  },
+  "true_positive_pattern_ids": [
+    "hardcoded_sharedprefs",
+    "insecure_network_http_urls",
+    "logging_sensitive_data",
+    "webview_js_enabled",
+    "webview_file_access",
+    "sql_injection_rawquery",
+    "reflection_api_access",
+    "clipboard_usage",
+    "external_storage_secrets"
+  ],
+  "expected_absent_pattern_ids": [
+    {
+      "pattern_id": "crypto_ecb_mode",
+      "reason": "OVAA does not use symmetric encryption with ECB mode"
+    },
+    {
+      "pattern_id": "insecure_random",
+      "reason": "OVAA uses SecureRandom where randomness is needed"
+    }
+  ],
+  "summary": {
+    "total_true_positives": 9,
+    "false_positive_tolerance": 3,
+    "max_fp_rate": 0.20,
+    "notes": "OVAA has broad vulnerability surface: WebView, SQL injection, reflection, data leakage."
+  }
+}

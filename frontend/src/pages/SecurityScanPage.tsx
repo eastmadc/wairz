@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useParams, Link } from 'react-router-dom'
-import { Shield, Loader2, RefreshCw } from 'lucide-react'
+import { Shield, Loader2, RefreshCw, Smartphone } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
@@ -18,9 +18,10 @@ import FirmwareSelector from '@/components/projects/FirmwareSelector'
 import AttackSurfaceTab from '@/components/security/AttackSurfaceTab'
 import CraChecklistTab from '@/components/security/CraChecklistTab'
 import ThreatIntelTab from '@/components/security/ThreatIntelTab'
+import { ApkScanTab } from '@/components/apk-scan'
 import type { Finding, FirmwareDetail, Severity } from '@/types'
 
-type Tab = 'audit' | 'yara' | 'vulhunt' | 'attack-surface' | 'threat-intel' | 'cra'
+type Tab = 'audit' | 'yara' | 'vulhunt' | 'apk-scan' | 'attack-surface' | 'threat-intel' | 'cra'
 
 const SEVERITY_COLORS: Record<Severity, string> = {
   critical: 'bg-red-600 text-white',
@@ -207,6 +208,20 @@ export default function SecurityScanPage() {
         <button
           type="button"
           className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${
+            tab === 'apk-scan'
+              ? 'border-primary text-primary'
+              : 'border-transparent text-muted-foreground hover:text-foreground'
+          }`}
+          onClick={() => setTab('apk-scan')}
+        >
+          <span className="inline-flex items-center gap-1.5">
+            <Smartphone className="h-3.5 w-3.5" />
+            APK Scan
+          </span>
+        </button>
+        <button
+          type="button"
+          className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${
             tab === 'attack-surface'
               ? 'border-primary text-primary'
               : 'border-transparent text-muted-foreground hover:text-foreground'
@@ -357,6 +372,10 @@ export default function SecurityScanPage() {
         </div>
       )}
 
+      {tab === 'apk-scan' && projectId && (
+        <ApkScanTab projectId={projectId} selectedFirmwareId={selectedFirmwareId} />
+      )}
+
       {tab === 'attack-surface' && projectId && (
         <AttackSurfaceTab projectId={projectId} selectedFirmwareId={selectedFirmwareId} />
       )}
@@ -370,7 +389,7 @@ export default function SecurityScanPage() {
       )}
 
       {/* Findings list (hidden on tabs that have their own display) */}
-      {tab !== 'attack-surface' && tab !== 'threat-intel' && tab !== 'cra' && (
+      {tab !== 'attack-surface' && tab !== 'threat-intel' && tab !== 'cra' && tab !== 'apk-scan' && (
         <>
           {loadingFindings ? (
             <div className="flex items-center gap-2 py-8 justify-center text-muted-foreground">

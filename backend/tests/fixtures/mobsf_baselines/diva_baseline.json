@@ -1,0 +1,107 @@
+{
+  "_meta": {
+    "apk_name": "DIVA (Damn Insecure and Vulnerable App)",
+    "package": "jakhar.aseem.diva",
+    "version": "1.0",
+    "source": "https://github.com/payatu/diva-android",
+    "min_sdk": 15,
+    "target_sdk": 24,
+    "generated_by": "extract_mobsf_baselines.py",
+    "description": "MobSF manifest-level baseline findings for DIVA APK. DIVA is an intentionally vulnerable Android app by Payatu used for security training."
+  },
+  "mobsf_findings": [
+    {
+      "issue_title": "Application is Debuggable",
+      "severity": "high",
+      "category": "manifest",
+      "wairz_check_id": "MANIFEST-001",
+      "mobsf_rule": "android_debuggable",
+      "cwe_ids": ["CWE-215"],
+      "description": "android:debuggable=true allows attaching a debugger to the process, enabling runtime inspection and memory tampering.",
+      "evidence_pattern": "android:debuggable=\"true\""
+    },
+    {
+      "issue_title": "Application Data can be Backed Up",
+      "severity": "medium",
+      "category": "manifest",
+      "wairz_check_id": "MANIFEST-002",
+      "mobsf_rule": "android_allowbackup",
+      "cwe_ids": ["CWE-921"],
+      "description": "android:allowBackup=true allows application data to be backed up via adb, potentially exposing sensitive data.",
+      "evidence_pattern": "android:allowBackup=\"true\""
+    },
+    {
+      "issue_title": "Clear Text Traffic Is Enabled For App",
+      "severity": "high",
+      "category": "manifest",
+      "wairz_check_id": "MANIFEST-003",
+      "mobsf_rule": "android_cleartext",
+      "cwe_ids": ["CWE-319"],
+      "description": "Application allows cleartext HTTP traffic. For targetSdkVersion < 28, cleartext is allowed by default when usesCleartextTraffic is not explicitly set.",
+      "evidence_pattern": "targetSdkVersion=24 (< 28, cleartext default)"
+    },
+    {
+      "issue_title": "App can be installed on a vulnerable older version of android",
+      "severity": "high",
+      "category": "manifest",
+      "wairz_check_id": "MANIFEST-005",
+      "mobsf_rule": "android_minsdk",
+      "cwe_ids": ["CWE-1104"],
+      "description": "minSdkVersion 15 (Android 4.0.3 ICS) is critically outdated (< API 19/KitKat). Devices running these versions have unpatched OS-level vulnerabilities.",
+      "evidence_pattern": "minSdkVersion=15"
+    },
+    {
+      "issue_title": "Exported Components Without Permission Protection",
+      "severity": "high",
+      "category": "manifest",
+      "wairz_check_id": "MANIFEST-006",
+      "mobsf_rule": "android_exported",
+      "cwe_ids": ["CWE-926"],
+      "description": "Multiple activities/providers are exported without requiring any permission, allowing any app on the device to interact with them. DIVA has 13+ exported activities via intent-filter implicit export (targetSdk < 31) and 2 exported content providers.",
+      "evidence_pattern": "13+ exported activities, 2 exported providers"
+    }
+  ],
+  "expected_absent": [
+    {
+      "wairz_check_id": "MANIFEST-004",
+      "reason": "DIVA does not set android:testOnly"
+    },
+    {
+      "wairz_check_id": "MANIFEST-007",
+      "reason": "DIVA declares no custom <permission> elements"
+    },
+    {
+      "wairz_check_id": "MANIFEST-008",
+      "reason": "No non-default taskAffinity attributes (no StrandHogg v1)"
+    },
+    {
+      "wairz_check_id": "MANIFEST-009",
+      "reason": "No singleTask launchMode activities (no StrandHogg v2)"
+    },
+    {
+      "wairz_check_id": "MANIFEST-011",
+      "reason": "No networkSecurityConfig referenced"
+    },
+    {
+      "wairz_check_id": "MANIFEST-012",
+      "reason": "No allowTaskReparenting attributes"
+    },
+    {
+      "wairz_check_id": "MANIFEST-018",
+      "reason": "No sharedUserId declared"
+    }
+  ],
+  "summary": {
+    "total_findings": 5,
+    "by_severity": {
+      "critical": 0,
+      "high": 4,
+      "medium": 1,
+      "low": 0,
+      "info": 0
+    },
+    "false_positive_tolerance": 1,
+    "max_acceptable_total": 6,
+    "notes": "MobSF reports exactly 5 manifest-level findings for DIVA. Our scanner should match all 5 and produce at most 1 additional finding (< 20% FP rate)."
+  }
+}

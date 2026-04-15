@@ -38,6 +38,7 @@ class Finding(Base):
     line_number: Mapped[int | None] = mapped_column(Integer)
     cve_ids: Mapped[list[str] | None] = mapped_column(ARRAY(String))
     cwe_ids: Mapped[list[str] | None] = mapped_column(ARRAY(String))
+    confidence: Mapped[str | None] = mapped_column(String(20))
     status: Mapped[str] = mapped_column(String(20), default="open", server_default="open")
     source: Mapped[str] = mapped_column(String(50), default="manual", server_default="manual")
     component_id: Mapped[uuid.UUID | None] = mapped_column(

@@ -1,0 +1,119 @@
+{
+  "_meta": {
+    "apk_name": "InsecureBankv2",
+    "package": "com.android.insecurebankv2",
+    "version": "2.0",
+    "source": "https://github.com/dineshshetty/Android-InsecureBankv2",
+    "min_sdk": 15,
+    "target_sdk": 15,
+    "generated_by": "extract_mobsf_baselines.py",
+    "description": "MobSF manifest-level baseline findings for InsecureBankv2. Deliberately vulnerable Android banking app used for security training."
+  },
+  "mobsf_findings": [
+    {
+      "issue_title": "Application is Debuggable",
+      "severity": "high",
+      "category": "manifest",
+      "wairz_check_id": "MANIFEST-001",
+      "mobsf_rule": "android_debuggable",
+      "cwe_ids": ["CWE-215"],
+      "description": "android:debuggable=true allows attaching a debugger to the process.",
+      "evidence_pattern": "android:debuggable=\"true\""
+    },
+    {
+      "issue_title": "Application Data can be Backed Up",
+      "severity": "medium",
+      "category": "manifest",
+      "wairz_check_id": "MANIFEST-002",
+      "mobsf_rule": "android_allowbackup",
+      "cwe_ids": ["CWE-921"],
+      "description": "android:allowBackup=true allows application data to be backed up via adb.",
+      "evidence_pattern": "android:allowBackup=\"true\""
+    },
+    {
+      "issue_title": "Clear Text Traffic Is Enabled For App",
+      "severity": "high",
+      "category": "manifest",
+      "wairz_check_id": "MANIFEST-003",
+      "mobsf_rule": "android_cleartext",
+      "cwe_ids": ["CWE-319"],
+      "description": "Application allows cleartext HTTP traffic. targetSdkVersion=15 (< 28), so cleartext is allowed by default.",
+      "evidence_pattern": "targetSdkVersion=15 (< 28, cleartext default)"
+    },
+    {
+      "issue_title": "App can be installed on a vulnerable older version of android",
+      "severity": "high",
+      "category": "manifest",
+      "wairz_check_id": "MANIFEST-005",
+      "mobsf_rule": "android_minsdk",
+      "cwe_ids": ["CWE-1104"],
+      "description": "minSdkVersion 15 (Android 4.0.3 ICS) is critically outdated (< API 19/KitKat).",
+      "evidence_pattern": "minSdkVersion=15"
+    },
+    {
+      "issue_title": "Exported Components Without Permission Protection",
+      "severity": "high",
+      "category": "manifest",
+      "wairz_check_id": "MANIFEST-006",
+      "mobsf_rule": "android_exported",
+      "cwe_ids": ["CWE-926"],
+      "description": "Multiple activities, services, and receivers are exported without permission protection. InsecureBankv2 has 8 activities, 1 service, and 1 receiver all exported with no permission requirement.",
+      "evidence_pattern": "8 exported activities, 1 exported service, 1 exported receiver"
+    },
+    {
+      "issue_title": "Browsable Activities / App Links",
+      "severity": "medium",
+      "category": "manifest",
+      "wairz_check_id": "MANIFEST-010",
+      "mobsf_rule": "android_browsable",
+      "cwe_ids": ["CWE-939"],
+      "description": "ViewStatement activity handles browsable http://mybank.com deep link without autoVerify, enabling potential link hijacking.",
+      "evidence_pattern": "scheme=http, host=mybank.com, no autoVerify"
+    },
+    {
+      "issue_title": "Dangerous Permissions Requested",
+      "severity": "info",
+      "category": "manifest",
+      "wairz_check_id": "MANIFEST-016",
+      "mobsf_rule": "android_permissions",
+      "cwe_ids": ["CWE-250"],
+      "description": "Application requests multiple dangerous permissions: READ_PHONE_STATE, ACCESS_COARSE_LOCATION, SEND_SMS, READ_CONTACTS, READ_CALL_LOG.",
+      "evidence_pattern": "5 dangerous permissions"
+    }
+  ],
+  "expected_absent": [
+    {
+      "wairz_check_id": "MANIFEST-004",
+      "reason": "InsecureBankv2 does not set android:testOnly"
+    },
+    {
+      "wairz_check_id": "MANIFEST-007",
+      "reason": "No custom <permission> declarations"
+    },
+    {
+      "wairz_check_id": "MANIFEST-008",
+      "reason": "No non-default taskAffinity (no StrandHogg v1)"
+    },
+    {
+      "wairz_check_id": "MANIFEST-009",
+      "reason": "No singleTask launchMode (no StrandHogg v2)"
+    },
+    {
+      "wairz_check_id": "MANIFEST-011",
+      "reason": "No networkSecurityConfig referenced"
+    }
+  ],
+  "summary": {
+    "total_findings": 7,
+    "by_severity": {
+      "critical": 0,
+      "high": 4,
+      "medium": 2,
+      "low": 0,
+      "info": 1
+    },
+    "false_positive_tolerance": 2,
+    "max_acceptable_total": 12,
+    "notes": "MobSF reports 6-8 manifest-level findings for InsecureBankv2. Our scanner should match all core findings (MANIFEST-001/002/003/005/006/010) plus may include MANIFEST-016 (dangerous permissions). Total should be 5-12."
+  }
+}

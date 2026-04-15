@@ -112,10 +112,13 @@ ALLOWED_TOOLS: set[str] = {
     "list_project_documents",
     "read_project_document",
     "read_scratchpad",
-    # Android (read-only)
+    # Android (read-only + security scan)
     "analyze_apk",
     "list_apk_permissions",
     "check_apk_signatures",
+    "scan_apk_manifest",
+    "scan_apk_bytecode",
+    "scan_apk_sast",
     # UEFI (read-only)
     "list_firmware_volumes",
     "list_uefi_modules",

@@ -1,0 +1,3 @@
+# Generated APK files — recreate with:
+#   docker compose exec backend python tests/fixtures/apk/generate_apk_fixtures.py
+*.apk

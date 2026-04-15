@@ -1,0 +1,36 @@
+{
+  "_meta": {
+    "apk_name": "OVAA (Oversecured Vulnerable Android App)",
+    "package": "oversecured.ovaa",
+    "phase": "sast",
+    "source": "https://github.com/nickcano/Oversecured-Vulnerable-Android-App",
+    "description": "Ground-truth SAST (jadx+mobsfscan) findings for OVAA APK."
+  },
+  "true_positive_rule_ids": [
+    "android_webview_javascript",
+    "android_webview_file_access",
+    "android_sql_injection",
+    "android_insecure_sharedprefs",
+    "android_logging",
+    "android_external_storage",
+    "android_hardcoded_secret",
+    "android_insecure_http",
+    "android_clipboard"
+  ],
+  "expected_absent_rule_ids": [
+    {
+      "rule_id": "android_crypto_ecb",
+      "reason": "OVAA does not use symmetric encryption with ECB"
+    },
+    {
+      "rule_id": "android_insecure_random",
+      "reason": "OVAA uses SecureRandom properly"
+    }
+  ],
+  "summary": {
+    "total_true_positives": 9,
+    "false_positive_tolerance": 3,
+    "max_fp_rate": 0.20,
+    "notes": "OVAA SAST findings focus on WebView, injection, and data leakage patterns."
+  }
+}

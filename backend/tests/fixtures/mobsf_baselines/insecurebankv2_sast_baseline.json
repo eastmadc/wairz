@@ -1,0 +1,37 @@
+{
+  "_meta": {
+    "apk_name": "InsecureBankv2",
+    "package": "com.android.insecurebankv2",
+    "phase": "sast",
+    "source": "https://github.com/dineshshetty/Android-InsecureBankv2",
+    "description": "Ground-truth SAST (jadx+mobsfscan) findings for InsecureBankv2 APK."
+  },
+  "true_positive_rule_ids": [
+    "android_sql_injection",
+    "android_insecure_sharedprefs",
+    "android_hardcoded_secret",
+    "android_crypto_ecb",
+    "android_base64_encode",
+    "android_logging",
+    "android_insecure_http",
+    "android_external_storage",
+    "android_runtime_exec",
+    "android_insecure_random"
+  ],
+  "expected_absent_rule_ids": [
+    {
+      "rule_id": "android_webview_javascript",
+      "reason": "InsecureBankv2 does not use WebView with JS enabled"
+    },
+    {
+      "rule_id": "android_ssl_pinning_bypass",
+      "reason": "No SSL pinning code present to bypass"
+    }
+  ],
+  "summary": {
+    "total_true_positives": 10,
+    "false_positive_tolerance": 4,
+    "max_fp_rate": 0.20,
+    "notes": "InsecureBankv2 has the broadest SAST surface of the three test APKs."
+  }
+}
