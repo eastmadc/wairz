@@ -16,7 +16,7 @@ Claude Code / Claude Desktop
 ┌─────────────────┐     ┌──────────────────────────────────┐
 │   wairz-mcp     │────▶│         FastAPI Backend           │
 │  (MCP server)   │     │                                    │
-│  60+ tools      │     │  Services: firmware, file,         │
+│  65+ tools      │     │  Services: firmware, file,         │
 │                 │     │  analysis, emulation, fuzzing,     │
 │  Entry point:   │     │  sbom, uart, finding, export...    │
 │  wairz-mcp CLI  │     │                                    │
@@ -34,7 +34,7 @@ Host machine (optional):
 
 - **Frontend:** React 19 + Vite + TypeScript, shadcn/ui + Tailwind, Monaco Editor, ReactFlow, xterm.js, Zustand
 - **Backend:** Python 3.12 + FastAPI (async), SQLAlchemy 2.0 (async) + Alembic, pydantic-settings
-- **MCP Server:** `wairz-mcp` CLI entry point (`app.mcp_server:main`), stdio transport, 60+ tools
+- **MCP Server:** `wairz-mcp` CLI entry point (`app.mcp_server:main`), stdio transport, 65+ tools
 - **Database:** PostgreSQL 16 (JSONB for analysis cache)
 - **Containers:** Docker Compose — backend, postgres, redis, emulation (QEMU), fuzzing (AFL++)
 
@@ -169,6 +169,11 @@ These rules were extracted from recurring bugs and failures across 30+ developme
 8. **Rebuild `worker` whenever you rebuild `backend`.** They share the same Dockerfile and codebase. A stale worker image causes Alembic migration failures (worker can't find new revisions) and silently blocks ALL background jobs (unpack, Ghidra, vuln scan). Use `docker compose up -d --build backend worker`, never just `backend` alone.
 9. **When adding new backend enum/source values, update all frontend `Record<Type, ...>` lookups.** TypeScript `Record<UnionType, Config>` maps are exhaustive — a new backend value not present in the map returns `undefined`, crashing React with a blank page. Grep for `Record<{TypeName},` across the frontend before deploying. Add `?? fallback` to strict lookups as defense in depth.
 10. **Never name a router endpoint function the same as an imported service function.** Python silently rebinds the name: the `def` at module scope overwrites the import. Callers of the "service function" get the router function instead, with completely wrong parameter types. Convention: suffix router functions with `_endpoint` (e.g., `run_clamav_scan_endpoint`) when they share a conceptual name with a service import.
+11. **After splitting a large file, verify all module-level constants are accessible.** `py_compile` and import checks pass even when a method references a constant that was left in the original file. The `NameError` only surfaces at runtime when the method is actually called. Always run an API call or integration test against the split code before deploying.
+12. **Pydantic response models go in `schemas/`, not in routers.** 9/10 Wairz routers import models from `app/schemas/`. Defining models inline in router files causes forward reference issues and violates the project convention.
+13. **For Android firmware analysis, detect platform signing via manifest heuristics, not certificate negation.** Equating "not debug-signed AND in priv-app" with "platform-signed" is a false equivalence. Use the 3-tier heuristic in `_has_signature_or_system_protection()`: declared signatureOrSystem permissions, requested platform-only permissions, system shared UIDs.
+14. **When checking firmware paths, match partition prefixes, not bare directory names.** `"priv-app" in path.split(os.sep)` matches too broadly. Check `system/priv-app`, `product/priv-app`, `vendor/priv-app`, `system_ext/priv-app` as partition/directory pairs. Use `is_priv_app_path()` from `_android_helpers.py`.
+15. **When reusing DB columns for new data types, verify value lengths.** Java class names with inner classes and synthetic lambdas (`$$ExternalSyntheticLambda0`) commonly reach 150+ characters. The `analysis_cache.operation` column needed VARCHAR(512), not VARCHAR(100), for JADX cache keys.
 
 ---
 
@@ -178,7 +183,7 @@ Entry point: `wairz-mcp = "app.mcp_server:main"` (defined in `pyproject.toml`)
 
 The server uses a mutable `ProjectState` dataclass so all project context (project_id, firmware_id, extracted_path) can be switched dynamically via the `switch_project` tool without restarting the MCP process.
 
-### Tool Categories (60+)
+### Tool Categories (65+)
 
 | Category | File | Tools |
 |----------|------|-------|
@@ -193,6 +198,9 @@ The server uses a mutable `ProjectState` dataclass so all project context (proje
 | Comparison | `tools/comparison.py` | `list_firmware_versions`, `diff_firmware`, `diff_binary`, `diff_decompilation` |
 | UART | `tools/uart.py` | `uart_connect`, `uart_send_command`, `uart_read`, `uart_send_break`, `uart_send_raw`, `uart_disconnect`, `uart_status`, `uart_get_transcript` |
 | Reporting | `tools/reporting.py` | `add_finding`, `list_findings`, `update_finding`, `read_project_instructions`, `list_project_documents`, `read_project_document` |
+| Android | `tools/android.py` | `analyze_apk`, `list_apk_permissions`, `check_apk_signatures`, `scan_apk_manifest` |
+| Android Bytecode | `tools/android_bytecode.py` | `scan_apk_bytecode` |
+| Android SAST | `tools/android_sast.py` | `scan_apk_sast` |
 | Code | `tools/documents.py` | `save_code_cleanup` |
 
 ---

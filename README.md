@@ -29,7 +29,7 @@ Connect any MCP-compatible AI agent to Wairz's 160+ analysis tools — [Claude C
 - **Firmware Comparison** — Diff filesystem trees, binaries, and decompiled functions across firmware versions
 - **RTOS & Bare-Metal Support** — Detection of FreeRTOS, VxWorks, Zephyr, ThreadX and companion components (lwIP, FatFs, etc.)
 - **UEFI Firmware Support** — UEFIExtract for firmware volumes, module listing, NVRAM variable extraction, and PE32+ scanning
-- **Android Firmware** — APK analysis via Androguard, permission listing, signature verification, SELinux policy analysis
+- **Android Firmware** — Multi-phase APK security scanning: 18 manifest security checks (MobSF-equivalent), DEX bytecode pattern detection (~30 insecure API patterns), jadx decompilation + mobsfscan SAST (43 rules), with firmware-aware severity adjustment for system/priv-app APKs. Includes batch scanning of all APKs, decompiled source viewer, permission analysis, and signature verification
 - **Device Acquisition** — Pull firmware directly from ADB-connected Android devices via a host-side bridge
 - **Firmware Update Detection** — Identify SWUpdate, RAUC, Mender, opkg, U-Boot, and custom update mechanisms with security gap analysis
 - **CRA Compliance** — EU Cyber Resilience Act Annex I assessment (20 requirements), auto-populate from existing findings, Article 14 notification export
@@ -47,7 +47,7 @@ Claude Code / Claude Desktop / OpenCode
 ┌─────────────────┐     ┌──────────────────────────────────┐
 │   wairz-mcp     │────▶│         FastAPI Backend           │
 │  (MCP server)   │     │                                    │
-│  160+ tools     │     │  Services: firmware, analysis,     │
+│  165+ tools     │     │  Services: firmware, analysis,     │
 │                 │     │  emulation, fuzzing, sbom, uart    │
 └─────────────────┘     │                                    │
                         │  Ghidra headless · QEMU · AFL++    │
@@ -165,7 +165,7 @@ Add to your `opencode.json` (project root or `~/.config/opencode/opencode.json`)
 }
 ```
 
-> **Note:** The `timeout` must be increased from the default 5000ms because Wairz registers 160+ tools.
+> **Note:** The `timeout` must be increased from the default 5000ms because Wairz registers 165+ tools.
 
 Once connected, your AI agent can autonomously explore firmware, analyze binaries, run emulation, fuzz targets, and generate security findings. The MCP server supports dynamic project switching via the `switch_project` tool — no restart needed to change projects.
 
