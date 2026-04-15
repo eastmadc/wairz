@@ -459,12 +459,16 @@ export default function SecurityScanPage() {
                         </td>
                         <td className="py-1.5 pr-3 font-mono text-muted-foreground truncate max-w-[200px]">
                           {f.file_path ? (
-                            <Link
-                              to={`/projects/${projectId}/explore?path=${encodeURIComponent(f.file_path)}`}
-                              className="hover:underline hover:text-primary"
-                            >
-                              {f.file_path}
-                            </Link>
+                            f.source?.startsWith('apk-') ? (
+                              <span className="text-muted-foreground">{f.file_path}</span>
+                            ) : (
+                              <Link
+                                to={`/projects/${projectId}/explore?path=${encodeURIComponent(f.file_path)}`}
+                                className="hover:underline hover:text-primary"
+                              >
+                                {f.file_path}
+                              </Link>
+                            )
                           ) : '-'}
                         </td>
                       </tr>
