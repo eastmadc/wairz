@@ -21,6 +21,10 @@ class Settings(BaseSettings):
     ghidra_path: str = "/opt/ghidra"
     ghidra_scripts_path: str = "/opt/ghidra_scripts"
     ghidra_timeout: int = 300
+    jadx_path: str = "/opt/jadx/bin/jadx"
+    jadx_timeout: int = 300
+    jadx_max_memory: str = "4g"
+    jadx_threads: int = 4
     nvd_api_key: str = ""
     emulation_timeout_minutes: int = 30
     emulation_max_sessions: int = 3

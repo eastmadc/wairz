@@ -34,11 +34,15 @@ dependencies = [
     "bandit>=1.7",
     "clamd>=1.0.2",
     "androguard>=4.1.2",
+    "mobsfscan>=0.3.0",
+    "semgrep>=1.80.0",
+    "setuptools>=70.0",
 ]
 
 [project.scripts]
 wairz-mcp = "app.mcp_server:main"
 wairz-scan = "app.cli.scan:main"
+wairz-compare-apk = "app.cli.compare_apk:main"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

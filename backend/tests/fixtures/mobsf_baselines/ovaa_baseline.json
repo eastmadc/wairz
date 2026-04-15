@@ -1,0 +1,123 @@
+{
+  "_meta": {
+    "apk_name": "OVAA (Oversecured Vulnerable Android App)",
+    "package": "oversecured.ovaa",
+    "version": "1.0",
+    "source": "https://github.com/nickcano/Oversecured-Vulnerable-Android-App",
+    "min_sdk": 23,
+    "target_sdk": 29,
+    "generated_by": "extract_mobsf_baselines.py",
+    "description": "MobSF manifest-level baseline findings for OVAA. Purposely vulnerable Android app by Oversecured for security scanner testing."
+  },
+  "mobsf_findings": [
+    {
+      "issue_title": "Application Data can be Backed Up",
+      "severity": "medium",
+      "category": "manifest",
+      "wairz_check_id": "MANIFEST-002",
+      "mobsf_rule": "android_allowbackup",
+      "cwe_ids": ["CWE-921"],
+      "description": "android:allowBackup=true allows application data to be backed up via adb.",
+      "evidence_pattern": "android:allowBackup=\"true\""
+    },
+    {
+      "issue_title": "Clear Text Traffic Is Enabled For App",
+      "severity": "high",
+      "category": "manifest",
+      "wairz_check_id": "MANIFEST-003",
+      "mobsf_rule": "android_cleartext",
+      "cwe_ids": ["CWE-319"],
+      "description": "android:usesCleartextTraffic=true explicitly enables cleartext HTTP traffic.",
+      "evidence_pattern": "android:usesCleartextTraffic=\"true\""
+    },
+    {
+      "issue_title": "App can be installed on older vulnerable Android versions",
+      "severity": "low",
+      "category": "manifest",
+      "wairz_check_id": "MANIFEST-005",
+      "mobsf_rule": "android_minsdk",
+      "cwe_ids": ["CWE-1104"],
+      "description": "minSdkVersion 23 (Android 6.0 Marshmallow) is outdated (< API 24/Nougat) but not critically so (>= API 19).",
+      "evidence_pattern": "minSdkVersion=23"
+    },
+    {
+      "issue_title": "Exported Components Without Permission Protection",
+      "severity": "high",
+      "category": "manifest",
+      "wairz_check_id": "MANIFEST-006",
+      "mobsf_rule": "android_exported",
+      "cwe_ids": ["CWE-926"],
+      "description": "Multiple components exported without permission protection: 9 activities, 2 content providers, and 1 broadcast receiver all exported with android:exported=true and no permission requirement.",
+      "evidence_pattern": "9 exported activities, 2 exported providers, 1 exported receiver"
+    },
+    {
+      "issue_title": "Task Hijacking / StrandHogg 2.0 Vulnerability",
+      "severity": "high",
+      "category": "manifest",
+      "wairz_check_id": "MANIFEST-009",
+      "mobsf_rule": "android_task_hijacking",
+      "cwe_ids": ["CWE-1021"],
+      "description": "Activity with singleTask launchMode is vulnerable to StrandHogg 2.0 task hijacking attacks. TheftActivity uses launchMode=singleTask.",
+      "evidence_pattern": "launchMode=\"singleTask\" on TheftActivity"
+    },
+    {
+      "issue_title": "Browsable Activities / Deep Link Abuse",
+      "severity": "medium",
+      "category": "manifest",
+      "wairz_check_id": "MANIFEST-010",
+      "mobsf_rule": "android_browsable",
+      "cwe_ids": ["CWE-939"],
+      "description": "Multiple browsable activities handle deep links: DeeplinkActivity handles custom scheme oversecured://, WebViewActivity handles https://oversecured.com without autoVerify.",
+      "evidence_pattern": "oversecured:// custom scheme, https://oversecured.com without autoVerify"
+    },
+    {
+      "issue_title": "Browsable Activities / Custom URL Scheme",
+      "severity": "low",
+      "category": "manifest",
+      "wairz_check_id": "MANIFEST-010",
+      "mobsf_rule": "android_browsable",
+      "cwe_ids": ["CWE-939"],
+      "description": "DeeplinkActivity uses a custom URL scheme (oversecured://) which cannot be verified via Digital Asset Links and can be registered by any app.",
+      "evidence_pattern": "scheme=oversecured, host=ovaa"
+    }
+  ],
+  "expected_absent": [
+    {
+      "wairz_check_id": "MANIFEST-001",
+      "reason": "OVAA is a release build (android:debuggable not set)"
+    },
+    {
+      "wairz_check_id": "MANIFEST-004",
+      "reason": "No android:testOnly flag"
+    },
+    {
+      "wairz_check_id": "MANIFEST-007",
+      "reason": "No custom <permission> declarations"
+    },
+    {
+      "wairz_check_id": "MANIFEST-008",
+      "reason": "No non-default taskAffinity (no StrandHogg v1)"
+    },
+    {
+      "wairz_check_id": "MANIFEST-011",
+      "reason": "No networkSecurityConfig referenced"
+    },
+    {
+      "wairz_check_id": "MANIFEST-018",
+      "reason": "No sharedUserId declared"
+    }
+  ],
+  "summary": {
+    "total_findings": 7,
+    "by_severity": {
+      "critical": 0,
+      "high": 3,
+      "medium": 2,
+      "low": 2,
+      "info": 0
+    },
+    "false_positive_tolerance": 2,
+    "max_acceptable_total": 10,
+    "notes": "MobSF baseline for OVAA produces 6-7 manifest findings. MANIFEST-010 may produce 1-2 sub-findings (custom scheme vs unverified https). All findings are true positives since OVAA is intentionally vulnerable."
+  }
+}

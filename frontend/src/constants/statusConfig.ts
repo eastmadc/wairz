@@ -10,6 +10,9 @@ import {
   Search,
   Bug,
   Shield,
+  Smartphone,
+  Code,
+  FileSearch,
 } from 'lucide-react'
 import type { Severity, FindingStatus, FindingSource } from '@/types'
 
@@ -71,4 +74,7 @@ export const FINDING_SOURCE_CONFIG: Record<FindingSource, FindingSourceConfigEnt
   yara_scan: { icon: Shield, label: 'YARA Scan', className: 'border-amber-500/50 text-amber-600 dark:text-amber-400' },
   abusech_scan: { icon: Shield, label: 'abuse.ch', className: 'border-rose-500/50 text-rose-600 dark:text-rose-400' },
   known_good_scan: { icon: Shield, label: 'Known Good', className: 'border-green-500/50 text-green-600 dark:text-green-400' },
+  'apk-manifest-scan': { icon: Smartphone, label: 'APK Manifest', className: 'border-indigo-500/50 text-indigo-600 dark:text-indigo-400' },
+  'apk-bytecode-scan': { icon: Code, label: 'APK Bytecode', className: 'border-violet-500/50 text-violet-600 dark:text-violet-400' },
+  'apk-mobsfscan': { icon: FileSearch, label: 'APK SAST', className: 'border-fuchsia-500/50 text-fuchsia-600 dark:text-fuchsia-400' },
 }

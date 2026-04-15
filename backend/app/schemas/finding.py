@@ -13,6 +13,12 @@ class Severity(str, Enum):
     info = "info"
 
 
+class Confidence(str, Enum):
+    high = "high"
+    medium = "medium"
+    low = "low"
+
+
 class FindingStatus(str, Enum):
     open = "open"
     confirmed = "confirmed"
@@ -29,6 +35,7 @@ class FindingCreate(BaseModel):
     line_number: int | None = None
     cve_ids: list[str] | None = None
     cwe_ids: list[str] | None = None
+    confidence: Confidence | None = None
     conversation_id: uuid.UUID | None = None
     firmware_id: uuid.UUID | None = None
     source: str = "manual"
@@ -44,6 +51,7 @@ class FindingUpdate(BaseModel):
     line_number: int | None = None
     cve_ids: list[str] | None = None
     cwe_ids: list[str] | None = None
+    confidence: Confidence | None = None
     status: FindingStatus | None = None
     source: str | None = None
 
@@ -63,6 +71,7 @@ class FindingResponse(BaseModel):
     line_number: int | None
     cve_ids: list[str] | None
     cwe_ids: list[str] | None
+    confidence: str | None
     status: str
     source: str
     component_id: uuid.UUID | None

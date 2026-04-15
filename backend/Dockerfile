@@ -159,6 +159,15 @@ RUN ARCH=$(uname -m) && \
         echo "x86_64 detected — using pre-built Ghidra natives"; \
     fi
 
+# Install JADX for Android APK/DEX decompilation (uses JDK 21 installed above)
+ARG JADX_VERSION=1.5.1
+RUN curl -sSfL "https://github.com/skylot/jadx/releases/download/v${JADX_VERSION}/jadx-${JADX_VERSION}.zip" \
+        -o /tmp/jadx.zip \
+    && unzip -q /tmp/jadx.zip -d /opt/jadx \
+    && chmod +x /opt/jadx/bin/jadx /opt/jadx/bin/jadx-gui \
+    && rm /tmp/jadx.zip \
+    && /opt/jadx/bin/jadx --version
+
 # Install Grype for local vulnerability scanning (multi-arch)
 ARG GRYPE_VERSION=0.87.0
 RUN ARCH=$(uname -m) && \
@@ -260,6 +269,13 @@ RUN rm -rf .venv \
     && uv venv --python /usr/local/bin/python3.12 .venv \
     && uv sync --no-dev --no-editable 2>/dev/null \
     || uv sync --no-editable
+# Install setuptools<70 into venv for pkg_resources (needed by semgrep's
+# opentelemetry dependency chain). uv venvs don't include setuptools by
+# default. Must use <70 because setuptools 70+ removed pkg_resources as
+# a bundled module.
+RUN .venv/bin/python -m ensurepip --default-pip 2>/dev/null; \
+    .venv/bin/python -m pip install --no-cache-dir "setuptools<70" 2>/dev/null \
+    || echo "WARN: setuptools install failed — SAST scanning may not work"
 
 # Install Qiling system-wide (separate from uv venv to avoid dep conflicts).
 # keystone-engine needs source build on ARM64. Qiling runs via subprocess
@@ -279,7 +295,7 @@ COPY --from=kernels . /opt/kernels/
 
 # Create data and Ghidra project directories
 RUN mkdir -p /data/firmware /tmp/ghidra_projects \
-    && chown -R wairz:wairz /data /app /tmp/ghidra_projects /opt/ghidra /opt/kernels \
+    && chown -R wairz:wairz /data /app /tmp/ghidra_projects /opt/ghidra /opt/jadx /opt/kernels \
     && ([ -d /opt/qiling-rootfs ] && chown -R wairz:wairz /opt/qiling-rootfs || true) \
     && ([ -d /opt/cpu_rec ] && chown -R wairz:wairz /opt/cpu_rec || true)
 

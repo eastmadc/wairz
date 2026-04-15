@@ -1,0 +1,36 @@
+{
+  "_meta": {
+    "apk_name": "InsecureBankv2",
+    "package": "com.android.insecurebankv2",
+    "phase": "bytecode",
+    "source": "https://github.com/dineshshetty/Android-InsecureBankv2",
+    "description": "Ground-truth bytecode-level findings for InsecureBankv2 APK."
+  },
+  "true_positive_pattern_ids": [
+    "crypto_ecb_mode",
+    "hardcoded_base64",
+    "hardcoded_sharedprefs",
+    "insecure_network_http_urls",
+    "logging_sensitive_data",
+    "insecure_storage_world_readable",
+    "external_storage_secrets",
+    "insecure_random",
+    "runtime_exec"
+  ],
+  "expected_absent_pattern_ids": [
+    {
+      "pattern_id": "insecure_network_sslv3",
+      "reason": "InsecureBankv2 disables cert validation but does not force SSLv3"
+    },
+    {
+      "pattern_id": "webview_debug_mode",
+      "reason": "No WebView.setWebContentsDebuggingEnabled(true) call"
+    }
+  ],
+  "summary": {
+    "total_true_positives": 9,
+    "false_positive_tolerance": 3,
+    "max_fp_rate": 0.20,
+    "notes": "InsecureBankv2 has broad insecure API usage across crypto, storage, network, and logging."
+  }
+}

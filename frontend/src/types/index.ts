@@ -155,8 +155,9 @@ export interface BinaryInfoResponse {
 // ── Finding types ──
 
 export type Severity = 'critical' | 'high' | 'medium' | 'low' | 'info'
+export type Confidence = 'high' | 'medium' | 'low'
 export type FindingStatus = 'open' | 'confirmed' | 'false_positive' | 'fixed'
-export type FindingSource = 'manual' | 'ai_discovered' | 'sbom_scan' | 'fuzzing' | 'security_review' | 'security_audit' | 'yara_scan' | 'abusech_scan' | 'known_good_scan'
+export type FindingSource = 'manual' | 'ai_discovered' | 'sbom_scan' | 'fuzzing' | 'security_review' | 'security_audit' | 'yara_scan' | 'abusech_scan' | 'known_good_scan' | 'apk-manifest-scan' | 'apk-bytecode-scan' | 'apk-mobsfscan'
 
 export interface Finding {
   id: string
@@ -171,6 +172,7 @@ export interface Finding {
   line_number: number | null
   cve_ids: string[] | null
   cwe_ids: string[] | null
+  confidence: Confidence | null
   status: FindingStatus
   source: FindingSource
   component_id: string | null
@@ -187,6 +189,7 @@ export interface FindingCreate {
   line_number?: number
   cve_ids?: string[]
   cwe_ids?: string[]
+  confidence?: Confidence
   conversation_id?: string
   source?: FindingSource
 }
@@ -200,6 +203,7 @@ export interface FindingUpdate {
   line_number?: number
   cve_ids?: string[]
   cwe_ids?: string[]
+  confidence?: Confidence
   status?: FindingStatus
   source?: FindingSource
 }
@@ -698,3 +702,25 @@ export interface DecompilationDiff {
   lines_removed: number
   error: string | null
 }
+
+// ── APK Security Scan types ──
+
+export type {
+  FirmwareContextResponse,
+  ManifestFindingResponse,
+  ManifestScanSummary,
+  ConfidenceSummary,
+  ManifestScanResponse,
+  BytecodeFindingLocation,
+  BytecodeFindingResponse,
+  BytecodeScanSummary,
+  BytecodeScanResponse,
+  SastFindingResponse,
+  SastScanTimingResponse,
+  SastScanSummary,
+  SastScanResponse,
+  ApkFullScanResult,
+  ApkScanOptions,
+  ApkScanSeverity,
+  ApkScanConfidence,
+} from './apkScan'

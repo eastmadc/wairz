@@ -1,5 +1,7 @@
 from app.ai.tool_registry import ToolRegistry
 from app.ai.tools.android import register_android_tools
+from app.ai.tools.android_bytecode import register_android_bytecode_tools
+from app.ai.tools.android_sast import register_android_sast_tools
 from app.ai.tools.attack_surface import register_attack_surface_tools
 from app.ai.tools.cwe_checker import register_cwe_checker_tools
 from app.ai.tools.binary import register_binary_tools
@@ -29,6 +31,8 @@ def create_tool_registry() -> ToolRegistry:
     register_document_tools(registry)
     register_sbom_tools(registry)
     register_android_tools(registry)
+    register_android_bytecode_tools(registry)
+    register_android_sast_tools(registry)
     register_emulation_tools(registry)
     register_fuzzing_tools(registry)
     register_comparison_tools(registry)

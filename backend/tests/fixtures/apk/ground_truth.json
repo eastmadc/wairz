@@ -1,0 +1,1097 @@
+{
+  "$schema": "ground_truth_schema",
+  "version": "1.0.0",
+  "description": "Ground-truth annotations for APK test fixtures. Documents exact security findings each fixture should and should NOT trigger, keyed by filename. Used for regression testing, false-positive tracking, and MobSF baseline comparison.",
+  "generated": "2026-04-14",
+  "check_definitions": {
+    "MANIFEST-001": {
+      "title": "Application is debuggable",
+      "cwe": "CWE-489",
+      "base_severity": "high",
+      "description": "android:debuggable=true allows debugger attachment, memory inspection, runtime modification"
+    },
+    "MANIFEST-002": {
+      "title": "Application allows backup",
+      "cwe": "CWE-921",
+      "base_severity": "medium",
+      "description": "android:allowBackup=true (or default for targetSdk<31) allows adb backup extraction"
+    },
+    "MANIFEST-003": {
+      "title": "Permits cleartext HTTP traffic",
+      "cwe": "CWE-319",
+      "base_severity": "high",
+      "description": "android:usesCleartextTraffic=true or default true for targetSdk<28"
+    },
+    "MANIFEST-004": {
+      "title": "Test-only application",
+      "cwe": "CWE-489",
+      "base_severity": "high",
+      "description": "android:testOnly=true relaxes security constraints"
+    },
+    "MANIFEST-005": {
+      "title": "Outdated minSdkVersion",
+      "cwe": "CWE-1104",
+      "base_severity": "varies",
+      "description": "minSdk<19 = high (no TLS 1.2), 19-23 = low (no NSC enforcement), >=24 = no finding"
+    },
+    "MANIFEST-006": {
+      "title": "Exported components without permission",
+      "cwe": "CWE-926",
+      "base_severity": "varies",
+      "description": ">=5 unprotected = high, 2-4 = medium, 1 = low"
+    },
+    "MANIFEST-007": {
+      "title": "Custom permissions with weak protectionLevel",
+      "cwe": "CWE-732",
+      "base_severity": "varies",
+      "description": ">=3 weak permissions = high, 1-2 = medium"
+    },
+    "MANIFEST-008": {
+      "title": "StrandHogg 1.0 task hijacking",
+      "cwe": "CWE-1021",
+      "base_severity": "high",
+      "description": "Non-default taskAffinity + allowTaskReparenting enables task hijacking"
+    },
+    "MANIFEST-009": {
+      "title": "StrandHogg 2.0 task hijacking",
+      "cwe": "CWE-1021",
+      "base_severity": "varies",
+      "description": "Exported singleTask/singleInstance activity; high if minSdk<29, low if >=29"
+    },
+    "MANIFEST-010": {
+      "title": "Browsable intents / App Links",
+      "cwe": "CWE-939",
+      "base_severity": "varies",
+      "description": "Custom schemes = low, HTTP/HTTPS without autoVerify = medium"
+    },
+    "MANIFEST-011": {
+      "title": "Network Security Config issues",
+      "cwe": "CWE-319",
+      "base_severity": "varies",
+      "description": "Cleartext permitted (global=high, domain=medium), user CAs trusted (high), debug overrides (info)"
+    },
+    "MANIFEST-012": {
+      "title": "Task reparenting hijacking",
+      "cwe": "CWE-926",
+      "base_severity": "medium",
+      "description": "android:allowTaskReparenting=true on application or activity"
+    },
+    "MANIFEST-013": {
+      "title": "Implicit intent hijacking",
+      "cwe": "CWE-927",
+      "base_severity": "medium",
+      "description": "Exported services/receivers with intent-filters but no permission protection"
+    },
+    "MANIFEST-014": {
+      "title": "Signing scheme version",
+      "cwe": "CWE-347",
+      "base_severity": "varies",
+      "description": "Not signed = critical, v1-only = medium, lacks v3 = info"
+    },
+    "MANIFEST-015": {
+      "title": "Custom backup agent",
+      "cwe": "CWE-312",
+      "base_severity": "varies",
+      "description": "backupAgent with allowBackup=true = medium, with allowBackup=false = info"
+    },
+    "MANIFEST-016": {
+      "title": "High-risk dangerous permissions",
+      "cwe": "CWE-284",
+      "base_severity": "varies",
+      "description": "Grouped by category; SMS/Phone/Surveillance = high, Location/PII/Storage = medium"
+    },
+    "MANIFEST-017": {
+      "title": "Intent scheme hijacking (data URIs)",
+      "cwe": "CWE-94",
+      "base_severity": "varies",
+      "description": "Intent filters accepting file://, content://, javascript://, intent:// schemes"
+    },
+    "MANIFEST-018": {
+      "title": "Shared User ID",
+      "cwe": "CWE-250",
+      "base_severity": "varies",
+      "description": "android:sharedUserId set; system UIDs = info, custom UIDs = medium"
+    }
+  },
+  "fixtures": {
+    "debuggable.apk": {
+      "package": "com.test.debuggable",
+      "min_sdk": 28,
+      "target_sdk": 33,
+      "category": "single-check-vulnerable",
+      "description": "APK with android:debuggable=true; all other attributes are secure",
+      "expected_findings": {
+        "MANIFEST-001": {
+          "should_trigger": true,
+          "severity": "high",
+          "confidence": "high",
+          "cwe": "CWE-489",
+          "evidence_contains": "debuggable=\"true\"",
+          "notes": "Explicitly set debuggable=true"
+        }
+      },
+      "must_not_trigger": [
+        "MANIFEST-002", "MANIFEST-003", "MANIFEST-004", "MANIFEST-005",
+        "MANIFEST-006", "MANIFEST-007", "MANIFEST-008", "MANIFEST-009",
+        "MANIFEST-010", "MANIFEST-011", "MANIFEST-012", "MANIFEST-013",
+        "MANIFEST-015", "MANIFEST-016", "MANIFEST-017", "MANIFEST-018"
+      ],
+      "notes": "allowBackup=false, usesCleartextTraffic=false, minSdk=28, targetSdk=33 — all safe"
+    },
+    "allow_backup.apk": {
+      "package": "com.test.allowbackup",
+      "min_sdk": 28,
+      "target_sdk": 33,
+      "category": "single-check-vulnerable",
+      "description": "APK with android:allowBackup=true explicitly set",
+      "expected_findings": {
+        "MANIFEST-002": {
+          "should_trigger": true,
+          "severity": "medium",
+          "confidence": "high",
+          "cwe": "CWE-921",
+          "evidence_contains": "allowBackup=\"true\"",
+          "notes": "Explicit allowBackup=true with modern targetSdk"
+        }
+      },
+      "must_not_trigger": [
+        "MANIFEST-001", "MANIFEST-003", "MANIFEST-004", "MANIFEST-005",
+        "MANIFEST-006", "MANIFEST-007", "MANIFEST-008", "MANIFEST-009",
+        "MANIFEST-010", "MANIFEST-011", "MANIFEST-012", "MANIFEST-013",
+        "MANIFEST-015", "MANIFEST-016", "MANIFEST-017", "MANIFEST-018"
+      ],
+      "notes": "No backupAgent set, so MANIFEST-015 should not trigger"
+    },
+    "cleartext_traffic.apk": {
+      "package": "com.test.cleartext",
+      "min_sdk": 28,
+      "target_sdk": 33,
+      "category": "single-check-vulnerable",
+      "description": "APK with android:usesCleartextTraffic=true",
+      "expected_findings": {
+        "MANIFEST-003": {
+          "should_trigger": true,
+          "severity": "high",
+          "confidence": "high",
+          "cwe": "CWE-319",
+          "evidence_contains": "usesCleartextTraffic=\"true\"",
+          "notes": "Explicitly set usesCleartextTraffic=true"
+        }
+      },
+      "must_not_trigger": [
+        "MANIFEST-001", "MANIFEST-002", "MANIFEST-004", "MANIFEST-005",
+        "MANIFEST-006", "MANIFEST-007", "MANIFEST-008", "MANIFEST-009",
+        "MANIFEST-010", "MANIFEST-011", "MANIFEST-012", "MANIFEST-013",
+        "MANIFEST-015", "MANIFEST-016", "MANIFEST-017", "MANIFEST-018"
+      ],
+      "notes": "allowBackup=false prevents MANIFEST-002"
+    },
+    "test_only.apk": {
+      "package": "com.test.testonly",
+      "min_sdk": 28,
+      "target_sdk": 33,
+      "category": "single-check-vulnerable",
+      "description": "APK with android:testOnly=true",
+      "expected_findings": {
+        "MANIFEST-004": {
+          "should_trigger": true,
+          "severity": "high",
+          "confidence": "high",
+          "cwe": "CWE-489",
+          "evidence_contains": "testOnly=\"true\"",
+          "notes": "Test-only APKs should never ship in production"
+        }
+      },
+      "must_not_trigger": [
+        "MANIFEST-001", "MANIFEST-002", "MANIFEST-003", "MANIFEST-005",
+        "MANIFEST-006", "MANIFEST-007", "MANIFEST-008", "MANIFEST-009",
+        "MANIFEST-010", "MANIFEST-011", "MANIFEST-012", "MANIFEST-013",
+        "MANIFEST-015", "MANIFEST-016", "MANIFEST-017", "MANIFEST-018"
+      ],
+      "notes": "All other attributes set to safe values"
+    },
+    "min_sdk_outdated.apk": {
+      "package": "com.test.minsdk",
+      "min_sdk": 15,
+      "target_sdk": 33,
+      "category": "single-check-vulnerable",
+      "description": "APK with critically outdated minSdkVersion=15 (< API 19, no TLS 1.2)",
+      "expected_findings": {
+        "MANIFEST-005": {
+          "should_trigger": true,
+          "severity": "high",
+          "confidence": "high",
+          "cwe": "CWE-1104",
+          "evidence_contains": "minSdkVersion",
+          "notes": "minSdk=15 < 19 threshold = critically outdated (high severity)"
+        }
+      },
+      "must_not_trigger": [
+        "MANIFEST-001", "MANIFEST-002", "MANIFEST-003", "MANIFEST-004",
+        "MANIFEST-006", "MANIFEST-007", "MANIFEST-008", "MANIFEST-009",
+        "MANIFEST-010", "MANIFEST-011", "MANIFEST-012", "MANIFEST-013",
+        "MANIFEST-015", "MANIFEST-016", "MANIFEST-017", "MANIFEST-018"
+      ],
+      "notes": "targetSdk=33 is modern so cleartext defaults are safe; allowBackup=false explicit"
+    },
+    "exported_components.apk": {
+      "package": "com.test.exported",
+      "min_sdk": 28,
+      "target_sdk": 33,
+      "category": "single-check-vulnerable",
+      "description": "APK with 8 exported components (5 activities, 1 service, 1 receiver, 1 provider) without permission protection",
+      "expected_findings": {
+        "MANIFEST-006": {
+          "should_trigger": true,
+          "severity": "high",
+          "confidence": "high",
+          "cwe": "CWE-926",
+          "evidence_contains": "exported",
+          "min_unprotected_count": 8,
+          "notes": "8 unprotected exports >= 5 threshold = high severity. Launcher activity excluded from count."
+        }
+      },
+      "must_not_trigger": [
+        "MANIFEST-001", "MANIFEST-002", "MANIFEST-003", "MANIFEST-004",
+        "MANIFEST-005", "MANIFEST-007", "MANIFEST-008", "MANIFEST-009",
+        "MANIFEST-010", "MANIFEST-011", "MANIFEST-012", "MANIFEST-013",
+        "MANIFEST-015", "MANIFEST-016", "MANIFEST-017", "MANIFEST-018"
+      ],
+      "notes": "Components are explicitly exported=true (targetSdk>=31 requires explicit export)"
+    },
+    "weak_permissions.apk": {
+      "package": "com.test.weakperms",
+      "min_sdk": 28,
+      "target_sdk": 33,
+      "category": "single-check-vulnerable",
+      "description": "APK with 2 custom permissions using weak protectionLevel (normal + dangerous)",
+      "expected_findings": {
+        "MANIFEST-007": {
+          "should_trigger": true,
+          "severity": "medium",
+          "confidence": "high",
+          "cwe": "CWE-732",
+          "evidence_contains": "protectionLevel",
+          "notes": "2 weak permissions (1-2 range) = medium severity"
+        }
+      },
+      "must_not_trigger": [
+        "MANIFEST-001", "MANIFEST-002", "MANIFEST-003", "MANIFEST-004",
+        "MANIFEST-005", "MANIFEST-006", "MANIFEST-008", "MANIFEST-009",
+        "MANIFEST-010", "MANIFEST-011", "MANIFEST-012", "MANIFEST-013",
+        "MANIFEST-015", "MANIFEST-016", "MANIFEST-017", "MANIFEST-018"
+      ],
+      "notes": "Custom perms are declared but not used to protect any component"
+    },
+    "strandhogg_v1.apk": {
+      "package": "com.test.strandhogg1",
+      "min_sdk": 28,
+      "target_sdk": 33,
+      "category": "single-check-vulnerable",
+      "description": "APK with StrandHogg v1 task hijacking pattern: non-default taskAffinity + allowTaskReparenting",
+      "expected_findings": {
+        "MANIFEST-008": {
+          "should_trigger": true,
+          "severity": "high",
+          "confidence": "high",
+          "cwe": "CWE-1021",
+          "evidence_contains": "taskAffinity",
+          "notes": "HijackActivity has taskAffinity=com.victim.app + allowTaskReparenting=true"
+        }
+      },
+      "must_not_trigger": [
+        "MANIFEST-001", "MANIFEST-002", "MANIFEST-003", "MANIFEST-004",
+        "MANIFEST-005", "MANIFEST-007", "MANIFEST-010", "MANIFEST-011",
+        "MANIFEST-015", "MANIFEST-016", "MANIFEST-017", "MANIFEST-018"
+      ],
+      "may_also_trigger": {
+        "MANIFEST-006": "2 exported activities (HijackActivity, TaskHijack2) may trigger low/medium export finding",
+        "MANIFEST-009": "TaskHijack2 has singleTask launch mode and is exported",
+        "MANIFEST-012": "HijackActivity has allowTaskReparenting=true"
+      },
+      "notes": "Primary check is MANIFEST-008; secondary findings from exports and task reparenting are expected side effects"
+    },
+    "strandhogg_v2.apk": {
+      "package": "com.test.strandhogg2",
+      "min_sdk": 26,
+      "target_sdk": 33,
+      "category": "single-check-vulnerable",
+      "description": "APK with StrandHogg v2 pattern: exported singleTask and singleInstance activities",
+      "expected_findings": {
+        "MANIFEST-009": {
+          "should_trigger": true,
+          "severity": "high",
+          "confidence": "high",
+          "cwe": "CWE-1021",
+          "evidence_contains": "singleTask",
+          "notes": "minSdk=26 < 29 threshold = high severity. Two vulnerable activities: VulnActivity1 (singleTask), VulnActivity2 (singleInstance)"
+        }
+      },
+      "must_not_trigger": [
+        "MANIFEST-001", "MANIFEST-002", "MANIFEST-003", "MANIFEST-004",
+        "MANIFEST-007", "MANIFEST-008", "MANIFEST-010", "MANIFEST-011",
+        "MANIFEST-012", "MANIFEST-015", "MANIFEST-016", "MANIFEST-017",
+        "MANIFEST-018"
+      ],
+      "may_also_trigger": {
+        "MANIFEST-005": "minSdk=26 is >= 24 threshold so should NOT trigger, but verify",
+        "MANIFEST-006": "2 exported activities may trigger low export finding"
+      },
+      "notes": "Primary check is MANIFEST-009; minSdk=26 is above the 24 threshold so MANIFEST-005 should not fire"
+    },
+    "app_links.apk": {
+      "package": "com.test.applinks",
+      "min_sdk": 28,
+      "target_sdk": 33,
+      "category": "single-check-vulnerable",
+      "description": "APK with browsable intents: custom scheme (myapp://) and HTTPS without autoVerify",
+      "expected_findings": {
+        "MANIFEST-010": {
+          "should_trigger": true,
+          "severity": "medium",
+          "confidence": "high",
+          "cwe": "CWE-939",
+          "finding_count": 2,
+          "sub_findings": [
+            {
+              "description": "Custom scheme deep link (myapp://open) - no verification possible",
+              "severity": "low"
+            },
+            {
+              "description": "HTTPS app link without autoVerify (https://example.com)",
+              "severity": "medium"
+            }
+          ],
+          "notes": "Two sub-findings: custom scheme = low, unverified HTTPS = medium"
+        }
+      },
+      "must_not_trigger": [
+        "MANIFEST-001", "MANIFEST-002", "MANIFEST-003", "MANIFEST-004",
+        "MANIFEST-005", "MANIFEST-007", "MANIFEST-008", "MANIFEST-009",
+        "MANIFEST-011", "MANIFEST-012", "MANIFEST-013", "MANIFEST-015",
+        "MANIFEST-016", "MANIFEST-017", "MANIFEST-018"
+      ],
+      "may_also_trigger": {
+        "MANIFEST-006": "2 exported activities (DeepLinkActivity, WebLinkActivity) may trigger low export finding"
+      },
+      "notes": "MANIFEST-017 should NOT trigger because schemes are myapp:// and https://, not intent:// or file://"
+    },
+    "network_security_config.apk": {
+      "package": "com.test.netsec",
+      "min_sdk": 28,
+      "target_sdk": 33,
+      "category": "single-check-vulnerable",
+      "description": "APK with insecure network security config: global cleartext, user CA trust, debug overrides, wildcard domain config",
+      "expected_findings": {
+        "MANIFEST-011": {
+          "should_trigger": true,
+          "severity": "high",
+          "confidence": "high",
+          "cwe": "CWE-319",
+          "sub_findings": [
+            {
+              "description": "Global cleartext traffic permitted in base-config",
+              "severity": "high",
+              "cwe": "CWE-319"
+            },
+            {
+              "description": "User-installed CA certificates trusted in base-config",
+              "severity": "high",
+              "cwe": "CWE-295"
+            },
+            {
+              "description": "Debug overrides present",
+              "severity": "info",
+              "cwe": "CWE-489"
+            },
+            {
+              "description": "Domain-specific cleartext for *.example.com with includeSubdomains",
+              "severity": "medium",
+              "cwe": "CWE-319"
+            }
+          ],
+          "notes": "Multiple NSC sub-findings; highest severity (high) dominates"
+        }
+      },
+      "must_not_trigger": [
+        "MANIFEST-001", "MANIFEST-002", "MANIFEST-004", "MANIFEST-005",
+        "MANIFEST-006", "MANIFEST-007", "MANIFEST-008", "MANIFEST-009",
+        "MANIFEST-010", "MANIFEST-012", "MANIFEST-013", "MANIFEST-015",
+        "MANIFEST-016", "MANIFEST-017", "MANIFEST-018"
+      ],
+      "notes": "usesCleartextTraffic=false in manifest, but NSC overrides it; MANIFEST-003 depends on manifest attribute only"
+    },
+    "task_reparenting.apk": {
+      "package": "com.test.reparenting",
+      "min_sdk": 28,
+      "target_sdk": 33,
+      "category": "single-check-vulnerable",
+      "description": "APK with android:allowTaskReparenting=true on application element",
+      "expected_findings": {
+        "MANIFEST-012": {
+          "should_trigger": true,
+          "severity": "medium",
+          "confidence": "high",
+          "cwe": "CWE-926",
+          "evidence_contains": "allowTaskReparenting=\"true\"",
+          "notes": "Application-level task reparenting allows activity stack manipulation"
+        }
+      },
+      "must_not_trigger": [
+        "MANIFEST-001", "MANIFEST-002", "MANIFEST-003", "MANIFEST-004",
+        "MANIFEST-005", "MANIFEST-006", "MANIFEST-007", "MANIFEST-009",
+        "MANIFEST-010", "MANIFEST-011", "MANIFEST-013", "MANIFEST-015",
+        "MANIFEST-016", "MANIFEST-017", "MANIFEST-018"
+      ],
+      "notes": "MANIFEST-008 requires non-default taskAffinity in addition to reparenting; this only has reparenting"
+    },
+    "implicit_intent.apk": {
+      "package": "com.test.implicitintent",
+      "min_sdk": 28,
+      "target_sdk": 33,
+      "category": "single-check-vulnerable",
+      "description": "APK with exported service and receiver using intent-filters without permission protection",
+      "expected_findings": {
+        "MANIFEST-013": {
+          "should_trigger": true,
+          "severity": "medium",
+          "confidence": "high",
+          "cwe": "CWE-927",
+          "evidence_contains": "intent-filter",
+          "notes": "VulnService and VulnReceiver are exported with intent-filters but no permission"
+        }
+      },
+      "must_not_trigger": [
+        "MANIFEST-001", "MANIFEST-002", "MANIFEST-003", "MANIFEST-004",
+        "MANIFEST-005", "MANIFEST-007", "MANIFEST-008", "MANIFEST-009",
+        "MANIFEST-010", "MANIFEST-011", "MANIFEST-012", "MANIFEST-015",
+        "MANIFEST-016", "MANIFEST-017", "MANIFEST-018"
+      ],
+      "may_also_trigger": {
+        "MANIFEST-006": "2 exported components (VulnService, VulnReceiver) may trigger low export finding"
+      },
+      "notes": "MANIFEST-013 specifically targets services/receivers (not activities) with implicit intents"
+    },
+    "signing_scheme.apk": {
+      "package": "com.test.signing",
+      "min_sdk": 28,
+      "target_sdk": 33,
+      "category": "single-check-vulnerable",
+      "description": "APK signed with v1 only (JAR signing), missing v2/v3",
+      "expected_findings": {
+        "MANIFEST-014": {
+          "should_trigger": true,
+          "severity": "medium",
+          "confidence": "high",
+          "cwe": "CWE-347",
+          "evidence_contains": "v1",
+          "notes": "V1-only signing is vulnerable to zipfile modification attacks"
+        }
+      },
+      "must_not_trigger": [
+        "MANIFEST-001", "MANIFEST-002", "MANIFEST-003", "MANIFEST-004",
+        "MANIFEST-005", "MANIFEST-006", "MANIFEST-007", "MANIFEST-008",
+        "MANIFEST-009", "MANIFEST-010", "MANIFEST-011", "MANIFEST-012",
+        "MANIFEST-013", "MANIFEST-015", "MANIFEST-016", "MANIFEST-017",
+        "MANIFEST-018"
+      ],
+      "notes": "Signing check inspects APK signature metadata, not manifest XML"
+    },
+    "backup_agent.apk": {
+      "package": "com.test.backupagent",
+      "min_sdk": 28,
+      "target_sdk": 33,
+      "category": "single-check-vulnerable",
+      "description": "APK with custom backupAgent and allowBackup=true",
+      "expected_findings": {
+        "MANIFEST-015": {
+          "should_trigger": true,
+          "severity": "medium",
+          "confidence": "high",
+          "cwe": "CWE-312",
+          "evidence_contains": "backupAgent",
+          "notes": "Custom backupAgent + allowBackup=true = medium severity (may not encrypt backup data)"
+        }
+      },
+      "must_not_trigger": [
+        "MANIFEST-001", "MANIFEST-003", "MANIFEST-004", "MANIFEST-005",
+        "MANIFEST-006", "MANIFEST-007", "MANIFEST-008", "MANIFEST-009",
+        "MANIFEST-010", "MANIFEST-011", "MANIFEST-012", "MANIFEST-013",
+        "MANIFEST-016", "MANIFEST-017", "MANIFEST-018"
+      ],
+      "may_also_trigger": {
+        "MANIFEST-002": "allowBackup=true is present, so MANIFEST-002 will also fire"
+      },
+      "notes": "MANIFEST-002 is expected as a side effect since allowBackup=true is required for the backup agent risk"
+    },
+    "dangerous_permissions.apk": {
+      "package": "com.test.dangperms",
+      "min_sdk": 28,
+      "target_sdk": 33,
+      "category": "single-check-vulnerable",
+      "description": "APK requesting 8 dangerous permissions across SMS, surveillance, location, and PII categories",
+      "expected_findings": {
+        "MANIFEST-016": {
+          "should_trigger": true,
+          "severity": "high",
+          "confidence": "high",
+          "cwe": "CWE-284",
+          "permission_categories": {
+            "sms": ["READ_SMS", "SEND_SMS"],
+            "surveillance": ["CAMERA", "RECORD_AUDIO"],
+            "location": ["ACCESS_FINE_LOCATION"],
+            "pii": ["READ_CONTACTS", "READ_CALL_LOG"],
+            "phone": ["READ_PHONE_STATE"]
+          },
+          "notes": "SMS and surveillance categories are high-risk = overall high severity"
+        }
+      },
+      "must_not_trigger": [
+        "MANIFEST-001", "MANIFEST-002", "MANIFEST-003", "MANIFEST-004",
+        "MANIFEST-005", "MANIFEST-006", "MANIFEST-007", "MANIFEST-008",
+        "MANIFEST-009", "MANIFEST-010", "MANIFEST-011", "MANIFEST-012",
+        "MANIFEST-013", "MANIFEST-015", "MANIFEST-017", "MANIFEST-018"
+      ],
+      "notes": "All 8 permissions are grouped by category; having high-risk categories (SMS, surveillance) makes overall severity high"
+    },
+    "intent_scheme.apk": {
+      "package": "com.test.intentscheme",
+      "min_sdk": 28,
+      "target_sdk": 33,
+      "category": "single-check-vulnerable",
+      "description": "APK with browsable activity handling intent:// scheme URLs",
+      "expected_findings": {
+        "MANIFEST-017": {
+          "should_trigger": true,
+          "severity": "high",
+          "confidence": "high",
+          "cwe": "CWE-94",
+          "evidence_contains": "intent",
+          "notes": "intent:// scheme on exported browsable activity enables arbitrary intent injection"
+        }
+      },
+      "must_not_trigger": [
+        "MANIFEST-001", "MANIFEST-002", "MANIFEST-003", "MANIFEST-004",
+        "MANIFEST-005", "MANIFEST-007", "MANIFEST-008", "MANIFEST-009",
+        "MANIFEST-011", "MANIFEST-012", "MANIFEST-013", "MANIFEST-015",
+        "MANIFEST-016", "MANIFEST-018"
+      ],
+      "may_also_trigger": {
+        "MANIFEST-006": "SchemeHandlerActivity is exported, may trigger low export finding",
+        "MANIFEST-010": "Activity has BROWSABLE category, may also trigger app link finding"
+      },
+      "notes": "Primary concern is intent:// scheme injection (CWE-94), not generic deep link hijacking"
+    },
+    "shared_user_id.apk": {
+      "package": "com.test.shareduid",
+      "min_sdk": 28,
+      "target_sdk": 33,
+      "category": "single-check-vulnerable",
+      "description": "APK with android:sharedUserId set to custom UID",
+      "expected_findings": {
+        "MANIFEST-018": {
+          "should_trigger": true,
+          "severity": "medium",
+          "confidence": "high",
+          "cwe": "CWE-250",
+          "evidence_contains": "sharedUserId",
+          "notes": "Custom sharedUserId (com.test.shared) = medium severity; deprecated since API 29"
+        }
+      },
+      "must_not_trigger": [
+        "MANIFEST-001", "MANIFEST-002", "MANIFEST-003", "MANIFEST-004",
+        "MANIFEST-005", "MANIFEST-006", "MANIFEST-007", "MANIFEST-008",
+        "MANIFEST-009", "MANIFEST-010", "MANIFEST-011", "MANIFEST-012",
+        "MANIFEST-013", "MANIFEST-015", "MANIFEST-016", "MANIFEST-017"
+      ],
+      "notes": "System UIDs like android.uid.system would produce info severity instead"
+    },
+    "kitchen_sink.apk": {
+      "package": "com.test.kitchensink",
+      "min_sdk": 15,
+      "target_sdk": 24,
+      "category": "composite-vulnerable",
+      "description": "APK with maximum vulnerability surface: triggers 15+ manifest checks simultaneously",
+      "expected_findings": {
+        "MANIFEST-001": {
+          "should_trigger": true,
+          "severity": "high",
+          "confidence": "high",
+          "cwe": "CWE-489",
+          "notes": "debuggable=true"
+        },
+        "MANIFEST-002": {
+          "should_trigger": true,
+          "severity": "medium",
+          "confidence": "high",
+          "cwe": "CWE-921",
+          "notes": "allowBackup=true"
+        },
+        "MANIFEST-003": {
+          "should_trigger": true,
+          "severity": "high",
+          "confidence": "high",
+          "cwe": "CWE-319",
+          "notes": "usesCleartextTraffic=true (explicit)"
+        },
+        "MANIFEST-004": {
+          "should_trigger": true,
+          "severity": "high",
+          "confidence": "high",
+          "cwe": "CWE-489",
+          "notes": "testOnly=true"
+        },
+        "MANIFEST-005": {
+          "should_trigger": true,
+          "severity": "high",
+          "confidence": "high",
+          "cwe": "CWE-1104",
+          "notes": "minSdk=15 (critically outdated, < API 19)"
+        },
+        "MANIFEST-006": {
+          "should_trigger": true,
+          "severity": "high",
+          "confidence": "high",
+          "cwe": "CWE-926",
+          "notes": "10+ exported components without permission (5 activities + StrandHogg activities + service + provider + DeepLinkActivity + IntentSchemeActivity)"
+        },
+        "MANIFEST-007": {
+          "should_trigger": true,
+          "severity": "low",
+          "confidence": "high",
+          "cwe": "CWE-732",
+          "notes": "1 weak custom permission (WEAK_PERM with protectionLevel=normal)"
+        },
+        "MANIFEST-008": {
+          "should_trigger": true,
+          "severity": "high",
+          "confidence": "high",
+          "cwe": "CWE-1021",
+          "notes": "StrandHogg1Activity has taskAffinity=com.victim.app + allowTaskReparenting=true"
+        },
+        "MANIFEST-009": {
+          "should_trigger": true,
+          "severity": "high",
+          "confidence": "high",
+          "cwe": "CWE-1021",
+          "notes": "StrandHogg2Activity has singleTask launch mode + exported + minSdk=15 < 29"
+        },
+        "MANIFEST-010": {
+          "should_trigger": true,
+          "severity": "low",
+          "confidence": "high",
+          "cwe": "CWE-939",
+          "notes": "DeepLinkActivity with kitchensink:// custom scheme"
+        },
+        "MANIFEST-013": {
+          "should_trigger": true,
+          "severity": "medium",
+          "confidence": "high",
+          "cwe": "CWE-927",
+          "notes": "ImplicitService has intent-filter without permission"
+        },
+        "MANIFEST-015": {
+          "should_trigger": true,
+          "severity": "medium",
+          "confidence": "high",
+          "cwe": "CWE-312",
+          "notes": "KitchenSinkBackupAgent + allowBackup=true"
+        },
+        "MANIFEST-016": {
+          "should_trigger": true,
+          "severity": "high",
+          "confidence": "high",
+          "cwe": "CWE-284",
+          "notes": "SMS, surveillance, location, PII, phone permissions"
+        },
+        "MANIFEST-017": {
+          "should_trigger": true,
+          "severity": "high",
+          "confidence": "high",
+          "cwe": "CWE-94",
+          "notes": "IntentSchemeActivity handles intent:// scheme"
+        },
+        "MANIFEST-018": {
+          "should_trigger": true,
+          "severity": "medium",
+          "confidence": "high",
+          "cwe": "CWE-250",
+          "notes": "sharedUserId=com.test.shared (custom UID)"
+        }
+      },
+      "must_not_trigger": [],
+      "may_also_trigger": {
+        "MANIFEST-011": "Has network_security_config with cleartext permitted and user CAs trusted",
+        "MANIFEST-012": "Application-level allowTaskReparenting=true is set"
+      },
+      "notes": "Kitchen sink intentionally triggers maximum checks. MANIFEST-011/012/014 may also fire depending on NSC parsing and signing mock."
+    },
+    "clean.apk": {
+      "package": "com.test.clean",
+      "min_sdk": 28,
+      "target_sdk": 34,
+      "category": "secure-baseline",
+      "description": "Clean APK with zero manifest vulnerabilities — the negative control",
+      "expected_findings": {},
+      "must_not_trigger": [
+        "MANIFEST-001", "MANIFEST-002", "MANIFEST-003", "MANIFEST-004",
+        "MANIFEST-005", "MANIFEST-006", "MANIFEST-007", "MANIFEST-008",
+        "MANIFEST-009", "MANIFEST-010", "MANIFEST-011", "MANIFEST-012",
+        "MANIFEST-013", "MANIFEST-014", "MANIFEST-015", "MANIFEST-016",
+        "MANIFEST-017", "MANIFEST-018"
+      ],
+      "notes": "minSdk=28 (modern), targetSdk=34, allowBackup=false, usesCleartextTraffic=false, no exports, no custom permissions, no dangerous permissions (only INTERNET)"
+    },
+    "secure_full.apk": {
+      "package": "com.test.secure.full",
+      "min_sdk": 28,
+      "target_sdk": 34,
+      "category": "secure-baseline",
+      "description": "Fully hardened APK: modern SDK, all security attributes explicitly set to safe values, strict NSC, v2+v3 signing",
+      "expected_findings": {},
+      "must_not_trigger": [
+        "MANIFEST-001", "MANIFEST-002", "MANIFEST-003", "MANIFEST-004",
+        "MANIFEST-005", "MANIFEST-006", "MANIFEST-007", "MANIFEST-008",
+        "MANIFEST-009", "MANIFEST-010", "MANIFEST-011", "MANIFEST-012",
+        "MANIFEST-013", "MANIFEST-014", "MANIFEST-015", "MANIFEST-016",
+        "MANIFEST-017", "MANIFEST-018"
+      ],
+      "notes": "Gold standard for secure configuration. NSC has cleartext=false and system CAs only. Non-exported service and receiver present but safe."
+    },
+    "secure_with_exports.apk": {
+      "package": "com.test.secure.exports",
+      "min_sdk": 28,
+      "target_sdk": 34,
+      "category": "secure-baseline",
+      "description": "APK with exported components properly protected by signature-level permissions",
+      "expected_findings": {},
+      "must_not_trigger": [
+        "MANIFEST-001", "MANIFEST-002", "MANIFEST-003", "MANIFEST-004",
+        "MANIFEST-005", "MANIFEST-006", "MANIFEST-007", "MANIFEST-008",
+        "MANIFEST-009", "MANIFEST-010", "MANIFEST-011", "MANIFEST-012",
+        "MANIFEST-013", "MANIFEST-014", "MANIFEST-015", "MANIFEST-016",
+        "MANIFEST-017", "MANIFEST-018"
+      ],
+      "notes": "Exported provider and service are protected by com.test.secure.exports.PROVIDER_ACCESS (signature level). MANIFEST-006 should NOT fire because permission is set. MANIFEST-007 should NOT fire because protectionLevel=signature."
+    },
+    "secure_custom_perms.apk": {
+      "package": "com.test.secure.perms",
+      "min_sdk": 26,
+      "target_sdk": 34,
+      "category": "secure-baseline",
+      "description": "APK with custom permissions at signature/signatureOrSystem level; single CAMERA permission is below threshold",
+      "expected_findings": {},
+      "must_not_trigger": [
+        "MANIFEST-001", "MANIFEST-002", "MANIFEST-003", "MANIFEST-004",
+        "MANIFEST-005", "MANIFEST-006", "MANIFEST-007", "MANIFEST-008",
+        "MANIFEST-009", "MANIFEST-010", "MANIFEST-011", "MANIFEST-012",
+        "MANIFEST-013", "MANIFEST-014", "MANIFEST-015", "MANIFEST-016",
+        "MANIFEST-017", "MANIFEST-018"
+      ],
+      "notes": "Custom permissions use signature/signatureOrSystem (not weak). CAMERA is only 1 dangerous permission — below MANIFEST-016 multi-category threshold."
+    },
+    "secure_network_config.apk": {
+      "package": "com.test.secure.network",
+      "min_sdk": 28,
+      "target_sdk": 34,
+      "category": "secure-baseline",
+      "description": "APK with proper network_security_config: cleartext disabled, system CAs only, certificate pinning with 2 pins and valid expiration",
+      "expected_findings": {},
+      "must_not_trigger": [
+        "MANIFEST-001", "MANIFEST-002", "MANIFEST-003", "MANIFEST-004",
+        "MANIFEST-005", "MANIFEST-006", "MANIFEST-007", "MANIFEST-008",
+        "MANIFEST-009", "MANIFEST-010", "MANIFEST-011", "MANIFEST-012",
+        "MANIFEST-013", "MANIFEST-014", "MANIFEST-015", "MANIFEST-016",
+        "MANIFEST-017", "MANIFEST-018"
+      ],
+      "notes": "NSC is properly configured: cleartext=false, system CAs only, pin-set with 2 pins and future expiration. Should NOT trigger MANIFEST-011."
+    },
+    "secure_minimal.apk": {
+      "package": "com.test.secure.minimal",
+      "min_sdk": 30,
+      "target_sdk": 34,
+      "category": "secure-baseline",
+      "description": "Minimal secure APK relying on safe Android defaults for high SDK levels (API 30+)",
+      "expected_findings": {},
+      "must_not_trigger": [
+        "MANIFEST-001", "MANIFEST-002", "MANIFEST-003", "MANIFEST-004",
+        "MANIFEST-005", "MANIFEST-006", "MANIFEST-007", "MANIFEST-008",
+        "MANIFEST-009", "MANIFEST-010", "MANIFEST-011", "MANIFEST-012",
+        "MANIFEST-013", "MANIFEST-014", "MANIFEST-015", "MANIFEST-016",
+        "MANIFEST-017", "MANIFEST-018"
+      ],
+      "notes": "minSdk=30, targetSdk=34. allowBackup=false and usesCleartextTraffic=false are explicitly set. v2+v3 signing."
+    },
+    "secure_complex.apk": {
+      "package": "com.test.secure.complex",
+      "min_sdk": 26,
+      "target_sdk": 34,
+      "category": "secure-baseline",
+      "description": "Complex app with multiple component types (activities, service, receiver, provider) — all non-exported or properly secured",
+      "expected_findings": {},
+      "must_not_trigger": [
+        "MANIFEST-001", "MANIFEST-002", "MANIFEST-003", "MANIFEST-004",
+        "MANIFEST-005", "MANIFEST-006", "MANIFEST-007", "MANIFEST-008",
+        "MANIFEST-009", "MANIFEST-010", "MANIFEST-011", "MANIFEST-012",
+        "MANIFEST-013", "MANIFEST-014", "MANIFEST-015", "MANIFEST-016",
+        "MANIFEST-017", "MANIFEST-018"
+      ],
+      "notes": "All components exported=false. Standard permissions only (INTERNET, ACCESS_NETWORK_STATE, FOREGROUND_SERVICE, RECEIVE_BOOT_COMPLETED, VIBRATE). No dangerous permissions."
+    },
+    "diva.apk": {
+      "package": "jakhar.aseem.diva",
+      "min_sdk": 15,
+      "target_sdk": 24,
+      "category": "real-world-vulnerable",
+      "description": "DIVA (Damn Insecure and Vulnerable App) v1.0 — intentionally vulnerable Android app for security training",
+      "expected_findings": {
+        "MANIFEST-001": {
+          "should_trigger": true,
+          "severity": "high",
+          "confidence": "high",
+          "cwe": "CWE-489",
+          "notes": "android:debuggable=true explicitly set"
+        },
+        "MANIFEST-002": {
+          "should_trigger": true,
+          "severity": "medium",
+          "confidence": "high",
+          "cwe": "CWE-921",
+          "notes": "android:allowBackup=true explicitly set"
+        },
+        "MANIFEST-003": {
+          "should_trigger": true,
+          "severity": "high",
+          "confidence": "medium",
+          "cwe": "CWE-319",
+          "notes": "Default-based: targetSdk=24 < 28 so cleartext defaults to permitted. Confidence is medium because it is inferred, not explicit."
+        },
+        "MANIFEST-005": {
+          "should_trigger": true,
+          "severity": "high",
+          "confidence": "high",
+          "cwe": "CWE-1104",
+          "notes": "minSdk=15 (< 19 threshold = critically outdated, no TLS 1.2 support)"
+        },
+        "MANIFEST-006": {
+          "should_trigger": true,
+          "severity": "high",
+          "confidence": "medium",
+          "cwe": "CWE-926",
+          "min_unprotected_count": 10,
+          "notes": "13 activities with intent-filters, targetSdk=24 < 31 so implicit export applies. ~10+ are unprotected after excluding launcher. Confidence is medium due to implicit export inference."
+        }
+      },
+      "must_not_trigger": [
+        "MANIFEST-004", "MANIFEST-007", "MANIFEST-008", "MANIFEST-009",
+        "MANIFEST-010", "MANIFEST-011"
+      ],
+      "may_also_trigger": {
+        "MANIFEST-014": "Signing scheme depends on actual APK binary signing method",
+        "MANIFEST-016": "Depends on DIVA's actual permission list; may have some dangerous permissions"
+      },
+      "mobsf_baseline": {
+        "expected_finding_count_range": [5, 8],
+        "max_false_positive_rate": 0.20,
+        "notes": "MobSF reports 5-6 core manifest findings for DIVA; our scanner should match within tolerance"
+      },
+      "notes": "Real-world APK. Confidence may vary for default-inferred findings. MANIFEST-003 is default-based (not explicit)."
+    },
+    "insecurebankv2.apk": {
+      "package": "com.android.insecurebankv2",
+      "min_sdk": 15,
+      "target_sdk": 15,
+      "category": "real-world-vulnerable",
+      "description": "InsecureBankv2 — intentionally vulnerable banking app for security testing",
+      "expected_findings": {
+        "MANIFEST-001": {
+          "should_trigger": true,
+          "severity": "high",
+          "confidence": "high",
+          "cwe": "CWE-489",
+          "notes": "android:debuggable=true"
+        },
+        "MANIFEST-002": {
+          "should_trigger": true,
+          "severity": "medium",
+          "confidence": "high",
+          "cwe": "CWE-921",
+          "notes": "android:allowBackup=true"
+        },
+        "MANIFEST-003": {
+          "should_trigger": true,
+          "severity": "high",
+          "confidence": "medium",
+          "cwe": "CWE-319",
+          "notes": "Default-based: targetSdk=15 < 28 so cleartext defaults to permitted"
+        },
+        "MANIFEST-005": {
+          "should_trigger": true,
+          "severity": "high",
+          "confidence": "high",
+          "cwe": "CWE-1104",
+          "notes": "minSdk=15 (< 19 threshold = critically outdated)"
+        },
+        "MANIFEST-006": {
+          "should_trigger": true,
+          "severity": "high",
+          "confidence": "medium",
+          "cwe": "CWE-926",
+          "min_unprotected_count": 5,
+          "notes": "Multiple exported activities via implicit export (targetSdk=15 < 31). ~8 unprotected components."
+        },
+        "MANIFEST-010": {
+          "should_trigger": true,
+          "severity": "medium",
+          "confidence": "high",
+          "cwe": "CWE-939",
+          "notes": "ViewStatement activity has BROWSABLE intent-filter with http scheme"
+        }
+      },
+      "must_not_trigger": [
+        "MANIFEST-004", "MANIFEST-007", "MANIFEST-008", "MANIFEST-009",
+        "MANIFEST-011"
+      ],
+      "may_also_trigger": {
+        "MANIFEST-014": "Signing scheme depends on actual APK binary",
+        "MANIFEST-016": "May have some dangerous permissions",
+        "MANIFEST-013": "May have implicit intent services/receivers"
+      },
+      "mobsf_baseline": {
+        "expected_finding_count_range": [5, 12],
+        "max_false_positive_rate": 0.20,
+        "notes": "MobSF baseline for InsecureBankv2 is approximately 6-8 manifest findings"
+      },
+      "firmware_context_test": {
+        "priv_app_severity_bumps": {
+          "MANIFEST-001": "critical",
+          "MANIFEST-002": "high",
+          "MANIFEST-003": "critical",
+          "MANIFEST-005": "critical",
+          "MANIFEST-006": "critical",
+          "MANIFEST-010": "high"
+        },
+        "notes": "When placed in /system/priv-app/, all severities bump +1"
+      },
+      "notes": "Real-world APK. Very old targetSdk (15) means many default-based findings."
+    },
+    "ovaa.apk": {
+      "package": "oversecured.ovaa",
+      "min_sdk": 23,
+      "target_sdk": 29,
+      "category": "real-world-vulnerable",
+      "description": "OVAA (Oversecured Vulnerable Android App) — intentionally vulnerable app showcasing real Android vulnerabilities",
+      "expected_findings": {
+        "MANIFEST-002": {
+          "should_trigger": true,
+          "severity": "medium",
+          "confidence": "high",
+          "cwe": "CWE-921",
+          "notes": "android:allowBackup=true explicitly set"
+        },
+        "MANIFEST-003": {
+          "should_trigger": true,
+          "severity": "high",
+          "confidence": "high",
+          "cwe": "CWE-319",
+          "notes": "android:usesCleartextTraffic=true explicitly set"
+        },
+        "MANIFEST-005": {
+          "should_trigger": true,
+          "severity": "low",
+          "confidence": "high",
+          "cwe": "CWE-1104",
+          "notes": "minSdk=23 is below the secure threshold of 24 but >= 19, so low severity (not critically outdated)"
+        },
+        "MANIFEST-006": {
+          "should_trigger": true,
+          "severity": "high",
+          "confidence": "high",
+          "cwe": "CWE-926",
+          "min_unprotected_count": 8,
+          "exported_components": [
+            "DeeplinkActivity", "WebViewActivity", "EntropyActivity",
+            "InsecureSharedPrefsActivity", "InsecureStorageActivity",
+            "SQLInjectionActivity", "InsecureLogActivity", "TheftActivity",
+            "OversecuredProvider", "InsecureProvider", "TheftOverwriteProvider"
+          ],
+          "notes": "11+ exported components including activities, providers, and receiver. High severity (>= 5 unprotected)."
+        },
+        "MANIFEST-009": {
+          "should_trigger": true,
+          "severity": "high",
+          "confidence": "high",
+          "cwe": "CWE-1021",
+          "notes": "TheftActivity has singleTask launch mode + exported + minSdk=23 < 29 = high severity"
+        },
+        "MANIFEST-010": {
+          "should_trigger": true,
+          "severity": "medium",
+          "confidence": "high",
+          "cwe": "CWE-939",
+          "sub_findings": [
+            {
+              "description": "DeeplinkActivity with oversecured:// custom scheme",
+              "severity": "low"
+            },
+            {
+              "description": "WebViewActivity with https://oversecured.com without autoVerify",
+              "severity": "medium"
+            }
+          ],
+          "notes": "Two deep link findings: custom scheme (low) and unverified HTTPS (medium)"
+        }
+      },
+      "must_not_trigger": [
+        "MANIFEST-001", "MANIFEST-004", "MANIFEST-007", "MANIFEST-008",
+        "MANIFEST-011"
+      ],
+      "may_also_trigger": {
+        "MANIFEST-013": "Exported receiver with intent-filter may trigger implicit intent check",
+        "MANIFEST-014": "Depends on APK signing",
+        "MANIFEST-016": "Depends on OVAA's actual permission list"
+      },
+      "mobsf_baseline": {
+        "expected_finding_count_range": [6, 10],
+        "max_false_positive_rate": 0.20,
+        "notes": "MobSF reports approximately 6-8 manifest findings for OVAA"
+      },
+      "notes": "Real-world APK. MANIFEST-001 should NOT trigger (OVAA release build is not debuggable). MANIFEST-005 is low severity (23 >= 19 but < 24)."
+    }
+  },
+  "firmware_context_modifiers": {
+    "description": "How firmware context affects severity. Applied on top of base findings.",
+    "priv_app": {
+      "rule": "All findings severity +1 (low->medium, medium->high, high->critical)",
+      "applies_when": "APK is located in /system/priv-app/",
+      "notes": "Privileged apps have elevated system access; vulnerabilities are more impactful"
+    },
+    "platform_signed": {
+      "rule": "MANIFEST-001 escalates to critical. Eligible checks get -1 severity reduction (net 0 with priv-app bump).",
+      "applies_when": "APK is signed with platform certificate",
+      "notes": "Platform-signed system components operate under different threat model"
+    },
+    "debug_signed": {
+      "rule": "MANIFEST-001 confidence reduced to medium",
+      "applies_when": "APK is signed with debug certificate",
+      "notes": "Debug builds are expected during development but should not ship"
+    }
+  },
+  "test_matrix_summary": {
+    "total_fixtures": 26,
+    "vulnerable_single_check": 18,
+    "vulnerable_composite": 1,
+    "secure_baselines": 7,
+    "real_world_apks": 3,
+    "checks_covered": [
+      "MANIFEST-001", "MANIFEST-002", "MANIFEST-003", "MANIFEST-004",
+      "MANIFEST-005", "MANIFEST-006", "MANIFEST-007", "MANIFEST-008",
+      "MANIFEST-009", "MANIFEST-010", "MANIFEST-011", "MANIFEST-012",
+      "MANIFEST-013", "MANIFEST-014", "MANIFEST-015", "MANIFEST-016",
+      "MANIFEST-017", "MANIFEST-018"
+    ],
+    "all_18_checks_have_dedicated_fixture": true,
+    "all_18_checks_have_negative_test": true,
+    "negative_test_coverage": "Each secure-baseline fixture asserts ALL 18 checks must NOT trigger"
+  }
+}

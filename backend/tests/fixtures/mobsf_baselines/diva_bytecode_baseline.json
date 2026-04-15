@@ -1,0 +1,42 @@
+{
+  "_meta": {
+    "apk_name": "DIVA (Damn Insecure and Vulnerable App)",
+    "package": "jakhar.aseem.diva",
+    "phase": "bytecode",
+    "source": "https://github.com/payatu/diva-android",
+    "description": "Ground-truth bytecode-level findings for DIVA APK based on manual analysis and MobSF Dynamic+Static comparison."
+  },
+  "true_positive_pattern_ids": [
+    "insecure_storage_world_readable",
+    "insecure_storage_world_writable",
+    "hardcoded_sharedprefs",
+    "logging_sensitive_data",
+    "external_storage_secrets",
+    "sql_injection_rawquery",
+    "hardcoded_base64"
+  ],
+  "expected_absent_pattern_ids": [
+    {
+      "pattern_id": "crypto_ecb_mode",
+      "reason": "DIVA does not use encryption at all"
+    },
+    {
+      "pattern_id": "insecure_network_sslv3",
+      "reason": "DIVA does not perform network communication"
+    },
+    {
+      "pattern_id": "webview_js_enabled",
+      "reason": "DIVA does not use WebView components"
+    },
+    {
+      "pattern_id": "reflection_api_access",
+      "reason": "DIVA does not use reflection"
+    }
+  ],
+  "summary": {
+    "total_true_positives": 7,
+    "false_positive_tolerance": 3,
+    "max_fp_rate": 0.20,
+    "notes": "DIVA focuses on insecure data storage and input validation. Bytecode findings center on SharedPreferences, SQLite, and logging."
+  }
+}
