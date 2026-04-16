@@ -429,7 +429,7 @@ export default function ComparisonPage() {
                       })}
                     </tbody>
                   </table>
-                  {filteredEntries.length > 200 && (
+                  {filteredEntries.length > 500 && (
                     <p className="text-xs text-muted-foreground mt-2">
                       Showing first 500 of {filteredEntries.length} entries
                     </p>

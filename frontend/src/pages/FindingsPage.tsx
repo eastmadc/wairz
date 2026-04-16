@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useRef, useState, useCallback } from 'react'
 import { useParams, useLocation } from 'react-router-dom'
 import { ShieldAlert, Loader2 } from 'lucide-react'
 import { listFindings, updateFinding, deleteFinding } from '@/api/findings'
@@ -29,8 +29,10 @@ export default function FindingsPage() {
     if (projectId) listFirmware(projectId).then(setFirmwareList).catch(() => {})
   }, [projectId])
 
+  const initialLoadDone = useRef(false)
   const fetchFindings = useCallback(async () => {
     if (!projectId) return
+    if (!initialLoadDone.current) setLoading(true)
     try {
       const params: Record<string, string> = {}
       if (severityFilter) params.severity = severityFilter
@@ -43,6 +45,7 @@ export default function FindingsPage() {
       console.error('Failed to load findings:', err)
     } finally {
       setLoading(false)
+      initialLoadDone.current = true
     }
   }, [projectId, severityFilter, statusFilter, sourceFilter, selectedFirmwareId])
 
@@ -57,10 +60,14 @@ export default function FindingsPage() {
   const handleUpdate = useCallback(
     async (findingId: string, updates: FindingUpdate) => {
       if (!projectId) return
-      const updated = await updateFinding(projectId, findingId, updates)
-      setFindings((prev) =>
-        prev.map((f) => (f.id === findingId ? updated : f)),
-      )
+      try {
+        const updated = await updateFinding(projectId, findingId, updates)
+        setFindings((prev) =>
+          prev.map((f) => (f.id === findingId ? updated : f)),
+        )
+      } catch (err) {
+        console.error('Failed to update finding:', err)
+      }
     },
     [projectId],
   )
@@ -68,9 +75,13 @@ export default function FindingsPage() {
   const handleDelete = useCallback(
     async (findingId: string) => {
       if (!projectId) return
-      await deleteFinding(projectId, findingId)
-      setFindings((prev) => prev.filter((f) => f.id !== findingId))
-      if (selectedId === findingId) setSelectedId(null)
+      try {
+        await deleteFinding(projectId, findingId)
+        setFindings((prev) => prev.filter((f) => f.id !== findingId))
+        if (selectedId === findingId) setSelectedId(null)
+      } catch (err) {
+        console.error('Failed to delete finding:', err)
+      }
     },
     [projectId, selectedId],
   )

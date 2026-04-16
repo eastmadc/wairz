@@ -108,8 +108,12 @@ export default function ProjectDetailPage() {
 
   const handleDelete = async () => {
     if (window.confirm('Delete this project and all its data? This cannot be undone.')) {
-      await removeProject(project.id)
-      navigate('/projects')
+      try {
+        await removeProject(project.id)
+        navigate('/projects')
+      } catch {
+        // error shown via store
+      }
     }
   }
 

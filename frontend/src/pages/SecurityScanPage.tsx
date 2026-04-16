@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useParams, Link, useSearchParams } from 'react-router-dom'
 import { Shield, Loader2, RefreshCw, Smartphone } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
@@ -52,10 +52,18 @@ export default function SecurityScanPage() {
   } | null>(null)
   const [findings, setFindings] = useState<Finding[]>([])
   const [loadingFindings, setLoadingFindings] = useState(false)
+  const vulhuntEventSourceRef = useRef<EventSource | null>(null)
+
+  // Clean up EventSource on unmount
+  useEffect(() => {
+    return () => {
+      vulhuntEventSourceRef.current?.close()
+    }
+  }, [])
 
   useEffect(() => {
     if (projectId) {
-      listFirmware(projectId).then(setFirmwareList)
+      listFirmware(projectId).then(setFirmwareList).catch(() => {})
     }
   }, [projectId])
 
@@ -117,7 +125,9 @@ export default function SecurityScanPage() {
     setVulhuntProgress(null)
 
     // Subscribe to SSE for progress updates
+    vulhuntEventSourceRef.current?.close()
     const evtSource = new EventSource(`/api/v1/projects/${projectId}/events?types=vulhunt`)
+    vulhuntEventSourceRef.current = evtSource
     evtSource.onmessage = (e) => {
       try {
         const data = JSON.parse(e.data)
@@ -146,6 +156,7 @@ export default function SecurityScanPage() {
       setVulhuntResult({ output: 'VulHunt scan failed. Is the vulhunt container running?', success: false })
     } finally {
       evtSource.close()
+      vulhuntEventSourceRef.current = null
       setVulhuntScanning(false)
     }
   }
