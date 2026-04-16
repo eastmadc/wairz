@@ -433,6 +433,11 @@ def classify_firmware(firmware_path: str) -> str:
                 has_super = any(n.endswith("/super.img") or n == "super.img" for n in names)
                 if has_scatter and has_super:
                     return "android_scatter"
+                # Standalone APK: ZIP containing AndroidManifest.xml + classes*.dex
+                has_manifest = "AndroidManifest.xml" in names
+                has_dex = any(n.endswith(".dex") for n in names)
+                if has_manifest and has_dex:
+                    return "android_apk"
                 # Check for UEFI capsule inside ZIP (e.g., Framework BIOS updates)
                 uefi_zip_markers = {".cap", ".rom", ".fd", ".bin"}
                 for name in names:

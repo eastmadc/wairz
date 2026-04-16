@@ -198,6 +198,24 @@ async def unpack_firmware(
 
     # === STAGE 1: Format-Specific Fast Paths ===
 
+    if fw_type == "android_apk":
+        import shutil
+        await _report("Standalone APK detected — preserving for scan", 15)
+        apk_name = os.path.basename(firmware_path)
+        if not apk_name.lower().endswith(".apk"):
+            apk_name += ".apk"
+        dest = os.path.join(extraction_dir, apk_name)
+        shutil.copy2(firmware_path, dest)
+        result.extracted_path = extraction_dir
+        result.extraction_dir = extraction_dir
+        result.success = True
+        result.unpack_log += (
+            f"Standalone APK: copied as {apk_name}.\n"
+            "Use Security > APK Scan to analyze.\n"
+        )
+        await _report("APK ready for scanning", 100)
+        return result
+
     if fw_type == "uefi_firmware":
         await _report("Extracting UEFI firmware", 15)
         try:
