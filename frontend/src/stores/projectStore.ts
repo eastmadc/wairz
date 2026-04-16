@@ -79,9 +79,11 @@ export const useProjectStore = create<ProjectState & ProjectActions>((set, get) 
       set((s) => ({
         projects: s.projects.filter((p) => p.id !== id),
         currentProject: s.currentProject?.id === id ? null : s.currentProject,
+        selectedFirmwareId: s.currentProject?.id === id ? null : s.selectedFirmwareId,
       }))
     } catch (e) {
       set({ error: extractError(e) })
+      throw e
     }
   },
 

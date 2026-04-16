@@ -30,7 +30,7 @@ export default function ExplorePage() {
   useEffect(() => {
     if (projectId) {
       loadDocuments(projectId)
-      listFirmware(projectId).then(setFirmwareList)
+      listFirmware(projectId).then(setFirmwareList).catch(() => {})
     }
     return () => {
       resetExplorer()

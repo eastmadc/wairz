@@ -80,7 +80,7 @@ export default function SbomPage() {
   // Load firmware list for selector
   useEffect(() => {
     if (projectId) {
-      listFirmware(projectId).then(setFirmwareList)
+      listFirmware(projectId).then(setFirmwareList).catch(() => {})
     }
   }, [projectId])
 

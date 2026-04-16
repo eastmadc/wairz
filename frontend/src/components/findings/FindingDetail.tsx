@@ -32,16 +32,29 @@ export default function FindingDetail({ finding, onUpdate, onDelete }: FindingDe
   const sevConfig = SEVERITY_CONFIG[finding.severity]
   const Icon = sevConfig.icon
 
+  const [saving, setSaving] = useState(false)
+
   const handleStatusChange = async (status: FindingStatus) => {
-    await onUpdate(finding.id, { status })
+    try {
+      await onUpdate(finding.id, { status })
+    } catch {
+      // error logged by caller
+    }
   }
 
   const handleSaveEdit = async () => {
-    await onUpdate(finding.id, {
-      description: editDesc || undefined,
-      evidence: editEvidence || undefined,
-    })
-    setEditing(false)
+    setSaving(true)
+    try {
+      await onUpdate(finding.id, {
+        description: editDesc || undefined,
+        evidence: editEvidence || undefined,
+      })
+      setEditing(false)
+    } catch {
+      // error logged by caller
+    } finally {
+      setSaving(false)
+    }
   }
 
   const handleCancelEdit = () => {
@@ -231,8 +244,8 @@ export default function FindingDetail({ finding, onUpdate, onDelete }: FindingDe
       {/* Edit actions */}
       {editing && (
         <div className="flex gap-2">
-          <Button size="sm" onClick={handleSaveEdit}>
-            <Check className="mr-1 h-3 w-3" /> Save
+          <Button size="sm" onClick={handleSaveEdit} disabled={saving}>
+            <Check className="mr-1 h-3 w-3" /> {saving ? 'Saving...' : 'Save'}
           </Button>
           <Button size="sm" variant="outline" onClick={handleCancelEdit}>
             <X className="mr-1 h-3 w-3" /> Cancel
