@@ -12,7 +12,7 @@
  * visual styling across the APK scan UI.
  */
 
-import React, { useMemo, useState, useCallback } from 'react'
+import React, { useMemo, useState, useCallback, useEffect, useRef } from 'react'
 import {
   ChevronDown,
   ChevronRight,
@@ -197,6 +197,8 @@ export interface SecurityScanResultsProps {
   isScanning?: boolean
   /** Callback to view decompiled source at a file:line */
   onViewSource?: (filePath: string, line?: number) => void
+  /** Finding title to auto-expand and scroll to (from deep-link) */
+  initialFinding?: string
   /** Additional CSS classes on the root container */
   className?: string
 }
@@ -211,6 +213,7 @@ export default function SecurityScanResults({
   packageName,
   isScanning = false,
   onViewSource,
+  initialFinding,
   className,
 }: SecurityScanResultsProps) {
   // ── State ──
@@ -367,6 +370,32 @@ export default function SecurityScanResults({
   // ── Has data ──
   const hasResults = allFindings.length > 0
   const hasAnyResponse = manifest != null || bytecode != null || sast != null
+
+  // ── Deep-link: auto-expand and scroll to a specific finding ──
+  const deepLinkHandled = useRef(false)
+  useEffect(() => {
+    if (!initialFinding || deepLinkHandled.current || allFindings.length === 0) return
+    deepLinkHandled.current = true
+
+    // Find the matching finding by title
+    const match = allFindings.find(
+      (f) => f.title === initialFinding || f.ruleId === initialFinding,
+    )
+    if (!match) return
+
+    // Determine which group key this finding belongs to (default sort is severity)
+    const groupKey = match.severity.toLowerCase()
+
+    // Expand the group and the finding
+    setExpandedGroups(new Set([groupKey]))
+    setExpandedFindings(new Set([match.id]))
+
+    // Scroll to the finding after React renders
+    requestAnimationFrame(() => {
+      const el = document.querySelector(`[data-finding-id="${match.id}"]`)
+      el?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    })
+  }, [initialFinding, allFindings])
 
   if (!hasAnyResponse && !isScanning) {
     return null
@@ -889,7 +918,7 @@ function FindingRow({ finding, groupMode, isExpanded, onToggle, onViewSource }: 
   const phaseConfig = PHASE_CONFIG[finding.phase]
 
   return (
-    <div className="bg-card">
+    <div className="bg-card" data-finding-id={finding.id}>
       {/* Row header */}
       <button
         type="button"

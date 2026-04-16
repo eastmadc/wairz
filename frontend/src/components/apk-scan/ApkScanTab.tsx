@@ -99,9 +99,11 @@ interface ApkScanTabProps {
   projectId: string
   selectedFirmwareId: string | null
   initialApk?: string
+  /** Finding title to auto-expand after loading cached results */
+  initialFinding?: string
 }
 
-export default function ApkScanTab({ projectId, selectedFirmwareId, initialApk }: ApkScanTabProps) {
+export default function ApkScanTab({ projectId, selectedFirmwareId, initialApk, initialFinding }: ApkScanTabProps) {
   // ── APK discovery ──
   const [apkFiles, setApkFiles] = useState<string[]>([])
   const [discoveryLoading, setDiscoveryLoading] = useState(false)
@@ -212,10 +214,14 @@ export default function ApkScanTab({ projectId, selectedFirmwareId, initialApk }
       const result = await searchFiles(projectId, '*.apk', '/', selectedFirmwareId)
       const files = result.matches || []
       setApkFiles(files)
-      // Auto-select: use initialApk from URL params, or fall back to first APK
-      if (files.length > 0 && !selectedApk) {
-        setSelectedApk(initialApk && files.includes(initialApk) ? initialApk : files[0])
-      } else if (files.length === 0) {
+      if (files.length > 0) {
+        // If deep-linked APK is in the list, select it; otherwise keep current or pick first
+        if (initialApk && files.includes(initialApk)) {
+          setSelectedApk(initialApk)
+        } else if (!selectedApk || !files.includes(selectedApk)) {
+          setSelectedApk(files[0])
+        }
+      } else {
         setSelectedApk(null)
       }
     } catch (e) {
@@ -224,7 +230,7 @@ export default function ApkScanTab({ projectId, selectedFirmwareId, initialApk }
     } finally {
       setDiscoveryLoading(false)
     }
-  }, [projectId, selectedFirmwareId])
+  }, [projectId, selectedFirmwareId, initialApk])
 
   useEffect(() => {
     discoverApks()
@@ -889,6 +895,7 @@ export default function ApkScanTab({ projectId, selectedFirmwareId, initialApk }
           }
           isScanning={isAnyScanning}
           onViewSource={handleViewSource}
+          initialFinding={initialFinding}
         />
 
         {/* Source viewer panel */}
