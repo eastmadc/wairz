@@ -54,9 +54,10 @@ export default function FindingDetail({ finding, onUpdate, onDelete }: FindingDe
   const handleNavigateToFile = () => {
     if (finding.file_path && projectId) {
       if (isApkFinding) {
-        // APK findings deep-link to APK Scan tab with the APK pre-selected
+        // APK findings deep-link to APK Scan tab with the APK and finding pre-selected
         const apkParam = encodeURIComponent(finding.file_path!)
-        navigate(`/projects/${projectId}/security?tab=apk-scan&apk=${apkParam}`)
+        const findingParam = encodeURIComponent(finding.title)
+        navigate(`/projects/${projectId}/security?tab=apk-scan&apk=${apkParam}&finding=${findingParam}`)
       } else {
         const lineParam = finding.line_number != null ? `&line=${finding.line_number}` : ''
         navigate(`/projects/${projectId}/explore?path=${encodeURIComponent(finding.file_path)}${lineParam}`)

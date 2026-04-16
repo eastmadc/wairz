@@ -37,6 +37,7 @@ export default function SecurityScanPage() {
   const selectedFirmwareId = useProjectStore((s) => s.selectedFirmwareId)
   const initialTab = (searchParams.get('tab') as Tab) || 'audit'
   const initialApk = searchParams.get('apk') || undefined
+  const initialFinding = searchParams.get('finding') || undefined
   const [tab, setTab] = useState<Tab>(initialTab)
   const [firmwareList, setFirmwareList] = useState<FirmwareDetail[]>([])
   const [auditing, setAuditing] = useState(false)
@@ -376,7 +377,7 @@ export default function SecurityScanPage() {
       )}
 
       {tab === 'apk-scan' && projectId && (
-        <ApkScanTab projectId={projectId} selectedFirmwareId={selectedFirmwareId} initialApk={initialApk} />
+        <ApkScanTab projectId={projectId} selectedFirmwareId={selectedFirmwareId} initialApk={initialApk} initialFinding={initialFinding} />
       )}
 
       {tab === 'attack-surface' && projectId && (
