@@ -1,0 +1,35 @@
+"""Hardware firmware parser plugin registry.
+
+Importing this package side-effects each parser module so they can
+self-register in ``PARSER_REGISTRY`` via ``register_parser``.  The
+detector does ``from app.services.hardware_firmware.parsers import
+get_parser`` and looks up the parser by the classifier's format string.
+"""
+
+from __future__ import annotations
+
+from app.services.hardware_firmware.parsers.base import (
+    PARSER_REGISTRY,
+    ParsedBlob,
+    Parser,
+    get_parser,
+    register_parser,
+)
+
+# Self-registration fires on import.
+from app.services.hardware_firmware.parsers import (  # noqa: F401,E402
+    broadcom_wl,
+    dtb,
+    elf_tee,
+    kmod,
+    qualcomm_mbn,
+    raw_bin,
+)
+
+__all__ = [
+    "PARSER_REGISTRY",
+    "ParsedBlob",
+    "Parser",
+    "get_parser",
+    "register_parser",
+]

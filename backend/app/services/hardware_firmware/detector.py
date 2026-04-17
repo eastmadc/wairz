@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.hardware_firmware import HardwareFirmwareBlob
 from app.services.hardware_firmware.classifier import classify
+from app.services.hardware_firmware.parsers import ParsedBlob, get_parser
 
 logger = logging.getLogger(__name__)
 
@@ -125,6 +126,25 @@ def _walk_and_classify(extracted_path: str) -> list[dict]:
                     if cls is None:
                         continue
 
+                    # Invoke per-format parser (sync I/O is fine — we're
+                    # already in run_in_executor).  Parsers must never
+                    # raise; catch defensively in case one does.
+                    parser = get_parser(cls.format)
+                    parsed: ParsedBlob
+                    if parser is None:
+                        parsed = ParsedBlob()
+                    else:
+                        try:
+                            parsed = parser.parse(entry.path, magic, size)
+                        except Exception:  # noqa: BLE001
+                            logger.debug(
+                                "Parser %s raised on %s",
+                                cls.format,
+                                entry.path,
+                                exc_info=True,
+                            )
+                            parsed = ParsedBlob(metadata={"error": "parser raised"})
+
                     partition = _detect_partition(extracted_path, entry.path)
                     rows.append({
                         "blob_path": entry.path,
@@ -136,6 +156,12 @@ def _walk_and_classify(extracted_path: str) -> list[dict]:
                         "format": cls.format,
                         "detection_source": _DETECTION_SOURCE,
                         "detection_confidence": cls.confidence,
+                        "version": parsed.version,
+                        "signed": parsed.signed,
+                        "signature_algorithm": parsed.signature_algorithm,
+                        "cert_subject": parsed.cert_subject,
+                        "chipset_target": parsed.chipset_target,
+                        "metadata": parsed.metadata or {},
                     })
                 except (OSError, PermissionError):
                     continue
@@ -180,6 +206,9 @@ async def detect_hardware_firmware(
 
     values = []
     for row in rows:
+        version = row.get("version")
+        sig_algo = row.get("signature_algorithm")
+        chipset = row.get("chipset_target")
         values.append({
             "firmware_id": firmware_id,
             "blob_path": row["blob_path"][:1024],
@@ -191,6 +220,13 @@ async def detect_hardware_firmware(
             "format": row["format"],
             "detection_source": row["detection_source"],
             "detection_confidence": row["detection_confidence"],
+            "version": version[:128] if version else None,
+            "signed": row.get("signed") or "unknown",
+            "signature_algorithm": sig_algo[:64] if sig_algo else None,
+            "cert_subject": row.get("cert_subject"),
+            "chipset_target": chipset[:64] if chipset else None,
+            # Model column is named "metadata" in DB; ORM attribute is metadata_.
+            "metadata": row.get("metadata") or {},
         })
 
     stmt = insert(HardwareFirmwareBlob).values(values)
