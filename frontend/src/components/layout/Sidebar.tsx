@@ -16,6 +16,7 @@ import {
   HelpCircle,
   Smartphone,
   Wrench,
+  Cpu,
 } from 'lucide-react'
 import { Separator } from '@/components/ui/separator'
 import wairzLogo from '@/assets/wairz_full_logo.png'
@@ -34,6 +35,7 @@ const projectSubPages = [
   { suffix: '/findings', label: 'Findings', icon: ShieldAlert },
   { suffix: '/map', label: 'Component Map', icon: Network },
   { suffix: '/sbom', label: 'SBOM', icon: Package },
+  { suffix: '/hardware-firmware', label: 'Hardware Firmware', icon: Cpu },
   { suffix: '/emulation', label: 'Emulation (experimental)', icon: PlayCircle },
   { suffix: '/fuzzing', label: 'Fuzzing (experimental)', icon: Bug },
   { suffix: '/compare', label: 'Compare', icon: GitCompareArrows },
