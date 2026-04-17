@@ -1,0 +1,67 @@
+goal: 'Build two MCP tools for LLM-assisted binary taint analysis in Wairz: a scan
+  tool that returns ranked suspected-vulnerable functions with CWE classes filtered
+  by dangerous-sink callers and call-graph weight, and a deep-dive tool that returns
+  full source-to-sink dataflow paths with taint propagation traces and quoted decompiled
+  source lines as evidence'
+task_type: code
+brownfield_context:
+  project_type: brownfield
+  context_references:
+    - path: backend/app/ai/tools/
+      role: primary
+      summary: MCP tool handler directory where new taint analysis tools will be registered
+    - path: backend/app/ai/__init__.py
+      role: primary
+      summary: Tool registry factory that must import and register new tool category
+    - path: backend/app/ai/tool_registry.py
+      role: reference
+      summary: ToolContext and ToolRegistry framework defining handler pattern
+    - path: backend/app/utils/truncation.py
+      role: reference
+      summary: 30KB output truncation utility for MCP tool responses
+    - path: backend/app/utils/sandbox.py
+      role: reference
+      summary: Path traversal prevention for file access validation
+    - path: backend/app/services/analysis_service.py
+      role: reference
+      summary: Existing Ghidra decompilation and radare2 analysis with caching
+    - path: .planning/research/fleet-wairz-next-campaigns/latte-llm-taint.md
+      role: reference
+      summary: Full LATTE research brief with prompt design and integration shape
+
+constraints:
+  - Zero new Anthropic API keys on backend — LLM reasoning happens in-session via Claude Code client
+  - Zero new pip dependencies — reuse existing backend packages only
+  - Offline mode preserved — no external API calls from backend
+  - Follow existing Wairz MCP tool registration pattern (handler in ai/tools/, register in __init__.py)
+  - Pre-filter functions by dangerous-sink callers and call-graph weight before returning to Claude — must handle binaries with thousands of functions
+  - MCP tool output stays under 30KB truncation limit
+  - Use flush() not commit() in tool handlers
+  - Wrap sync filesystem I/O in run_in_executor()
+  - Cache Ghidra decompilations via analysis_cache table
+  - ~600 LOC budget across 1-2 sessions
+
+acceptance_criteria:
+  - Scan tool registered as MCP tool returning structured prompt with ranked function list, CWE class, and one-line rationale per function
+  - Deep-dive tool registered as MCP tool accepting a specific function and returning full dataflow path with taint propagation traces and quoted decompiled source lines
+  - Scan tool accepts min_confidence parameter (low/medium/high) to tune detection threshold
+  - Scan tool pre-filters by dangerous-sink callers and call-graph weight before composing analysis prompt
+  - Scan tool achieves at least 80 percent recall on DVRF planted bugs at min_confidence=low
+  - Deep-dive tool produces a full verified taint chain for at least 1 DVRF golden bug with correct source, sink, every intermediate propagation step, and quoted decompiled lines for each step
+  - Real firmware qualitative spot-check passes Dustin's manual review on a binary he selects
+  - Tool outputs are structured strings that Claude Code client reasons over directly
+
+exit_conditions:
+  - name: dvrf_quantitative_gate
+    criteria: At least 80 percent of planted bugs flagged at min_confidence=low AND deep-dive produces fully verified taint chain for 1 golden bug with quoted source lines
+  - name: real_firmware_qualitative_gate
+    criteria: Dustin signs off that results are reasonable and actionable on a binary of his choosing
+  - name: tool_registration_complete
+    criteria: scan_taint_analysis and deep_dive_taint_analysis tools appear in MCP tool list and return well-structured output
+
+metadata:
+  seed_id: seed_61966b02ef35
+  version: 1.0.0
+  created_at: '2026-04-17T16:50:38.517924Z'
+  ambiguity_score: 0.098
+  interview_id: interview_20260417_164140
