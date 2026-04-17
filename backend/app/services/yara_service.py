@@ -108,47 +108,22 @@ def _cwe_from_meta(meta: dict) -> list[str] | None:
     return None
 
 
-def scan_firmware(
-    extracted_path: str,
-    extra_rules_dir: str | None = None,
-    path_filter: str | None = None,
-) -> YaraScanResult:
-    """Scan an extracted firmware filesystem with YARA rules.
+def _scan_single_root(
+    rules: "yara.Rules",
+    scan_root: str,
+    path_rel_base: str,
+    result: YaraScanResult,
+    matched_shas: set[str],
+) -> None:
+    """Walk ``scan_root`` and append YARA matches to ``result``.
 
-    This is a synchronous, CPU-bound function. Call it from an async context
-    via ``loop.run_in_executor(None, scan_firmware, ...)``.
-
-    Args:
-        extracted_path: Root directory of the extracted firmware.
-        extra_rules_dir: Optional directory with additional .yar rule files.
-        path_filter: Optional subdirectory within the firmware to limit scanning.
-
-    Returns:
-        YaraScanResult with findings and scan statistics.
+    ``path_rel_base`` is the directory used for relative-path display.
+    ``matched_shas`` is a cross-root dedupe set — per-root SHAs of
+    already-matched files so a blob appearing in two partitions doesn't
+    produce duplicate findings.
     """
-    result = YaraScanResult()
+    import hashlib as _hashlib
 
-    # Compile rules
-    try:
-        rules = compile_rules(extra_rules_dir)
-        result.rules_loaded = sum(1 for _ in rules)
-    except Exception as e:
-        result.errors.append(f"Failed to compile YARA rules: {e}")
-        logger.error("YARA rule compilation failed", exc_info=True)
-        return result
-
-    # Determine scan root
-    scan_root = os.path.realpath(extracted_path)
-    if path_filter:
-        filtered = os.path.realpath(os.path.join(scan_root, path_filter.lstrip("/")))
-        if filtered.startswith(scan_root):
-            scan_root = filtered
-
-    if not os.path.isdir(scan_root):
-        result.errors.append(f"Scan path does not exist: {scan_root}")
-        return result
-
-    # Walk and scan files
     matched_files: set[str] = set()
 
     for dirpath, _dirs, files in os.walk(scan_root):
@@ -183,7 +158,9 @@ def scan_firmware(
             try:
                 matches = rules.match(abs_path, timeout=30)
             except yara.TimeoutError:
-                result.errors.append(f"YARA timeout scanning {_rel(abs_path, extracted_path)}")
+                result.errors.append(
+                    f"YARA timeout scanning {_rel(abs_path, path_rel_base)}"
+                )
                 continue
             except yara.Error as e:
                 # Skip files that can't be scanned (permission, etc.)
@@ -193,7 +170,18 @@ def scan_firmware(
             if not matches:
                 continue
 
-            rel_path = _rel(abs_path, extracted_path)
+            # Cross-root dedupe by SHA — identical blobs in two
+            # partitions produce findings once.
+            try:
+                with open(abs_path, "rb") as f:
+                    sha = _hashlib.sha256(f.read()).hexdigest()
+            except OSError:
+                sha = abs_path  # fallback key — keep this file's findings
+            if sha in matched_shas:
+                continue
+            matched_shas.add(sha)
+
+            rel_path = _rel(abs_path, path_rel_base)
             if rel_path not in matched_files:
                 matched_files.add(rel_path)
 
@@ -239,5 +227,100 @@ def scan_firmware(
                     cwe_ids=_cwe_from_meta(meta),
                 ))
 
-    result.files_matched = len(matched_files)
+    result.files_matched += len(matched_files)
+
+
+def scan_firmware(
+    extracted_path: str,
+    extra_rules_dir: str | None = None,
+    path_filter: str | None = None,
+) -> YaraScanResult:
+    """Scan an extracted firmware filesystem with YARA rules.
+
+    This is a synchronous, CPU-bound function. Call it from an async context
+    via ``loop.run_in_executor(None, scan_firmware, ...)``.
+
+    Args:
+        extracted_path: Root directory of the extracted firmware.
+        extra_rules_dir: Optional directory with additional .yar rule files.
+        path_filter: Optional subdirectory within the firmware to limit scanning.
+
+    Returns:
+        YaraScanResult with findings and scan statistics.
+    """
+    result = YaraScanResult()
+
+    # Compile rules
+    try:
+        rules = compile_rules(extra_rules_dir)
+        result.rules_loaded = sum(1 for _ in rules)
+    except Exception as e:
+        result.errors.append(f"Failed to compile YARA rules: {e}")
+        logger.error("YARA rule compilation failed", exc_info=True)
+        return result
+
+    # Determine scan root
+    scan_root = os.path.realpath(extracted_path)
+    if path_filter:
+        filtered = os.path.realpath(os.path.join(scan_root, path_filter.lstrip("/")))
+        if filtered.startswith(scan_root):
+            scan_root = filtered
+
+    if not os.path.isdir(scan_root):
+        result.errors.append(f"Scan path does not exist: {scan_root}")
+        return result
+
+    _scan_single_root(
+        rules,
+        scan_root=scan_root,
+        path_rel_base=extracted_path,
+        result=result,
+        matched_shas=set(),
+    )
+    return result
+
+
+def scan_firmware_multi(
+    paths: list[str],
+    extra_rules_dir: str | None = None,
+) -> YaraScanResult:
+    """Scan multiple detection roots with a single compiled rule set.
+
+    Designed for Phase 3a multi-root walks — each path is scanned
+    sequentially and SHA-256 dedup prevents double-reporting of blobs
+    that exist in more than one partition dir.
+
+    Call from an async context via ``loop.run_in_executor(None,
+    scan_firmware_multi, paths)``.
+    """
+    result = YaraScanResult()
+
+    try:
+        rules = compile_rules(extra_rules_dir)
+        result.rules_loaded = sum(1 for _ in rules)
+    except Exception as e:
+        result.errors.append(f"Failed to compile YARA rules: {e}")
+        logger.error("YARA rule compilation failed", exc_info=True)
+        return result
+
+    if not paths:
+        result.errors.append("No scan roots provided")
+        return result
+
+    matched_shas: set[str] = set()
+    for path in paths:
+        real = os.path.realpath(path)
+        if not os.path.isdir(real):
+            result.errors.append(f"Scan path does not exist: {real}")
+            continue
+        _scan_single_root(
+            rules,
+            scan_root=real,
+            path_rel_base=real,
+            result=result,
+            matched_shas=matched_shas,
+        )
+        if len(result.findings) >= MAX_SCAN_FINDINGS:
+            break
+
     return result

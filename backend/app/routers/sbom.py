@@ -108,8 +108,12 @@ async def generate_sbom(
         )
         await db.flush()
 
-    # Run SBOM generation (CPU-bound, run in thread)
-    service = SbomService(firmware.extracted_path)
+    # Run SBOM generation (CPU-bound, run in thread).
+    # Populate detection_roots cache first so SbomService sees every
+    # sibling partition (rootfs + scatter dirs + raw-image dirs).
+    from app.services.firmware_paths import get_detection_roots
+    await get_detection_roots(firmware, db=db)
+    service = SbomService(firmware=firmware)
     loop = asyncio.get_running_loop()
     try:
         component_dicts = await loop.run_in_executor(None, service.generate_sbom)

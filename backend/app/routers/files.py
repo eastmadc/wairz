@@ -15,8 +15,22 @@ router = APIRouter(prefix="/api/v1/projects/{project_id}/files", tags=["files"])
 def get_file_service(
     firmware: Firmware = Depends(resolve_firmware),
 ) -> FileService:
-    """Build a FileService from the resolved firmware."""
-    return FileService(firmware.extracted_path, extraction_dir=firmware.extraction_dir)
+    """Build a FileService from the resolved firmware.
+
+    Phase 3a: include every detection root (scatter dirs, raw-image dirs)
+    from the JSONB cache so the UI exposes them as top-level virtual
+    entries alongside ``rootfs/``.
+    """
+    extra_roots: list[str] = []
+    meta = getattr(firmware, "device_metadata", None) or {}
+    cached = meta.get("detection_roots")
+    if isinstance(cached, list):
+        extra_roots = [p for p in cached if isinstance(p, str)]
+    return FileService(
+        firmware.extracted_path,
+        extraction_dir=firmware.extraction_dir,
+        extra_roots=extra_roots,
+    )
 
 
 @router.get("")

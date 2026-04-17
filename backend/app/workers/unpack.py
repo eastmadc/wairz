@@ -77,23 +77,23 @@ async def _run_hardware_firmware_detection_safe(
     CLAUDE.md rule 7 — never share an AsyncSession across concurrency
     boundaries).  The graph build is skipped when detection produced no
     blobs.
+
+    Detection delegates to ``get_detection_roots`` (via
+    ``detect_hardware_firmware`` with ``walk_roots=None``) to discover
+    every sibling partition dir. The legacy ``_pick_detection_root``
+    above is kept for other call paths; this detection call no longer
+    needs it.
     """
     from app.database import async_session_factory
     from app.services.hardware_firmware import detect_hardware_firmware
     from app.services.hardware_firmware.graph import build_driver_firmware_graph
 
-    detection_root = _pick_detection_root(extracted_path)
-    if detection_root != extracted_path:
-        logger.info(
-            "HW firmware: walking parent %s (multi-partition container) "
-            "instead of single partition %s",
-            detection_root, extracted_path,
-        )
-
     count = 0
     try:
         async with async_session_factory() as db:
-            count = await detect_hardware_firmware(firmware_id, db, detection_root)
+            # walk_roots=None → detector fetches the Firmware row and
+            # resolves every detection root (rootfs, scatter dirs, etc.).
+            count = await detect_hardware_firmware(firmware_id, db)
             await db.commit()
             logger.info("Hardware firmware detection complete: %d blobs", count)
     except Exception:
