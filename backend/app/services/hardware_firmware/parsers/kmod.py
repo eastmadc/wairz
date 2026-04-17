@@ -37,6 +37,24 @@ _CHIPSET_RES = (
     re.compile(r"(bcm[0-9]{3,5})", re.IGNORECASE),
 )
 
+# Kernel semver prefix on a vermagic string (e.g. "6.6.102-android15-8-g...").
+_KERNEL_SEMVER_RE = re.compile(r"^(\d+\.\d+\.\d+)")
+
+
+def _extract_kernel_semver(vermagic: str | None) -> str | None:
+    """Return the leading ``major.minor.patch`` from a vermagic string.
+
+    Examples::
+
+        "6.6.102-android15-8-g... SMP preempt ..." -> "6.6.102"
+        "5.10.0 SMP preempt mod_unload aarch64"    -> "5.10.0"
+        None / no-match                             -> None
+    """
+    if not vermagic:
+        return None
+    m = _KERNEL_SEMVER_RE.match(vermagic)
+    return m.group(1) if m else None
+
 
 def _parse_modinfo(data: bytes) -> list[tuple[str, str]]:
     """Split a ``.modinfo`` section into ``(key, value)`` pairs."""
@@ -150,6 +168,11 @@ class KmodParser:
                             "version_raw": version_raw,
                         }
                     )
+                    # Expose only the leading semver so the CVE matcher can
+                    # correlate this kmod against a linux_kernel CPE row.
+                    kernel_semver = _extract_kernel_semver(vermagic)
+                    if kernel_semver:
+                        meta["kernel_semver"] = kernel_semver
         except Exception as exc:  # noqa: BLE001
             logger.debug("KmodParser failed on %s: %s", path, exc)
             meta["error"] = str(exc)

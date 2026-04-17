@@ -89,9 +89,9 @@ class SbomVulnerability(Base):
     adjusted_severity: Mapped[str | None] = mapped_column(String(20))
     adjustment_rationale: Mapped[str | None] = mapped_column(Text)
 
-    # Three-tier matcher provenance (populated for hardware firmware rows).
+    # Multi-tier matcher provenance (populated for hardware firmware rows).
     # match_confidence: high | medium | low
-    # match_tier: chipset_cpe | nvd_freetext | curated_yaml
+    # match_tier: chipset_cpe | nvd_freetext | curated_yaml | kernel_cpe
     match_confidence: Mapped[str | None] = mapped_column(String(16))
     match_tier: Mapped[str | None] = mapped_column(String(32))
 
