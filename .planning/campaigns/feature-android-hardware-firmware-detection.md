@@ -6,7 +6,7 @@ started: "2026-04-17T01:32:19Z"
 completed_at: null
 direction: "Android hardware firmware detection — modem/TEE/Wi-Fi/GPU/DSP/drivers: detection, parsers, driver graph, CVE matcher, UI + MCP tools"
 phase_count: 5
-current_phase: 4
+current_phase: 5
 branch: null
 worktree_status: null
 ---
@@ -43,7 +43,7 @@ Direction: Android device images contain 20-40 hardware firmware blobs (modem, T
 | 1 | complete | build | Detect & Classify | Model + migration + detector/classifier + `list_hardware_firmware` MCP tool shipped. Detection runs non-blocking after successful extraction for any firmware via `_run_hardware_firmware_detection_safe` (fire-and-forget with own session). |
 | 2 | complete | build | Per-format Parsers | Six parser plugins (qualcomm_mbn, dtb, kmod, elf_tee, broadcom_wl, raw_bin) via PARSER_REGISTRY + `analyze_hardware_firmware` MCP tool + fixture-based unit tests per parser. |
 | 3 | complete | build | Driver↔Firmware Graph | `graph.py` + `list_firmware_drivers` MCP tool + `loads_firmware` edge type documented in component_map_service + "missing firmware" findings + new `/hardware-firmware/firmware-edges` + `/drivers` REST endpoints. |
-| 4 | pending | build | CVE Heuristic Matcher | Three-tier matcher + `known_firmware.yaml` with ≥10 seed entries + `blob_id` FK migration on `sbom_vulnerabilities` + `check_firmware_cves` MCP tool. |
+| 4 | complete | build | CVE Heuristic Matcher | Three-tier matcher (Tier 3 curated YAML active, Tiers 1/2 stubbed) + `known_firmware.yaml` with 14 seed CVE families (all 14 from research-threats.md §Seed) + migration adds `blob_id` FK + `match_confidence` + `match_tier` + CHECK constraint + `check_firmware_cves` MCP tool. |
 | 5 | pending | build | UI + Remaining MCP Tools | `HardwareFirmwarePage` + API client + sidebar entry + `find_unsigned_firmware` + `extract_dtb` MCP tools. ComponentMap overlay toggle. |
 
 ## Phase End Conditions
@@ -126,6 +126,12 @@ Direction: Android device images contain 20-40 hardware firmware blobs (modem, T
 | `loads_firmware` edge type documented | complete | 3 | Comment-level in `component_map_service.py:ComponentEdge` — no runtime entanglement; frontend renders the overlay from the separate endpoint. |
 | unpack.py hook extended | complete | 3 | Post-detection, if count > 0, `_run_hardware_firmware_detection_safe` fires `build_driver_firmware_graph` in a second session (rule 7). |
 | Graph unit tests | complete | 3 | 17 tests across 4 classes covering `_resolve_firmware_name`, `_scan_vmlinux_firmware_strings`, `build_driver_firmware_graph`, plus idempotency on second run. Mock-based per existing project pattern (no async-sqlite harness). |
+| `cve_matcher.py` — three-tier matcher | complete | 4 | Tier 3 (curated YAML) active; Tiers 1 (chipset CPE lookup) + 2 (NVD free-text) explicitly stubbed per architecture decision. Persists to `sbom_vulnerabilities` with `blob_id` + `match_tier` + `match_confidence`; dedups on (firmware_id, blob_id, cve_id); `db.flush()` not commit. |
+| `known_firmware.yaml` — curated CVE database | complete | 4 | 14 seed CVE families (BroadPwn, Snapdragon modem RCE, Shannon cluster, TEEGRIS Powerful Clipboard, Mali CSF, MediaTek-SU, Hexagon Achilles, MediaTek-reaver, Kr00k, BleedingTooth, QSEE Widevine keybox, kamakiri BROM advisory, EDL programmers, FragAttacks). 202 lines. |
+| Migration `d9b2e3f5a6c7` — sbom_vulnerabilities blob_id | complete | 4 | Adds `blob_id UUID NULL` FK CASCADE to hardware_firmware_blobs; makes `component_id` nullable; CHECK constraint `component_id IS NOT NULL OR blob_id IS NOT NULL`; adds `match_confidence` + `match_tier` columns + `idx_sbom_vulns_blob` index. |
+| `check_firmware_cves` MCP tool | complete | 4 | Runs three-tier matcher against current firmware; returns markdown summary grouped by blob; optional `force_rescan` bypasses dedup. |
+| `pyyaml>=6.0` pip dep | complete | 4 | Added to backend/pyproject.toml. Required for YAML loader (not previously imported in app/). Rebuild both backend and worker. |
+| CVE matcher unit tests | complete | 4 | 7 test functions covering YAML load, curated matching (exact + vendor/chipset/version regex), metadata-version fallback, advisory-only families, Shannon cluster multi-CVE, persistence, idempotency. |
 
 ## Decision Log
 
@@ -145,6 +151,10 @@ Direction: Android device images contain 20-40 hardware firmware blobs (modem, T
 - 2026-04-17T02:15Z: Phase 3 — Graph builder uses TWO independent AsyncSessions (one for detection, one for graph build), fired sequentially from `_run_hardware_firmware_detection_safe`. Reason: CLAUDE.md rule 7 — never share AsyncSession across concurrency boundaries; separate sessions also give cleaner transaction boundaries (detection commits before graph starts).
 - 2026-04-17T02:15Z: Phase 3 — Missing-firmware findings dedup by title within the same firmware_id + source=`hardware_firmware_graph`. Reason: graph builder runs on every detection (and on every API call to `/firmware-edges`) — we must not create duplicate findings on re-runs.
 - 2026-04-17T02:15Z: Phase 3 — vmlinux string scan capped at first 32 MB of file + 500 unique references per file. Reason: vmlinux on modern Android can be 30-50 MB uncompressed; the regex scan cost scales linearly. 32 MB covers the whole image for typical cases while capping worst-case cost.
+- 2026-04-17T02:30Z: Phase 4 — Only Tier 3 (curated YAML) is active; Tiers 1 (chipset CPE) and 2 (NVD free-text) are explicit stubs returning []. Reason: (a) real NVD keyword search is rate-limited + async; (b) chipset→CPE→CVE pipeline needs a separate lookup loop; (c) Tier 3 covers the ~15 famous CVE families where Wairz's differentiation lies; (d) userspace CVEs continue to flow through existing SBOM-grype path. Future phase can expand Tiers 1/2.
+- 2026-04-17T02:30Z: Phase 4 — `component_id` on `sbom_vulnerabilities` is made nullable (was NOT NULL). CHECK constraint `component_id IS NOT NULL OR blob_id IS NOT NULL` enforces that every row has at least one of the two references. Reason: hw firmware CVEs don't have an SBOM component; making the column nullable + adding CHECK preserves integrity.
+- 2026-04-17T02:30Z: Phase 4 — CVE matcher is NOT added to the post-unpack hook. It runs only on explicit MCP tool invocation or future UI button. Reason: CVE matching is a separate user decision (may want to force_rescan, pick a different CVE feed, etc.); keeping it explicit matches the existing `/generate_sbom` pattern for userspace vulns.
+- 2026-04-17T02:30Z: Phase 4 — Advisory-only families (kamakiri BROM — no CVE assigned, permanent mask-ROM bug) emit `ADVISORY-<FAMILY-NAME>` pseudo-IDs instead of CVE rows. Reason: users still need to know the device has an unpatchable BootROM bug; keyed off a pseudo-ID lets it flow through the existing vulnerability table + dedup logic.
 
 ## Review Queue
 
@@ -152,7 +162,8 @@ Direction: Android device images contain 20-40 hardware firmware blobs (modem, T
 - [ ] Verification: Phase 2 — `docker compose exec backend python -c "import fdt"` after `up -d --build backend worker` (rule 8); `docker compose exec backend pytest backend/tests/test_hardware_firmware_parsers.py -q`.
 - [ ] OP-TEE fixture ELF: verify LIEF accepts the section-only ELF64 built by `_build_minimal_elf64`. If rejected, add a PT_LOAD program header to the fixture builder.
 - [ ] MBN v3 header classifier: the parser reports either `"v3"` or `"v5_or_v6"` based on a size heuristic; current fixture ends up as `"v5_or_v6"` because it includes 8-byte cert-ptr extension. Test accepts either. Real-world refinement TBD when we have actual MBN v3 vs v5 samples.
-- [ ] Architecture: Phase 4 — `known_firmware.yaml` CVE families need review before seeding (14 families listed in research-threats.md §Seed CVE Families).
+- [x] Architecture: Phase 4 — `known_firmware.yaml` seeded with all 14 families from research-threats.md §Seed CVE Families. Each has vendor + category + optional chipset_regex + optional version_regex + CVE list + severity + cvss_score + notes.
+- [ ] Phase 4 tuning: BroadPwn + FragAttacks both trigger on any broadcom/wifi blob because FragAttacks has no version_regex gate (applies broadly per 2021 disclosure). Consider tightening FragAttacks `version_regex` once real fixture images are scanned.
 - [ ] UX: Phase 5 — HardwareFirmwarePage layout matches existing ComponentMap left-panel + Monaco pattern.
 - [ ] Security: Phase 1 — magic-byte sniff must use `os.open(O_NOFOLLOW)` or realpath check to prevent symlink escape.
 
@@ -171,10 +182,11 @@ Integration point for Phase 1 is `backend/app/workers/unpack.py:484` (Android fa
 
 ## Continuation State
 
-Phase: 3 (complete, uncommitted) → Phase 4 (pending)
-Sub-step: Phase 3 committed; Phase 4 (CVE matcher) next
+Phase: 4 (complete, uncommitted) → Phase 5 (pending)
+Sub-step: Phase 4 committed; Phase 5 (UI + final MCP tools) next
 Phase 1: committed at ac6a493 (14 files, 1059+/-3 lines)
 Phase 2: committed at 5c9c464 (15 files, 2413+/-27 lines)
+Phase 3: committed at 278aad7 (9 files, 1002+/-7 lines)
 Phase 2 files created (10):
   backend/app/services/hardware_firmware/parsers/__init__.py
   backend/app/services/hardware_firmware/parsers/base.py

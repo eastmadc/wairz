@@ -1,0 +1,202 @@
+# Curated hardware firmware CVE database.
+# Each entry is matched against HardwareFirmwareBlob rows.
+#
+# Matching: a blob MATCHES an entry when:
+#   - blob.vendor == entry.vendor (case-insensitive) AND
+#   - blob.category == entry.category (case-insensitive) AND
+#   - (entry.version_regex is absent) OR
+#     (blob.version matches entry.version_regex) OR
+#     (any string in blob.metadata values matches entry.version_regex)
+#   - optional entry.chipset_regex, blob.chipset_target matches
+#
+# Written 2026-04-17 for Wairz hw-firmware Phase 4.
+
+families:
+  - name: BroadPwn
+    vendor: broadcom
+    category: wifi
+    chipset_regex: "^bcm43(25|30|35|40|50|55|58|59)[0-9a-z]*$"
+    version_regex: "^7\\.(3[0-9]|4[0-9]|5[0-9])\\..*$"
+    cves:
+      - CVE-2017-9417
+    severity: critical
+    cvss_score: 9.8
+    notes: |
+      Nitay Artenstein, BlackHat USA 2017. Stack overflow in BCM43xx Wi-Fi
+      firmware parsing WME IE. RCE on chip, pivot to host via ring buffer.
+
+  - name: Snapdragon modem RCE
+    vendor: qualcomm
+    category: modem
+    version_regex: "(?i).*(2019|2020\\-(0[1-8])).*"
+    cves:
+      - CVE-2020-11292
+    severity: critical
+    cvss_score: 9.8
+    notes: |
+      Check Point Research 2020. Heap overflow in QMI voice service,
+      exploitable via VoLTE signalling.  ~40% of handsets impacted.
+
+  - name: Exynos Shannon RCE cluster (March 2023)
+    vendor: samsung
+    category: modem
+    version_regex: "(?i)s5([0-9]{3})[a-z]?.*"
+    cves:
+      - CVE-2023-24033
+      - CVE-2023-26496
+      - CVE-2023-26072
+      - CVE-2023-26073
+      - CVE-2023-26074
+    severity: critical
+    cvss_score: 9.8
+    notes: |
+      Project Zero March 2023. OTA RCE with only phone number (VoLTE IMS).
+      Pixel 6/7, Galaxy S22, Vivo, wearables.
+
+  - name: Samsung TEEGRIS "Powerful Clipboard"
+    vendor: samsung
+    category: tee
+    version_regex: "(?i)teegris.*(pre\\-nov\\-2022|20(1[5-9]|2[0-1])|2022\\-(0[1-9]|10)).*"
+    cves:
+      - CVE-2021-25337
+      - CVE-2021-25369
+      - CVE-2021-25370
+    severity: high
+    cvss_score: 8.8
+    notes: |
+      Project Zero Maddie Stone Nov 2022.  Chained vulns from unprivileged
+      app to arbitrary R/W inside TEEGRIS.  Widespread Samsung devices.
+
+  - name: Mali GPU CSF exploit
+    vendor: arm
+    category: gpu
+    chipset_regex: "(?i)^mali(\\-(g[57][0-9]|g1[0-9]))?.*"
+    version_regex: "(?i)(r[0-3][0-9]p[0-9]).*"
+    cves:
+      - CVE-2023-4211
+      - CVE-2023-48409
+      - CVE-2022-38181
+      - CVE-2022-22706
+    severity: high
+    cvss_score: 7.8
+    notes: |
+      Project Zero Jann Horn 2022-2023.  Mali CSF firmware scheduling +
+      kernel driver bugs.  In-the-wild Android sandbox escapes (Samsung,
+      Pixel).
+
+  - name: MediaTek-SU
+    vendor: mediatek
+    category: tee
+    version_regex: "(?i).*(geniezone|teei|mtee).*(pre\\-mar\\-2020|2019|2020\\-0[1-2]).*"
+    cves:
+      - CVE-2020-0069
+    severity: critical
+    cvss_score: 9.8
+    notes: |
+      Check Point 2020.  Command injection in MediaTek TEE driver.  Root
+      persistence.  Actively exploited ITW for ~2 years.
+
+  - name: Hexagon Achilles
+    vendor: qualcomm
+    category: dsp
+    version_regex: "(?i).*hexagon.*(sdk|skel).*(pre\\-aug\\-2020).*"
+    cves:
+      - CVE-2020-11201
+      - CVE-2020-11202
+      - CVE-2020-11203
+      - CVE-2020-11204
+      - CVE-2020-11205
+      - CVE-2020-11206
+      - CVE-2020-11207
+      - CVE-2020-11208
+      - CVE-2020-11209
+    severity: high
+    cvss_score: 8.4
+    notes: |
+      Check Point "Achilles" 2020.  400+ vulns in Hexagon SDK/skeletons
+      (aDSP, cDSP, mDSP).  Unprivileged app loading shaders via FastRPC.
+
+  - name: MediaTek-reaver
+    vendor: mediatek
+    category: modem
+    chipset_regex: "(?i)^mt6[78][0-9]{2}.*"
+    cves:
+      - CVE-2021-30351
+      - CVE-2020-3714
+    severity: high
+    cvss_score: 8.1
+    notes: |
+      Check Point 2021.  RRC/NAS buffer overflows in MediaTek modem stack.
+
+  - name: Kr00k
+    vendor: cypress
+    category: wifi
+    version_regex: "(?i)(bcm43430|bcm4345).*"
+    cves:
+      - CVE-2019-15126
+    severity: medium
+    cvss_score: 6.5
+    notes: |
+      ESET 2020.  All-zero encryption key after disassociation on Cypress/
+      Broadcom Wi-Fi.  Widespread impact.
+
+  - name: BleedingTooth
+    vendor: broadcom
+    category: bluetooth
+    cves:
+      - CVE-2020-12351
+      - CVE-2020-12352
+      - CVE-2020-24490
+    severity: high
+    cvss_score: 8.3
+    notes: |
+      Andy Nguyen, Google 2020.  Linux BT stack + Broadcom firmware RCE.
+
+  - name: QSEE Widevine keybox pre-2017
+    vendor: qualcomm
+    category: tee
+    version_regex: "(?i).*(widevine).*(2015|2016|2017\\-0[1-5]).*"
+    cves:
+      - CVE-2015-6639
+      - CVE-2016-2431
+    severity: high
+    cvss_score: 7.5
+    notes: |
+      Gal Beniamini 2015-2016.  Widevine L1 keybox extraction on pre-2017
+      Qualcomm QSEE TAs.
+
+  - name: MediaTek kamakiri BROM
+    vendor: mediatek
+    category: bootloader
+    chipset_regex: "(?i)^mt6[78][0-9]{2}.*"
+    cves: []  # mask-ROM, no CVE — flagged as advisory
+    severity: critical
+    cvss_score: 9.3
+    notes: |
+      chaosmaster 2020 (mtkclient).  Unauthenticated USB command injection
+      in MediaTek BROM.  Universal for MT67xx/MT68xx.  NEVER PATCHED —
+      mask-ROM bug.  Treat as advisory finding, not CVE match.
+
+  - name: Qualcomm EDL leaked programmers
+    vendor: qualcomm
+    category: bootloader
+    cves:
+      - CVE-2017-18159
+    severity: high
+    cvss_score: 7.8
+    notes: |
+      Aleph Security 2017-2018.  Leaked OEM firehose programmers (Xiaomi,
+      Nokia) enabled permanent unlock + implant.
+
+  - name: FragAttacks
+    vendor: broadcom
+    category: wifi
+    cves:
+      - CVE-2020-24586
+      - CVE-2020-24587
+      - CVE-2020-24588
+    severity: medium
+    cvss_score: 6.5
+    notes: |
+      Vanhoef 2021.  802.11 fragmentation parsing bugs in Broadcom/
+      MediaTek Wi-Fi firmware.

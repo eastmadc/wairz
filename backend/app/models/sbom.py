@@ -48,14 +48,19 @@ class SbomVulnerability(Base):
         default=uuid.uuid4,
         server_default=func.gen_random_uuid(),
     )
-    component_id: Mapped[uuid.UUID] = mapped_column(
+    component_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("sbom_components.id", ondelete="CASCADE"),
-        nullable=False,
+        nullable=True,
         index=True,
     )
     firmware_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("firmware.id", ondelete="CASCADE"),
         nullable=False,
+        index=True,
+    )
+    blob_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("hardware_firmware_blobs.id", ondelete="CASCADE"),
+        nullable=True,
         index=True,
     )
     cve_id: Mapped[str] = mapped_column(String(20), nullable=False)
@@ -84,6 +89,12 @@ class SbomVulnerability(Base):
     adjusted_severity: Mapped[str | None] = mapped_column(String(20))
     adjustment_rationale: Mapped[str | None] = mapped_column(Text)
 
+    # Three-tier matcher provenance (populated for hardware firmware rows).
+    # match_confidence: high | medium | low
+    # match_tier: chipset_cpe | nvd_freetext | curated_yaml
+    match_confidence: Mapped[str | None] = mapped_column(String(16))
+    match_tier: Mapped[str | None] = mapped_column(String(32))
+
     component: Mapped["SbomComponent"] = relationship(back_populates="vulnerabilities")
 
     __table_args__ = (
@@ -91,4 +102,5 @@ class SbomVulnerability(Base):
         Index("idx_sbom_vulns_firmware", "firmware_id"),
         Index("idx_sbom_vulns_cve", "cve_id"),
         Index("idx_sbom_vulns_resolution", "resolution_status"),
+        Index("idx_sbom_vulns_blob", "blob_id"),
     )
