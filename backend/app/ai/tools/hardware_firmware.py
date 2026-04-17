@@ -14,6 +14,7 @@ from sqlalchemy import select
 
 from app.ai.tool_registry import ToolContext, ToolRegistry
 from app.models.hardware_firmware import HardwareFirmwareBlob
+from app.services.hardware_firmware.cve_matcher import CveMatch
 
 
 async def _handle_list_hardware_firmware(input: dict, context: ToolContext) -> str:
@@ -180,6 +181,48 @@ async def _handle_list_firmware_drivers(input: dict, context: ToolContext) -> st
     return "\n".join(lines)
 
 
+async def _handle_check_firmware_cves(input: dict, context: ToolContext) -> str:
+    """Run the three-tier CVE matcher against all detected hw-firmware blobs."""
+    from app.services.hardware_firmware.cve_matcher import match_firmware_cves
+
+    force_rescan = bool(input.get("force_rescan", False))
+    matches = await match_firmware_cves(
+        context.firmware_id, context.db, force_rescan=force_rescan
+    )
+
+    if not matches:
+        return (
+            "No hardware firmware CVE matches. Either detection hasn't run, "
+            "no blobs were classified/parsed, or none of them match curated "
+            "CVE families.  Tier 3 (curated YAML) covers ~15 famous CVE "
+            "families — modem, TEE, Wi-Fi, GPU, DSP, bootloader."
+        )
+
+    # Group by blob
+    by_blob: dict[str, list[CveMatch]] = {}
+    for m in matches:
+        by_blob.setdefault(str(m.blob_id), []).append(m)
+
+    lines = [
+        f"# Hardware firmware CVE matches ({len(matches)} total across {len(by_blob)} blob(s))",
+        "",
+    ]
+    for blob_id, group in by_blob.items():
+        lines.append(f"## Blob `{blob_id}`")
+        lines.append("")
+        for m in group:
+            sev = f"**{m.severity.upper()}**"
+            cvss = f" (CVSS {m.cvss_score})" if m.cvss_score else ""
+            tier = f"_{m.tier}_"
+            conf = f"confidence={m.confidence}"
+            lines.append(
+                f"- {m.cve_id} · {sev}{cvss} · {tier} · {conf}"
+            )
+            lines.append(f"  {m.description.strip()[:200]}")
+        lines.append("")
+    return "\n".join(lines)
+
+
 def register_hardware_firmware_tools(registry: ToolRegistry) -> None:
     """Register hardware firmware MCP tools with the given registry."""
     registry.register(
@@ -258,4 +301,27 @@ def register_hardware_firmware_tools(registry: ToolRegistry) -> None:
             },
         },
         handler=_handle_list_firmware_drivers,
+    )
+
+    registry.register(
+        name="check_firmware_cves",
+        description=(
+            "Run the three-tier CVE matcher against all detected hardware firmware "
+            "blobs and return CVE matches. Results also persist to sbom_vulnerabilities "
+            "with blob_id, match_tier (chipset_cpe|nvd_freetext|curated_yaml), and "
+            "match_confidence (high|medium|low)."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "force_rescan": {
+                    "type": "boolean",
+                    "description": (
+                        "If true, re-run matching even for blobs that already "
+                        "have persisted CVEs."
+                    ),
+                },
+            },
+        },
+        handler=_handle_check_firmware_cves,
     )
