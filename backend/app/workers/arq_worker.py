@@ -11,6 +11,7 @@ import os
 import uuid
 
 from arq.connections import RedisSettings
+from arq.cron import cron
 from sqlalchemy import select
 
 from app.config import get_settings
@@ -319,6 +320,27 @@ async def run_yara_scan_job(
 
 
 # ---------------------------------------------------------------------------
+# Job: kernel.org vulns.git sync (Phase 4 — kernel_subsystem Tier 5 backing)
+# ---------------------------------------------------------------------------
+
+async def sync_kernel_vulns_job(ctx: dict) -> dict:
+    """Daily cron: sync ``vulns.git`` and rebuild the Redis subsystem index.
+
+    Feeds :func:`cve_matcher._match_kernel_subsystem` (Tier 5).  Fail-soft
+    at every step — a failed sync must never crash the arq worker.
+    """
+    from app.services.hardware_firmware import kernel_vulns_index as kvi
+
+    try:
+        result = await kvi.sync()
+        logger.info("kernel_vulns sync: %s", result)
+        return result
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("kernel_vulns sync failed: %s", exc)
+        return {"status": "error", "error": str(exc)}
+
+
+# ---------------------------------------------------------------------------
 # arq WorkerSettings — discovered by ``arq app.workers.arq_worker.WorkerSettings``
 # ---------------------------------------------------------------------------
 
@@ -330,6 +352,14 @@ class WorkerSettings:
         run_ghidra_analysis_job,
         run_vulnerability_scan_job,
         run_yara_scan_job,
+        sync_kernel_vulns_job,
+    ]
+
+    # Daily cron at 03:00 UTC: refresh the kernel-subsystem CVE index from
+    # kernel.org's vulns.git feed.  Fail-soft — the sync job swallows
+    # exceptions and returns a status dict.
+    cron_jobs = [
+        cron(sync_kernel_vulns_job, hour=3, minute=0),
     ]
 
     redis_settings = get_redis_settings()

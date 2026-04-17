@@ -71,6 +71,7 @@ services:
       - "host.docker.internal:host-gateway"
     volumes:
       - firmware_data:/data/firmware
+      - kernel_vulns_data:/data/kernel-vulns
       - ./ghidra/scripts:/opt/ghidra_scripts:ro
       - ./emulation/kernels:/opt/kernels:rw
       - /var/run/docker.sock:/var/run/docker.sock
@@ -124,6 +125,7 @@ services:
       - "host.docker.internal:host-gateway"
     volumes:
       - firmware_data:/data/firmware
+      - kernel_vulns_data:/data/kernel-vulns
       - ./ghidra/scripts:/opt/ghidra_scripts:ro
       - ./emulation/kernels:/opt/kernels:rw
       - /var/run/docker.sock:/var/run/docker.sock
@@ -268,6 +270,7 @@ volumes:
   pgdata:
   redisdata:
   firmware_data:
+  kernel_vulns_data:
   clamav-db:
 
 networks:

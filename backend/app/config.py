@@ -55,6 +55,9 @@ class Settings(BaseSettings):
     vulnerability_backend: str = "grype"  # "grype" or "nvd"
     grype_db_cache_dir: str = "/data/grype-db"
     grype_timeout: int = 120
+    kernel_vulns_git_url: str = "https://git.kernel.org/pub/scm/linux/security/vulns.git"
+    kernel_vulns_cache_dir: str = "/data/kernel-vulns"
+    kernel_vulns_sync_timeout: int = 600
     max_extraction_size_mb: int = 10240
     max_extraction_files: int = 500000
     max_compression_ratio: int = 200
