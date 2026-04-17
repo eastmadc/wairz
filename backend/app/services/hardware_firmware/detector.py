@@ -8,6 +8,7 @@ import stat as _stat
 import time
 import uuid
 from collections import deque
+from datetime import UTC, datetime
 
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
@@ -219,6 +220,11 @@ async def detect_hardware_firmware(
     ``(firmware_id, blob_sha256)`` — identical blobs in two partition
     dirs collapse to one row.
     """
+    # Track whether the caller supplied walk_roots explicitly — backfill and
+    # test paths pass them in; live detection leaves them None. Used below to
+    # decide whether to stamp the Phase 5 observability audit.
+    walk_roots_supplied = walk_roots is not None
+
     # Resolve walk_roots from the Firmware row when not supplied.
     if walk_roots is None:
         result = await db.execute(
@@ -245,6 +251,10 @@ async def detect_hardware_firmware(
             "Hardware firmware detector: no detection roots for firmware_id=%s",
             firmware_id,
         )
+        await _stamp_detection_audit(
+            db, firmware_id, walk_roots=[], count=0,
+            supplied=walk_roots_supplied,
+        )
         return 0
 
     logger.info(
@@ -269,6 +279,10 @@ async def detect_hardware_firmware(
 
     if not rows:
         logger.info("Hardware firmware detector: no candidates classified")
+        await _stamp_detection_audit(
+            db, firmware_id, walk_roots=walk_roots, count=0,
+            supplied=walk_roots_supplied,
+        )
         return 0
 
     # In-memory dedupe across roots by SHA-256 (belt-and-braces; the DB
@@ -323,4 +337,80 @@ async def detect_hardware_firmware(
         len(values),
         firmware_id,
     )
+
+    # Phase 5 observability: stamp a detection audit on the firmware row so
+    # we can surface orphan-rate regressions without re-walking disk.
+    await _stamp_detection_audit(
+        db, firmware_id, walk_roots=walk_roots, count=len(values),
+        supplied=walk_roots_supplied,
+    )
+
     return len(values)
+
+
+# ---------------------------------------------------------------------------
+# Phase 5 observability helper
+# ---------------------------------------------------------------------------
+
+_AUDIT_FILE_CAP = 50_000
+
+
+def _count_files_on_disk(walk_roots: list[str]) -> int:
+    """Sync best-effort file count across ``walk_roots``.
+
+    Bails past ``_AUDIT_FILE_CAP`` so a huge tree doesn't dominate the
+    post-detection wall-clock. Kept sync so it can run in the thread
+    executor; see ``_stamp_detection_audit`` for the async wrapper.
+    """
+    total = 0
+    for root in walk_roots:
+        try:
+            for _dirpath, _dirnames, filenames in os.walk(root):
+                total += len(filenames)
+                if total > _AUDIT_FILE_CAP:
+                    return total
+        except OSError:
+            continue
+    return total
+
+
+async def _stamp_detection_audit(
+    db: AsyncSession,
+    firmware_id: uuid.UUID,
+    *,
+    walk_roots: list[str],
+    count: int,
+    supplied: bool,
+) -> None:
+    """Write ``device_metadata['detection_audit']`` for Phase 5 observability.
+
+    Runs on every live detection AND every explicit-walk (test / backfill)
+    invocation. The backfill script additionally stamps
+    ``last_backfill_at`` + ``orphans_pre_backfill`` — both paths coexist.
+
+    Failures here are swallowed — observability must never break detection.
+    """
+    try:
+        file_total = await asyncio.to_thread(_count_files_on_disk, walk_roots)
+        orphan_ratio = (
+            round((file_total - count) / file_total, 3) if file_total else 0.0
+        )
+        audit_update = {
+            "roots_count": len(walk_roots),
+            "blobs_detected": count,
+            "files_on_disk": file_total,
+            "orphan_ratio": orphan_ratio,
+            "last_detection_at": datetime.now(UTC).isoformat(),
+            "walk_source": "explicit" if supplied else "resolver",
+        }
+        fw_row = await db.get(Firmware, firmware_id)
+        if fw_row is None:
+            return
+        existing = dict(fw_row.device_metadata or {})
+        merged_audit = dict(existing.get("detection_audit") or {})
+        merged_audit.update(audit_update)
+        existing["detection_audit"] = merged_audit
+        fw_row.device_metadata = existing
+        await db.flush()
+    except Exception:  # noqa: BLE001
+        logger.exception("detection_audit stamp failed")

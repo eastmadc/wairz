@@ -12,12 +12,14 @@ from app.models.firmware import Firmware
 from app.models.project import Project
 from app.schemas.firmware import (
     FirmwareDetailResponse,
+    FirmwareDetectionAuditResponse,
     FirmwareMetadataResponse,
     FirmwareUpdate,
     FirmwareUploadResponse,
 )
 from app.config import get_settings
 from app.services.firmware_metadata_service import FirmwareMetadataService
+from app.services.firmware_paths import get_detection_roots
 from app.services.firmware_service import FirmwareService
 from app.workers.unpack import detect_kernel, unpack_firmware
 
@@ -373,6 +375,80 @@ async def get_firmware_metadata(
         firmware.storage_path, firmware.id, db,
     )
     return metadata
+
+
+@router.get("/{firmware_id}/audit", response_model=FirmwareDetectionAuditResponse)
+async def get_firmware_detection_audit(
+    project_id: uuid.UUID,
+    firmware_id: uuid.UUID,
+    recompute: bool = False,
+    db: AsyncSession = Depends(get_db),
+    service: FirmwareService = Depends(get_firmware_service),
+):
+    """Return the Phase-5 extraction-integrity audit for a firmware row.
+
+    Reads ``device_metadata['detection_audit']`` stamped by the detector
+    (and by the backfill script). When ``?recompute=true`` is passed, the
+    endpoint additionally walks the resolved detection roots and returns
+    up to 10 unclassified filenames as ``orphans_preview`` — a cheap
+    regression signal without a full re-detection.
+    """
+    firmware = await service.get_by_id(firmware_id)
+    if not firmware or firmware.project_id != project_id:
+        raise HTTPException(404, "Firmware not found")
+
+    metadata = dict(firmware.device_metadata or {})
+    audit = dict(metadata.get("detection_audit") or {})
+
+    # Resolve roots up-front — cheap (JSONB cache) and needed for orphan preview.
+    roots = await get_detection_roots(firmware, db=db)
+
+    orphans_preview: list[str] | None = None
+    if recompute:
+        # Lazy-imported: pulls in HardwareFirmwareBlob + sqlalchemy, only
+        # needed when the caller explicitly asks for a disk walk.
+        from app.models.hardware_firmware import HardwareFirmwareBlob
+
+        blob_rows = await db.execute(
+            select(HardwareFirmwareBlob.blob_path).where(
+                HardwareFirmwareBlob.firmware_id == firmware_id
+            )
+        )
+        detected_paths = {
+            os.path.realpath(p)
+            for (p,) in blob_rows.all()
+            if isinstance(p, str) and p
+        }
+
+        def _collect_orphans(walk_roots: list[str]) -> list[str]:
+            found: list[str] = []
+            for root in walk_roots:
+                try:
+                    for dirpath, _dirs, files in os.walk(root):
+                        for name in files:
+                            full = os.path.join(dirpath, name)
+                            try:
+                                real = os.path.realpath(full)
+                            except OSError:
+                                continue
+                            if real in detected_paths:
+                                continue
+                            found.append(full)
+                            if len(found) >= 10:
+                                return found
+                except OSError:
+                    continue
+            return found
+
+        orphans_preview = await asyncio.to_thread(_collect_orphans, roots)
+
+    return FirmwareDetectionAuditResponse(
+        firmware_id=firmware.id,
+        extracted_path=firmware.extracted_path,
+        detection_roots=roots,
+        audit=audit,
+        orphans_preview=orphans_preview,
+    )
 
 
 # ── Backward-compatible endpoints (no firmware_id in path) ──
