@@ -40,6 +40,34 @@ from app.workers.unpack_android import _extract_android_ota, _extract_boot_img  
 logger = logging.getLogger(__name__)
 
 
+# Sibling directory names that indicate extracted_path is ONE partition
+# inside a multi-partition Android container; we walk the parent to cover
+# all partitions (vendor, system, odm, etc.) in a single pass.
+_ANDROID_PARTITION_SIBLINGS = frozenset({
+    "vendor", "system", "odm", "product", "system_ext", "boot",
+    "vendor_boot", "init_boot", "modem", "firmware",
+})
+
+
+def _pick_detection_root(extracted_path: str) -> str:
+    """Walk the parent directory when extracted_path is one partition in a
+    multi-partition Android layout.  Otherwise return extracted_path as-is.
+    """
+    try:
+        parent = os.path.dirname(extracted_path.rstrip("/"))
+        if not parent or parent == extracted_path:
+            return extracted_path
+        siblings = {e.name for e in os.scandir(parent) if e.is_dir(follow_symlinks=False)}
+    except OSError:
+        return extracted_path
+    # Treat as multi-partition if we see Android partition-style siblings
+    # or multiple "partition_*_erofs" entries.
+    partition_like = sum(1 for s in siblings if s.startswith("partition_"))
+    if partition_like >= 2 or (siblings & _ANDROID_PARTITION_SIBLINGS):
+        return parent
+    return extracted_path
+
+
 async def _run_hardware_firmware_detection_safe(
     firmware_id: uuid.UUID, extracted_path: str,
 ) -> None:
@@ -54,10 +82,18 @@ async def _run_hardware_firmware_detection_safe(
     from app.services.hardware_firmware import detect_hardware_firmware
     from app.services.hardware_firmware.graph import build_driver_firmware_graph
 
+    detection_root = _pick_detection_root(extracted_path)
+    if detection_root != extracted_path:
+        logger.info(
+            "HW firmware: walking parent %s (multi-partition container) "
+            "instead of single partition %s",
+            detection_root, extracted_path,
+        )
+
     count = 0
     try:
         async with async_session_factory() as db:
-            count = await detect_hardware_firmware(firmware_id, db, extracted_path)
+            count = await detect_hardware_firmware(firmware_id, db, detection_root)
             await db.commit()
             logger.info("Hardware firmware detection complete: %d blobs", count)
     except Exception:

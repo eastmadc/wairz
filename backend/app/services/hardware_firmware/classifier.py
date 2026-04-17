@@ -122,11 +122,36 @@ _TLBIN_RE = re.compile(r"\.tlbin$", re.IGNORECASE)
 _VENUS_RE = re.compile(r"^(venus\.mbn|video-firmware\.elf)$", re.IGNORECASE)
 _IPA_RE = re.compile(r"^(ipa_fws\.elf|ipa_uc\.elf)$", re.IGNORECASE)
 
-# Firmware-partition directory hints
+# Firmware-partition directory hints (Qualcomm-specific)
 _FW_PARTITION_HINTS = (
     "/vendor/firmware_mnt/",
     "/firmware/image/",
 )
+
+# "This is a firmware blob" path signals — must be specific enough NOT to
+# match the container storage root (e.g. /data/firmware/) or other
+# coincidental substrings.  We require a partition-style prefix.
+_FIRMWARE_PATH_SIGNALS = (
+    "/vendor/firmware/",
+    "/vendor/firmware_mnt/",
+    "/vendor/etc/firmware/",
+    "/vendor/dsp/",
+    "/vendor/rfs/",
+    "/vendor/app/mcregistry/",
+    "/vendor/lib/modules/",
+    "/system/etc/firmware/",
+    "/system/vendor/firmware/",
+    "/system/lib/modules/",
+    "/system_ext/etc/firmware/",
+    "/odm/firmware/",
+    "/odm/etc/firmware/",
+    "/product/firmware/",
+)
+
+
+def _is_firmware_path(lpath: str) -> bool:
+    """True if the lowercase path matches a known firmware-blob directory."""
+    return any(hint in lpath for hint in _FIRMWARE_PATH_SIGNALS)
 
 
 def _is_qcom_filename(name: str) -> bool:
@@ -229,7 +254,12 @@ def classify(path: str, magic: bytes, size: int) -> Classification | None:
         # In Qualcomm firmware-mount partition — likely PIL ELF
         if any(hint in lpath for hint in _FW_PARTITION_HINTS):
             return Classification("other", "qualcomm", "elf", "low")
-        return Classification("other", "unknown", "elf", "low")
+        # Any other ELF under /vendor/firmware/ etc. is still worth capturing
+        if _is_firmware_path(lpath):
+            return Classification("other", "unknown", "elf", "low")
+        # Regular system/vendor binaries (e.g. /system/bin/*, /vendor/lib/*.so)
+        # are NOT hardware firmware — skip them so we don't flood the UI.
+        return None
 
     # Qualcomm split PIL pieces (.b00..b0F, .mdt) even if magic didn't hit ELF at .bNN start
     if primary is None and _is_qcom_filename(name):
@@ -283,6 +313,13 @@ def classify(path: str, magic: bytes, size: int) -> Classification | None:
 
     if primary is not None:
         return primary
+
+    # Fallback: anything in a known firmware-partition directory that didn't
+    # match a specific pattern is almost certainly some form of hardware
+    # firmware (vendor chipset blobs without explicit extensions, config
+    # blobs, patch files, etc.).  Low confidence, but captured.
+    if _is_firmware_path(lpath):
+        return Classification("other", "unknown", "raw_bin", "low")
 
     # Nothing matched — skip.
     return None
