@@ -1,0 +1,17 @@
+{
+  "agent": "archon",
+  "campaign": "feature-hw-firmware-phase2-enrichment",
+  "claimed_at": "2026-04-17T15:00:00Z",
+  "scope": [
+    "backend/app/services/hardware_firmware/",
+    "backend/app/services/grype_service.py",
+    "backend/app/ai/tools/hardware_firmware.py",
+    "backend/app/routers/hardware_firmware.py",
+    "backend/app/models/hardware_firmware.py",
+    "backend/app/schemas/hardware_firmware.py",
+    "backend/app/services/sbom_service.py",
+    "frontend/src/pages/HardwareFirmwarePage.tsx",
+    "frontend/src/components/hardware-firmware/"
+  ],
+  "expires_at": "2026-04-24T15:00:00Z"
+}
