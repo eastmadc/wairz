@@ -35,6 +35,7 @@ from app.schemas.hardware_firmware import (
 )
 from app.services.hardware_firmware.cve_matcher import match_firmware_cves
 from app.services.hardware_firmware.graph import build_driver_firmware_graph
+from app.services.hardware_firmware.hbom_export import build_hbom
 
 router = APIRouter(
     prefix="/api/v1/projects/{project_id}/hardware-firmware",
@@ -164,6 +165,25 @@ async def run_cve_match(
     matches = await match_firmware_cves(firmware.id, db, force_rescan=force_rescan)
     await db.commit()
     return {"count": len(matches)}
+
+
+@router.get("/cdx.json")
+async def export_hbom(
+    firmware=Depends(_resolve_firmware),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Export a CycloneDX v1.6 HBOM for the resolved firmware.
+
+    Emits one ``hardware`` + one ``firmware`` component per detected blob,
+    linked via ``dependencies.provides``.  Any ``sbom_vulnerabilities``
+    rows with ``blob_id`` set are attached to the corresponding firmware
+    component bom-ref.
+
+    The response is served as ``application/json`` (FastAPI default) and
+    is structurally JSON rather than matching a Pydantic schema — the
+    CycloneDX spec is the contract.
+    """
+    return await build_hbom(firmware.id, db)
 
 
 @router.get("/{blob_id}", response_model=HardwareFirmwareBlobResponse)

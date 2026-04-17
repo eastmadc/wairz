@@ -321,6 +321,16 @@ async def _handle_extract_dtb(input: dict, context: ToolContext) -> str:
     return "\n".join(lines)
 
 
+async def _handle_export_hardware_firmware_hbom(
+    input: dict, context: ToolContext,
+) -> str:
+    """Export a CycloneDX v1.6 HBOM for the current firmware (JSON string)."""
+    from app.services.hardware_firmware.hbom_export import build_hbom
+
+    hbom = await build_hbom(context.firmware_id, context.db)
+    return json.dumps(hbom, indent=2, default=str)
+
+
 async def _handle_check_firmware_cves(input: dict, context: ToolContext) -> str:
     """Run the three-tier CVE matcher against all detected hw-firmware blobs."""
     from app.services.hardware_firmware.cve_matcher import match_firmware_cves
@@ -476,6 +486,21 @@ def register_hardware_firmware_tools(registry: ToolRegistry) -> None:
         ),
         input_schema={"type": "object", "properties": {}},
         handler=_handle_find_unsigned_firmware,
+    )
+
+    registry.register(
+        name="export_hardware_firmware_hbom",
+        description=(
+            "Export a CycloneDX v1.6 HBOM (Hardware Bill of Materials) for "
+            "the current firmware.  Emits one hardware + one firmware "
+            "component per detected blob, linked via dependencies.provides, "
+            "with SHA-256 hashes, supplier/manufacturer metadata, and any "
+            "CVE matches attached to the firmware components.  Useful for "
+            "export to external SBOM tooling (dependency-track, grype, "
+            "etc.) and for compliance documentation."
+        ),
+        input_schema={"type": "object", "properties": {}},
+        handler=_handle_export_hardware_firmware_hbom,
     )
 
     registry.register(
