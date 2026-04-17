@@ -25,6 +25,50 @@ logger = logging.getLogger(__name__)
 ASSESSMENT_SOURCE = "security_review"
 
 
+#: Android partition-style directory pairs. Each entry is
+#: ``"<partition>/<dir>"`` — rooted at every detection root, these are
+#: scanned for APKs. Phase 3b expansion: previously only ``system/app``
+#: and ``system/priv-app`` were checked, missing apps shipped in
+#: ``product/app/`` (common on AOSP builds past Q) and the four-way
+#: ``system/system_ext/vendor/odm`` partition split on newer devices.
+ANDROID_APK_PARTITION_DIRS: tuple[str, ...] = (
+    "system/app",
+    "system/priv-app",
+    "product/app",
+    "product/priv-app",
+    "vendor/app",
+    "vendor/priv-app",
+    "system_ext/app",
+    "system_ext/priv-app",
+    "odm/app",
+    "odm/priv-app",
+)
+
+
+def _enumerate_android_apk_dirs(roots: list[str]) -> list[str]:
+    """Return every existing Android APK-holding directory under ``roots``.
+
+    Covers the 10 partition/directory pairs listed in
+    ``ANDROID_APK_PARTITION_DIRS`` across each detection root. Exposed
+    as a module-level helper so unit tests can exercise it in isolation.
+    """
+    out: list[str] = []
+    seen: set[str] = set()
+    for root in roots:
+        if not root:
+            continue
+        for rel in ANDROID_APK_PARTITION_DIRS:
+            candidate = os.path.join(root, rel)
+            if not os.path.isdir(candidate):
+                continue
+            real = os.path.realpath(candidate)
+            if real in seen:
+                continue
+            seen.add(real)
+            out.append(candidate)
+    return out
+
+
 class AssessmentService:
     """Orchestrates a full firmware security assessment across multiple phases."""
 
@@ -40,6 +84,38 @@ class AssessmentService:
         self.extracted_path = os.path.realpath(extracted_path)
         self.db = db
         self.finding_svc = FindingService(db)
+        # Phase 3b: every detection root surfaced by the helper — phases
+        # iterate this list so scatter-zip partitions / raw-image dirs are
+        # scanned alongside the primary rootfs. Populated lazily on first
+        # access via ``_resolve_detection_roots`` so the constructor stays
+        # synchronous and single-root tests keep working.
+        self._detection_roots: list[str] | None = None
+
+    async def _resolve_detection_roots(self) -> list[str]:
+        """Return every detection root for this firmware, memoised.
+
+        Falls back to ``[self.extracted_path]`` if the helper fails or
+        returns nothing — callers can always iterate.
+        """
+        if self._detection_roots is not None:
+            return self._detection_roots
+        try:
+            from app.models.firmware import Firmware
+            from app.services.firmware_paths import get_detection_roots
+
+            fw = await self.db.get(Firmware, self.firmware_id)
+            if fw is not None:
+                roots = await get_detection_roots(fw, db=self.db)
+                if roots:
+                    self._detection_roots = [os.path.realpath(r) for r in roots]
+                    return self._detection_roots
+        except Exception as exc:  # noqa: BLE001
+            logger.debug(
+                "detection_roots resolution failed, using extracted_path only: %s",
+                exc,
+            )
+        self._detection_roots = [self.extracted_path]
+        return self._detection_roots
 
     async def run_full_assessment(
         self,
@@ -204,16 +280,19 @@ class AssessmentService:
         findings: list[SecurityFinding] = []
         loop = asyncio.get_running_loop()
 
-        # Run sync scan functions in thread executor
-        await loop.run_in_executor(
-            None, _scan_credentials, self.extracted_path, findings
-        )
-        await loop.run_in_executor(
-            None, _scan_shadow, self.extracted_path, findings
-        )
-        await loop.run_in_executor(
-            None, _scan_crypto_material, self.extracted_path, findings
-        )
+        # Phase 3b: iterate every detection root so scatter-zip siblings
+        # and raw-image partitions get scanned in one pass.
+        roots = await self._resolve_detection_roots()
+        for root in roots:
+            await loop.run_in_executor(
+                None, _scan_credentials, root, findings
+            )
+            await loop.run_in_executor(
+                None, _scan_shadow, root, findings
+            )
+            await loop.run_in_executor(
+                None, _scan_crypto_material, root, findings
+            )
 
         created = 0
         for sf in findings:
@@ -236,6 +315,7 @@ class AssessmentService:
 
     async def _phase_sbom_vulnerability(self) -> int:
         """Generate SBOM and scan for known vulnerabilities."""
+        from app.models.firmware import Firmware
         from app.services.sbom_service import SbomService
         from app.services.vulnerability_service import VulnerabilityService
 
@@ -247,8 +327,14 @@ class AssessmentService:
         )
 
         if not existing_count:
-            # Generate SBOM (sync, CPU-bound)
-            svc = SbomService(self.extracted_path)
+            # Phase 3b: construct SbomService with the Firmware row so it
+            # walks every detection root via the helper. Falls back to the
+            # single-root constructor when the row is unavailable (tests).
+            fw = await self.db.get(Firmware, self.firmware_id)
+            if fw is not None:
+                svc = SbomService(firmware=fw)
+            else:
+                svc = SbomService(self.extracted_path)
             loop = asyncio.get_running_loop()
             component_dicts = await loop.run_in_executor(
                 None, svc.generate_sbom
@@ -297,15 +383,18 @@ class AssessmentService:
         findings: list[SecurityFinding] = []
         loop = asyncio.get_running_loop()
 
-        await loop.run_in_executor(
-            None, _scan_init_services, self.extracted_path, findings
-        )
-        await loop.run_in_executor(
-            None, _scan_setuid, self.extracted_path, findings
-        )
-        await loop.run_in_executor(
-            None, _scan_world_writable, self.extracted_path, findings
-        )
+        # Phase 3b: scan every detection root.
+        roots = await self._resolve_detection_roots()
+        for root in roots:
+            await loop.run_in_executor(
+                None, _scan_init_services, root, findings
+            )
+            await loop.run_in_executor(
+                None, _scan_setuid, root, findings
+            )
+            await loop.run_in_executor(
+                None, _scan_world_writable, root, findings
+            )
 
         created = 0
         for sf in findings:
@@ -330,13 +419,15 @@ class AssessmentService:
         """Run YARA scan and optional Semgrep scan."""
         created = 0
 
-        # YARA scan
+        # YARA scan — Phase 3b: multi-root via scan_firmware_multi so
+        # scatter-zip siblings / raw-image dirs are covered in one pass.
         try:
-            from app.services.yara_service import scan_firmware
+            from app.services.yara_service import scan_firmware_multi
 
+            roots = await self._resolve_detection_roots()
             loop = asyncio.get_running_loop()
             yara_result = await loop.run_in_executor(
-                None, scan_firmware, self.extracted_path
+                None, scan_firmware_multi, roots
             )
 
             for sf in yara_result.findings:
@@ -376,12 +467,14 @@ class AssessmentService:
             logger.debug("Semgrep not installed, skipping")
             return 0
 
-        # Scan common script directories for injection/command issues
-        targets = []
-        for d in ["etc", "usr/bin", "usr/sbin", "www", "opt"]:
-            path = os.path.join(self.extracted_path, d)
-            if os.path.isdir(path):
-                targets.append(path)
+        # Phase 3b: collect script dirs across every detection root.
+        roots = await self._resolve_detection_roots()
+        targets: list[str] = []
+        for root in roots:
+            for d in ["etc", "usr/bin", "usr/sbin", "www", "opt"]:
+                path = os.path.join(root, d)
+                if os.path.isdir(path):
+                    targets.append(path)
 
         if not targets:
             return 0
@@ -417,10 +510,13 @@ class AssessmentService:
                 sev = sev_map.get(severity, "medium")
 
                 file_path = result.get("path", "")
-                if file_path.startswith(self.extracted_path):
-                    file_path = (
-                        "/" + os.path.relpath(file_path, self.extracted_path)
-                    )
+                # Phase 3b: normalise against any detection root so multi-root
+                # Semgrep output shows firmware-relative paths for partitions
+                # too, not just the primary rootfs.
+                for _root in roots:
+                    if file_path.startswith(_root):
+                        file_path = "/" + os.path.relpath(file_path, _root)
+                        break
 
                 await self._create_finding(
                     title=f"Semgrep: {check_id.split('.')[-1]}",
@@ -446,13 +542,22 @@ class AssessmentService:
             _scan_all_binary_protections,
         )
 
+        # Phase 3b: scan every detection root. Results from sibling
+        # partitions are labelled with paths relative to their own root
+        # (``_scan_all_binary_protections`` already takes a ``real_root``
+        # argument), so findings never mix partition prefixes.
+        roots = await self._resolve_detection_roots()
         loop = asyncio.get_running_loop()
-        results = await loop.run_in_executor(
-            None,
-            _scan_all_binary_protections,
-            self.extracted_path,
-            self.extracted_path,
-        )
+        results: list[dict] = []
+        for root in roots:
+            part_results = await loop.run_in_executor(
+                None,
+                _scan_all_binary_protections,
+                root,
+                root,
+            )
+            if part_results:
+                results.extend(part_results)
 
         if not results:
             return 0
@@ -514,22 +619,32 @@ class AssessmentService:
 
     async def _phase_android(self) -> int:
         """Run Android-specific checks if firmware appears to be Android."""
-        # Detect Android firmware
-        android_markers = [
-            os.path.join(self.extracted_path, "system", "app"),
-            os.path.join(self.extracted_path, "system", "build.prop"),
-        ]
-        is_android = any(os.path.exists(m) for m in android_markers)
-        if not is_android:
+        # Phase 3b: check every detection root for Android markers. Works
+        # around single-root detection missing Android firmware where the
+        # rootfs is a scatter-zip sibling instead of the primary path.
+        roots = await self._resolve_detection_roots()
+        android_root: str | None = None
+        for root in roots:
+            markers = [
+                os.path.join(root, "system", "app"),
+                os.path.join(root, "system", "build.prop"),
+                os.path.join(root, "system", "system", "build.prop"),
+                os.path.join(root, "build.prop"),
+            ]
+            if any(os.path.exists(m) for m in markers):
+                android_root = root
+                break
+        if android_root is None:
             return 0
 
         created = 0
 
-        # SELinux analysis
+        # SELinux analysis — uses the Android root so ``sepolicy``/``cil``
+        # files in that partition resolve correctly.
         try:
             from app.services.selinux_service import SELinuxService
 
-            svc = SELinuxService(self.extracted_path)
+            svc = SELinuxService(android_root)
             loop = asyncio.get_running_loop()
             result = await loop.run_in_executor(None, svc.analyze_policy)
 
@@ -586,24 +701,32 @@ class AssessmentService:
             apk_svc = AndroguardService()
             loop = asyncio.get_running_loop()
 
-            # Scan for APKs with dangerous permissions or issues
-            apk_dirs = [
-                os.path.join(self.extracted_path, "system", "app"),
-                os.path.join(self.extracted_path, "system", "priv-app"),
-            ]
+            # Phase 3b: enumerate every partition/dir pair across every
+            # detection root. Previously only ``system/app`` and
+            # ``system/priv-app`` were checked, silently missing apps
+            # shipped in ``product/app`` (common on AOSP Q+), the
+            # four-way system/system_ext/vendor/odm split on newer
+            # devices, and any scatter-zip sibling rootfs.
+            apk_dirs = _enumerate_android_apk_dirs(roots)
+            seen_apks: set[str] = set()
             dangerous_apks = 0
             for apk_dir in apk_dirs:
-                if not os.path.isdir(apk_dir):
-                    continue
                 for dirpath, _dirs, files in os.walk(apk_dir):
                     for name in files:
                         if not name.endswith(".apk"):
                             continue
                         apk_path = os.path.join(dirpath, name)
-                        rel_path = (
-                            "/"
-                            + os.path.relpath(apk_path, self.extracted_path)
-                        )
+                        real = os.path.realpath(apk_path)
+                        if real in seen_apks:
+                            continue
+                        seen_apks.add(real)
+                        # Relative path — from whichever detection root
+                        # owns this APK.
+                        rel_path = apk_path
+                        for _root in roots:
+                            if apk_path.startswith(_root + os.sep):
+                                rel_path = "/" + os.path.relpath(apk_path, _root)
+                                break
                         try:
                             info = await loop.run_in_executor(
                                 None, apk_svc.analyze_apk, apk_path

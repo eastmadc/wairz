@@ -80,6 +80,11 @@ class ProjectState:
     endianness: str | None = None
     extracted_path: str = ""
     extraction_dir: str | None = None
+    # Phase 3b: every detection root surfaced by get_detection_roots,
+    # cached on the ``Firmware.device_metadata`` JSONB field. Populated at
+    # project load so every tool handler sees sibling partition dirs
+    # without a per-call filesystem walk.
+    detection_roots: list[str] = field(default_factory=list)
 
 
 def _resolve_storage_root() -> str | None:
@@ -277,6 +282,21 @@ async def _load_project_state(
             state.endianness = firmware.endianness
             state.extracted_path = firmware.extracted_path or ""
             state.extraction_dir = firmware.extraction_dir
+            # Phase 3b: resolve detection roots once per project switch.
+            # Cache flush is OK — this session owns the transaction below.
+            try:
+                from app.services.firmware_paths import get_detection_roots
+                roots = await get_detection_roots(firmware, db=session)
+                state.detection_roots = list(roots)
+            except Exception as exc:  # noqa: BLE001
+                logger.debug(
+                    "get_detection_roots failed, falling back to extracted_path: %s",
+                    exc,
+                )
+                state.detection_roots = (
+                    [firmware.extracted_path] if firmware.extracted_path else []
+                )
+            await session.commit()
         else:
             # No firmware yet — server starts but tools will return errors
             state.firmware_id = uuid.UUID(int=0)
@@ -285,12 +305,17 @@ async def _load_project_state(
             state.endianness = None
             state.extracted_path = ""
             state.extraction_dir = None
+            state.detection_roots = []
 
     # Apply path translation
     if host_storage_root and state.extracted_path:
         state.extracted_path = _translate_path(state.extracted_path, host_storage_root)
         if state.extraction_dir:
             state.extraction_dir = _translate_path(state.extraction_dir, host_storage_root)
+        if state.detection_roots:
+            state.detection_roots = [
+                _translate_path(r, host_storage_root) for r in state.detection_roots
+            ]
 
 
 async def run_server(project_id: uuid.UUID) -> None:
@@ -551,6 +576,7 @@ async def run_server(project_id: uuid.UUID) -> None:
                 extracted_path=state.extracted_path,
                 db=session,
                 extraction_dir=state.extraction_dir,
+                detection_roots=list(state.detection_roots),
             )
             try:
                 result = await registry.execute(name, arguments, context)

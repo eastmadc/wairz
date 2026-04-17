@@ -17,17 +17,35 @@ class ToolContext:
     extraction_dir: str | None = None
     review_id: UUID | None = None
     review_agent_id: UUID | None = None
+    # Phase 3b: every detection root surfaced by
+    # ``app.services.firmware_paths.get_detection_roots``. Populated once
+    # per MCP project switch so MCP tool handlers can iterate sibling
+    # partition dirs (scatter zips, DPCS10-shape layouts, etc.) without
+    # re-walking the filesystem.  ``extracted_path`` remains the primary
+    # root and is included in this list.  Empty list when no firmware has
+    # been unpacked yet.
+    detection_roots: list[str] = field(default_factory=list)
+
+    def _file_service(self):
+        """Build a ``FileService`` for this context with detection_roots wired in."""
+        from app.services.file_service import FileService
+        extra = [r for r in self.detection_roots if r and r != self.extracted_path]
+        return FileService(
+            self.extracted_path,
+            extraction_dir=self.extraction_dir,
+            extra_roots=extra or None,
+        )
 
     def resolve_path(self, path: str) -> str:
         """Resolve a virtual firmware path to a real filesystem path.
 
         Handles virtual top-level paths like /rootfs/..., /jffs2-root/...,
-        etc. when extraction_dir is set.  Falls back to simple validation
-        against extracted_path for legacy (non-virtual) mode.
+        etc. when extraction_dir is set.  Phase 3b: extra detection roots
+        from ``get_detection_roots`` are also accepted as virtual top-level
+        names (scatter-zip dirs, raw-image dirs). Falls back to simple
+        validation against extracted_path for legacy (non-virtual) mode.
         """
-        from app.services.file_service import FileService
-        svc = FileService(self.extracted_path, extraction_dir=self.extraction_dir)
-        return svc._resolve(path)
+        return self._file_service()._resolve(path)
 
     def real_root_for(self, path: str) -> str:
         """Get the real filesystem root to use for relative path computation.
@@ -38,10 +56,9 @@ class ToolContext:
             os.path.relpath(resolved_abs_path, real_root) → firmware-relative path
         """
         import os
-        from app.services.file_service import FileService
-        if not self.extraction_dir:
+        svc = self._file_service()
+        if svc.extraction_dir is None:
             return os.path.realpath(self.extracted_path)
-        svc = FileService(self.extracted_path, extraction_dir=self.extraction_dir)
         clean = path.strip("/")
         # Paths inside rootfs
         if not clean or clean == svc.ROOTFS_VNAME or clean.startswith(svc.ROOTFS_VNAME + "/"):
@@ -52,7 +69,17 @@ class ToolContext:
         if top_name in vmap:
             return os.path.realpath(vmap[top_name])
         # Fallback: use extraction_dir
-        return os.path.realpath(self.extraction_dir)
+        return os.path.realpath(svc.extraction_dir)
+
+    def get_detection_roots(self) -> list[str]:
+        """Return the list of detection roots (primary first, siblings after).
+
+        Always returns a list — when no helper roots are available, falls
+        back to ``[extracted_path]`` so consumers can iterate uniformly.
+        """
+        if self.detection_roots:
+            return list(self.detection_roots)
+        return [self.extracted_path] if self.extracted_path else []
 
 
 @dataclass

@@ -51,8 +51,14 @@ async def get_component_map(
             truncated=data.get("truncated", False),
         )
 
-    # Build graph (CPU-bound, run in thread)
-    service = ComponentMapService(firmware.extracted_path)
+    # Build graph (CPU-bound, run in thread) — Phase 3b: multi-root
+    from app.services.firmware_paths import get_detection_roots
+
+    roots = await get_detection_roots(firmware, db=db)
+    extra = [r for r in roots if r and r != firmware.extracted_path]
+    service = ComponentMapService(
+        firmware.extracted_path, extra_roots=extra or None,
+    )
     loop = asyncio.get_running_loop()
     try:
         graph = await loop.run_in_executor(None, service.build_graph)

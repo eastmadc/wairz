@@ -262,12 +262,21 @@ async def run_tool(
 
     registry = _get_registry()
 
+    # Phase 3b: pass full detection_roots list so tools that iterate
+    # sibling partition dirs (scatter zips, raw-image dirs) see them all.
+    try:
+        from app.services.firmware_paths import get_detection_roots
+        detection_roots = await get_detection_roots(firmware, db=db)
+    except Exception:
+        detection_roots = [firmware.extracted_path] if firmware.extracted_path else []
+
     context = ToolContext(
         project_id=firmware.project_id,
         firmware_id=firmware.id,
         extracted_path=firmware.extracted_path,
         db=db,
         extraction_dir=firmware.extraction_dir,
+        detection_roots=list(detection_roots),
     )
 
     result = await registry.execute(body.tool_name, body.input, context, truncate=False)

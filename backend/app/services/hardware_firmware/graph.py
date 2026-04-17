@@ -182,18 +182,27 @@ async def build_driver_firmware_graph(
         vmlinux_refs = await loop.run_in_executor(
             None, _scan_vmlinux_firmware_strings, fw_row.kernel_path,
         )
-        # Record a stable "vmlinux" driver path.  Prefer the firmware-root
-        # relative path so the overlay matches component-map ids; fall back
-        # to the absolute path.
-        if fw_row.extracted_path:
+        # Record a stable "vmlinux" driver path. Prefer the firmware-root
+        # relative path so the overlay matches component-map ids; fall
+        # back to the absolute path. Phase 3b: iterate every detection
+        # root so a kernel image sitting in a sibling partition dir (e.g.
+        # scatter-zip ``boot/`` partition, raw ``kernel.img``) still gets
+        # a stable relative path instead of an absolute one.
+        from app.services.firmware_paths import get_detection_roots
+
+        detection_roots = await get_detection_roots(fw_row, db=db)
+        vmlinux_path = fw_row.kernel_path
+        kernel_real = os.path.realpath(fw_row.kernel_path)
+        for root in detection_roots:
             try:
-                vmlinux_path = "/" + os.path.relpath(
-                    fw_row.kernel_path, fw_row.extracted_path,
-                )
+                root_real = os.path.realpath(root)
+                rel = os.path.relpath(kernel_real, root_real)
             except ValueError:
-                vmlinux_path = fw_row.kernel_path
-        else:
-            vmlinux_path = fw_row.kernel_path
+                continue
+            # Accept only a descendant path (no ``..`` escape).
+            if not rel.startswith(".."):
+                vmlinux_path = "/" + rel
+                break
 
         for ref in vmlinux_refs:
             match_blobs = _resolve_firmware_name(ref, fw_by_name)

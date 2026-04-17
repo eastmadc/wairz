@@ -7,8 +7,7 @@ from sqlalchemy import select
 from app.ai.tool_registry import ToolContext, ToolRegistry
 from app.models.analysis_cache import AnalysisCache
 from app.services.component_map_service import ComponentMapService
-from app.services.file_service import FileService
-from app.utils.sandbox import safe_walk, validate_path
+from app.utils.sandbox import safe_walk
 
 MAX_FIND_RESULTS = 100
 
@@ -106,7 +105,7 @@ def _find_files_by_type(
 
 
 async def _handle_list_directory(input: dict, context: ToolContext) -> str:
-    svc = FileService(context.extracted_path, extraction_dir=context.extraction_dir)
+    svc = context._file_service()
     entries, truncated = svc.list_directory(input["path"])
 
     if not entries:
@@ -130,7 +129,7 @@ async def _handle_list_directory(input: dict, context: ToolContext) -> str:
 
 
 async def _handle_read_file(input: dict, context: ToolContext) -> str:
-    svc = FileService(context.extracted_path, extraction_dir=context.extraction_dir)
+    svc = context._file_service()
     content = svc.read_file(
         path=input["path"],
         offset=input.get("offset", 0),
@@ -146,7 +145,7 @@ async def _handle_read_file(input: dict, context: ToolContext) -> str:
 
 
 async def _handle_file_info(input: dict, context: ToolContext) -> str:
-    svc = FileService(context.extracted_path, extraction_dir=context.extraction_dir)
+    svc = context._file_service()
     info = svc.file_info(input["path"])
 
     lines = [
@@ -166,7 +165,7 @@ async def _handle_file_info(input: dict, context: ToolContext) -> str:
 
 
 async def _handle_search_files(input: dict, context: ToolContext) -> str:
-    svc = FileService(context.extracted_path, extraction_dir=context.extraction_dir)
+    svc = context._file_service()
     matches, truncated = svc.search_files(
         pattern=input["pattern"],
         path=input.get("path", "/"),
@@ -207,8 +206,14 @@ async def _handle_get_component_map(input: dict, context: ToolContext) -> str:
     if cached and cached.result:
         data = cached.result
     else:
-        # Build graph (CPU-bound)
-        service = ComponentMapService(context.extracted_path)
+        # Build graph (CPU-bound) — Phase 3b: multi-root
+        extra = [
+            r for r in context.get_detection_roots()
+            if r and r != context.extracted_path
+        ]
+        service = ComponentMapService(
+            context.extracted_path, extra_roots=extra or None,
+        )
         loop = asyncio.get_event_loop()
         graph = await loop.run_in_executor(None, service.build_graph)
 

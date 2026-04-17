@@ -721,13 +721,30 @@ def _is_oid_context(text: str, match_start: int) -> bool:
 
 
 async def _handle_find_hardcoded_ips(input: dict, context: ToolContext) -> str:
-    """Scan firmware for hardcoded IP addresses with classification."""
+    """Scan firmware for hardcoded IP addresses with classification.
+
+    Phase 3b: when no explicit ``path`` is supplied the scan walks every
+    detection root so scatter-zip siblings / raw-image dirs are covered
+    alongside the rootfs. Relative paths are computed against whichever
+    detection root owns the file.
+    """
     from app.utils.truncation import truncate_output
 
-    scan_root = context.resolve_path(input.get("path", "/"))
+    input_path = input.get("path")
     include_private = input.get("include_private", True)
     include_binaries = input.get("include_binaries", True)
     max_results = input.get("max_results", 200)
+
+    # Collect scan roots: either the explicit path, or every detection
+    # root. The real-root list is used downstream for relative-path
+    # resolution so a file in ``/DPCS10_fixture/boot/ramdisk`` shows as
+    # ``/boot/ramdisk`` under its own partition instead of getting a
+    # ``..`` relpath.
+    if input_path and input_path not in ("/", ""):
+        scan_roots = [context.resolve_path(input_path)]
+    else:
+        scan_roots = list(context.get_detection_roots() or [context.extracted_path])
+    real_roots = [os.path.realpath(r) for r in scan_roots if r]
 
     findings: list[dict] = []
     files_scanned = 0
@@ -735,10 +752,18 @@ async def _handle_find_hardcoded_ips(input: dict, context: ToolContext) -> str:
     # Track resolved real paths to avoid re-scanning hardlinks/symlinks
     scanned_realpaths: set[str] = set()
 
-    for dirpath, _dirnames, filenames in safe_walk(scan_root):
+    def _relpath_for(fpath: str) -> str:
+        for rr in real_roots:
+            if fpath.startswith(rr + os.sep) or fpath == rr:
+                return "/" + os.path.relpath(fpath, rr)
+        fallback = context.extracted_path or (real_roots[0] if real_roots else fpath)
+        return "/" + os.path.relpath(fpath, fallback)
+
+    for scan_root in scan_roots:
+      for dirpath, _dirnames, filenames in safe_walk(scan_root):
         for fname in filenames:
             fpath = os.path.join(dirpath, fname)
-            rel = "/" + os.path.relpath(fpath, context.extracted_path or scan_root)
+            rel = _relpath_for(fpath)
 
             try:
                 real = os.path.realpath(fpath)
