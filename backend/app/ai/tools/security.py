@@ -962,15 +962,28 @@ async def _handle_check_kernel_hardening(
 
 
 async def _handle_scan_with_yara(input: dict, context: ToolContext) -> str:
-    """Scan firmware with YARA rules for malware and suspicious patterns."""
-    from app.services.yara_service import scan_firmware
+    """Scan firmware with YARA rules for malware and suspicious patterns.
+
+    Phase 3b: multi-root — walks every detection root so scatter-zip
+    siblings and raw-image dirs are scanned alongside the primary rootfs.
+    When ``path_filter`` is supplied the call degrades to the legacy
+    single-root path scoped to that subdirectory (shim preserved).
+    """
+    from app.services.yara_service import scan_firmware, scan_firmware_multi
 
     path_filter = input.get("path")
 
     loop = asyncio.get_running_loop()
-    result = await loop.run_in_executor(
-        None, scan_firmware, context.extracted_path, None, path_filter
-    )
+    if path_filter:
+        # Scoped scan — legacy shim handles sub-directory filtering.
+        result = await loop.run_in_executor(
+            None, scan_firmware, context.extracted_path, None, path_filter,
+        )
+    else:
+        roots = context.get_detection_roots() or [context.extracted_path]
+        result = await loop.run_in_executor(
+            None, scan_firmware_multi, roots,
+        )
 
     lines: list[str] = []
 
@@ -3012,7 +3025,12 @@ async def _handle_update_yara_rules(input: dict, context: ToolContext) -> str:
 
 
 async def _handle_detect_update_mechanisms(input: dict, context: ToolContext) -> str:
-    """Scan firmware for update mechanisms and report findings."""
+    """Scan firmware for update mechanisms and report findings.
+
+    Phase 3b: walks every detection root when no ``path`` filter is
+    supplied. With a ``path`` filter, scope falls back to the single
+    sub-directory (shim preserved).
+    """
     from app.services.update_mechanism_service import (
         detect_update_mechanisms,
         format_mechanisms_report,
@@ -3022,10 +3040,12 @@ async def _handle_detect_update_mechanisms(input: dict, context: ToolContext) ->
     input_path = input.get("path")
     if input_path:
         search_root = context.resolve_path(input_path)
+        mechanisms = detect_update_mechanisms(search_root)
     else:
-        search_root = os.path.realpath(extracted_root)
-
-    mechanisms = detect_update_mechanisms(search_root)
+        roots = context.get_detection_roots() or [extracted_root]
+        search_root = os.path.realpath(roots[0])
+        extras = [r for r in roots[1:] if r] or None
+        mechanisms = detect_update_mechanisms(search_root, extra_roots=extras)
     report = format_mechanisms_report(mechanisms)
     return truncate_output(report)
 
@@ -3242,7 +3262,12 @@ async def _handle_scan_with_clamav(input: dict, context: ToolContext) -> str:
 
 
 async def _handle_scan_firmware_clamav(input: dict, context: ToolContext) -> str:
-    """Batch scan all extracted firmware files with ClamAV."""
+    """Batch scan all extracted firmware files with ClamAV.
+
+    Phase 3b: the 500-file cap is distributed across every detection root
+    so scatter-zip siblings / raw-image dirs aren't starved. Roots
+    covered count appears in the output for transparency.
+    """
     from app.services import clamav_service
 
     available = await clamav_service.check_available()
@@ -3252,7 +3277,13 @@ async def _handle_scan_firmware_clamav(input: dict, context: ToolContext) -> str
     if not context.extracted_path:
         return "No extracted firmware available. Unpack firmware first."
 
-    results = await clamav_service.scan_directory(context.extracted_path, max_files=500)
+    roots = context.get_detection_roots() or [context.extracted_path]
+    # Distribute the 500-file cap evenly with a small floor per root.
+    per_root_cap = max(100, 500 // max(1, len(roots)))
+    results: list = []
+    for root in roots:
+        part = await clamav_service.scan_directory(root, max_files=per_root_cap)
+        results.extend(part)
     infected = [r for r in results if r.infected]
     errors = [r for r in results if r.error]
 
@@ -3339,18 +3370,35 @@ async def _handle_scan_firmware_virustotal(input: dict, context: ToolContext) ->
     if not context.extracted_path:
         return "No extracted firmware available. Unpack firmware first."
 
+    # Phase 3b: collect binaries from every detection root, dedupe by
+    # SHA-256 across roots so a blob in two partitions isn't counted
+    # twice against the API cap.
     loop = asyncio.get_running_loop()
     max_files = input.get("max_files", 50)
-    hashes = await loop.run_in_executor(
-        None, virustotal_service.collect_binary_hashes,
-        context.extracted_path, max_files,
-    )
+    roots = context.get_detection_roots() or [context.extracted_path]
+    per_root_cap = max(25, max_files // max(1, len(roots)))
+    hashes: list[tuple[str, str]] = []
+    seen_sha: set[str] = set()
+    for root in roots:
+        partial = await loop.run_in_executor(
+            None, virustotal_service.collect_binary_hashes,
+            root, per_root_cap,
+        )
+        for sha, rel in partial:
+            if sha in seen_sha:
+                continue
+            seen_sha.add(sha)
+            hashes.append((sha, rel))
+            if len(hashes) >= max_files:
+                break
+        if len(hashes) >= max_files:
+            break
 
     if not hashes:
         return "No ELF or PE binaries found in extracted firmware."
 
     lines = [
-        f"VirusTotal batch scan: {len(hashes)} binaries",
+        f"VirusTotal batch scan: {len(hashes)} binaries across {len(roots)} detection root(s)",
         f"Rate limit: {virustotal_service.FREE_TIER_BATCH} lookups/min (free tier)",
         f"Estimated time: ~{(len(hashes) // virustotal_service.FREE_TIER_BATCH) * 15}s",
         "",
@@ -3481,12 +3529,27 @@ async def _handle_enrich_firmware_threat_intel(input: dict, context: ToolContext
     if not context.extracted_path:
         return "No extracted firmware available. Unpack firmware first."
 
+    # Phase 3b: collect across every detection root, SHA-dedupe.
     loop = asyncio.get_running_loop()
     max_hashes = input.get("max_hashes", 30)
-    hashes = await loop.run_in_executor(
-        None, virustotal_service.collect_binary_hashes,
-        context.extracted_path, max_hashes,
-    )
+    roots = context.get_detection_roots() or [context.extracted_path]
+    per_root_cap = max(15, max_hashes // max(1, len(roots)))
+    hashes: list[tuple[str, str]] = []
+    seen_sha: set[str] = set()
+    for root in roots:
+        partial = await loop.run_in_executor(
+            None, virustotal_service.collect_binary_hashes,
+            root, per_root_cap,
+        )
+        for sha, rel in partial:
+            if sha in seen_sha:
+                continue
+            seen_sha.add(sha)
+            hashes.append((sha, rel))
+            if len(hashes) >= max_hashes:
+                break
+        if len(hashes) >= max_hashes:
+            break
 
     if not hashes:
         return "No ELF or PE binaries found in extracted firmware."
@@ -3496,7 +3559,7 @@ async def _handle_enrich_firmware_threat_intel(input: dict, context: ToolContext
     urls: list[str] = []
 
     lines = [
-        f"abuse.ch threat intel enrichment: {len(hashes)} binaries",
+        f"abuse.ch threat intel enrichment: {len(hashes)} binaries across {len(roots)} detection root(s)",
         f"Services: MalwareBazaar, ThreatFox, URLhaus, YARAify",
         "",
     ]
@@ -3592,7 +3655,11 @@ async def _handle_check_known_good_hash(input: dict, context: ToolContext) -> st
 
 
 async def _handle_scan_firmware_known_good(input: dict, context: ToolContext) -> str:
-    """Batch-check firmware binaries against CIRCL known-good database."""
+    """Batch-check firmware binaries against CIRCL known-good database.
+
+    Phase 3b: binaries harvested across every detection root, SHA-deduped
+    so each distinct hash counts against the cap exactly once.
+    """
     from app.services import hashlookup_service, virustotal_service
 
     if not context.extracted_path:
@@ -3600,10 +3667,24 @@ async def _handle_scan_firmware_known_good(input: dict, context: ToolContext) ->
 
     loop = asyncio.get_running_loop()
     max_files = input.get("max_files", 100)
-    hashes = await loop.run_in_executor(
-        None, virustotal_service.collect_binary_hashes,
-        context.extracted_path, max_files,
-    )
+    roots = context.get_detection_roots() or [context.extracted_path]
+    per_root_cap = max(50, max_files // max(1, len(roots)))
+    hashes: list[tuple[str, str]] = []
+    seen_sha: set[str] = set()
+    for root in roots:
+        partial = await loop.run_in_executor(
+            None, virustotal_service.collect_binary_hashes,
+            root, per_root_cap,
+        )
+        for sha, rel in partial:
+            if sha in seen_sha:
+                continue
+            seen_sha.add(sha)
+            hashes.append((sha, rel))
+            if len(hashes) >= max_files:
+                break
+        if len(hashes) >= max_files:
+            break
 
     if not hashes:
         return "No ELF or PE binaries found in extracted firmware."

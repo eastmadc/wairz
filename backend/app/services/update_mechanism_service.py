@@ -687,16 +687,36 @@ def _detect_custom_ota(root: str) -> UpdateMechanism | None:
 # ---------------------------------------------------------------------------
 
 
-def detect_update_mechanisms(extracted_root: str) -> list[UpdateMechanism]:
+def detect_update_mechanisms(
+    extracted_root: str,
+    *,
+    extra_roots: list[str] | None = None,
+) -> list[UpdateMechanism]:
     """Scan an extracted firmware filesystem for update mechanisms.
 
     Returns a list of detected UpdateMechanism objects, each describing
     a specific update system found in the firmware with its binaries,
     configs, URLs, and security findings.
 
+    Phase 3b: accepts ``extra_roots`` so scatter-zip siblings and raw
+    image dirs are scanned too. When an update system is found in
+    multiple roots, the first hit's metadata is kept and later roots'
+    unique findings (binaries, configs, URLs) are merged.
+
     This is a sync function — call from a thread executor for async contexts.
     """
     real_root = os.path.realpath(extracted_root)
+    all_roots: list[str] = [real_root]
+    if extra_roots:
+        seen = {real_root}
+        for r in extra_roots:
+            if not r:
+                continue
+            real = os.path.realpath(r)
+            if real in seen or not os.path.isdir(real):
+                continue
+            seen.add(real)
+            all_roots.append(real)
 
     detectors = [
         _detect_swupdate,
@@ -710,14 +730,40 @@ def detect_update_mechanisms(extracted_root: str) -> list[UpdateMechanism]:
     ]
 
     mechanisms: list[UpdateMechanism] = []
+    # System → first mechanism found, for merging subsequent roots.
+    by_system: dict[str, UpdateMechanism] = {}
 
     for detector in detectors:
-        try:
-            result = detector(real_root)
-            if result is not None:
+        for root in all_roots:
+            try:
+                result = detector(root)
+            except Exception as e:
+                logger.warning(
+                    "Update mechanism detector %s failed on %s: %s",
+                    detector.__name__, root, e,
+                )
+                continue
+            if result is None:
+                continue
+            existing = by_system.get(result.system)
+            if existing is None:
+                by_system[result.system] = result
                 mechanisms.append(result)
-        except Exception as e:
-            logger.warning("Update mechanism detector %s failed: %s", detector.__name__, e)
+            else:
+                # Merge unique entries so a split partition layout
+                # doesn't drop binaries/configs found only in a sibling.
+                for b in result.binaries:
+                    if b not in existing.binaries:
+                        existing.binaries.append(b)
+                for c in result.configs:
+                    if c not in existing.configs:
+                        existing.configs.append(c)
+                for u in result.update_urls:
+                    if u not in existing.update_urls:
+                        existing.update_urls.append(u)
+                for f in result.findings:
+                    if f not in existing.findings:
+                        existing.findings.append(f)
 
     # If no mechanisms found at all, that's a finding itself
     if not mechanisms:

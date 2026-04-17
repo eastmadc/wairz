@@ -90,8 +90,39 @@ class ComponentGraph:
 
 
 class ComponentMapService:
-    def __init__(self, extracted_root: str):
+    def __init__(
+        self,
+        extracted_root: str,
+        *,
+        extra_roots: list[str] | None = None,
+    ):
+        """Construct a ``ComponentMapService``.
+
+        Parameters
+        ----------
+        extracted_root:
+            Primary rootfs directory (legacy single-root).
+        extra_roots:
+            Phase 3b addition — extra detection roots from
+            ``get_detection_roots``. Each is walked after the primary
+            root; node IDs get a ``/<partition-name>`` prefix so paths
+            don't collide with rootfs entries.
+        """
         self.extracted_root = os.path.realpath(extracted_root)
+        # Phase 3b: additional detection roots (scatter-zip dirs, raw-image
+        # dirs). Realpath-deduped against primary so a helper echoing the
+        # primary doesn't double-walk.
+        self._extra_roots: list[str] = []
+        if extra_roots:
+            seen = {self.extracted_root}
+            for r in extra_roots:
+                if not r:
+                    continue
+                real = os.path.realpath(r)
+                if real in seen or not os.path.isdir(real):
+                    continue
+                seen.add(real)
+                self._extra_roots.append(real)
         # Lookup tables populated during walk
         self._nodes_by_id: dict[str, ComponentNode] = {}
         self._nodes_by_label: dict[str, list[str]] = {}  # label -> list of node ids
@@ -100,17 +131,39 @@ class ComponentMapService:
         self._lib_resolve_cache: dict[str, str | None] = {}
         # Cache: library node id -> set of exported symbol names
         self._lib_exports_cache: dict[str, set[str]] = {}
+        # Swapped during multi-root walks so ``_rel_path`` labels paths
+        # from extra roots with a ``/<partition>/...`` prefix instead of
+        # mixing them into the rootfs namespace.
+        self._current_root: str = self.extracted_root
+        self._current_partition: str | None = None
 
     def _validate(self, path: str) -> str:
         return validate_path(self.extracted_root, path)
 
     def _rel_path(self, abs_path: str) -> str:
-        """Get path relative to extracted root, prefixed with /."""
-        return "/" + os.path.relpath(abs_path, self.extracted_root)
+        """Get path relative to the current scan root, prefixed with /.
+
+        Phase 3b: when walking an extra detection root, the partition
+        basename is prepended so node IDs are unique across roots (e.g.
+        ``/DPCS10_fixture/system/bin/ps`` vs ``/system/bin/ps``).
+        """
+        rel = "/" + os.path.relpath(abs_path, self._current_root)
+        if self._current_partition:
+            return f"/{self._current_partition}{rel}"
+        return rel
 
     def build_graph(self) -> ComponentGraph:
         """Build the full component dependency graph. Call from a thread executor."""
+        # Primary root first, then each extra detection root — paths from
+        # extras are partition-prefixed so they can't collide.
         self._walk_and_classify()
+        for root in self._extra_roots:
+            self._current_root = root
+            self._current_partition = os.path.basename(root.rstrip("/")) or None
+            self._walk_and_classify()
+        self._current_root = self.extracted_root
+        self._current_partition = None
+
         self._analyze_elf_dependencies()
         self._analyze_shell_scripts()
         self._analyze_init_scripts()
@@ -130,7 +183,7 @@ class ComponentMapService:
 
     def _walk_and_classify(self) -> None:
         """Walk the filesystem and classify each regular file."""
-        for dirpath, _dirnames, filenames in os.walk(self.extracted_root):
+        for dirpath, _dirnames, filenames in os.walk(self._current_root):
             for fname in filenames:
                 abs_path = os.path.join(dirpath, fname)
 
