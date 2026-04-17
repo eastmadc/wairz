@@ -6,7 +6,7 @@ started: "2026-04-17T01:32:19Z"
 completed_at: null
 direction: "Android hardware firmware detection — modem/TEE/Wi-Fi/GPU/DSP/drivers: detection, parsers, driver graph, CVE matcher, UI + MCP tools"
 phase_count: 5
-current_phase: 3
+current_phase: 4
 branch: null
 worktree_status: null
 ---
@@ -42,7 +42,7 @@ Direction: Android device images contain 20-40 hardware firmware blobs (modem, T
 |---|--------|------|-------|-----------|
 | 1 | complete | build | Detect & Classify | Model + migration + detector/classifier + `list_hardware_firmware` MCP tool shipped. Detection runs non-blocking after successful extraction for any firmware via `_run_hardware_firmware_detection_safe` (fire-and-forget with own session). |
 | 2 | complete | build | Per-format Parsers | Six parser plugins (qualcomm_mbn, dtb, kmod, elf_tee, broadcom_wl, raw_bin) via PARSER_REGISTRY + `analyze_hardware_firmware` MCP tool + fixture-based unit tests per parser. |
-| 3 | pending | build | Driver↔Firmware Graph | `graph.py` + `list_firmware_drivers` MCP tool + `loads_firmware` edges in component_map + "missing firmware" findings. |
+| 3 | complete | build | Driver↔Firmware Graph | `graph.py` + `list_firmware_drivers` MCP tool + `loads_firmware` edge type documented in component_map_service + "missing firmware" findings + new `/hardware-firmware/firmware-edges` + `/drivers` REST endpoints. |
 | 4 | pending | build | CVE Heuristic Matcher | Three-tier matcher + `known_firmware.yaml` with ≥10 seed entries + `blob_id` FK migration on `sbom_vulnerabilities` + `check_firmware_cves` MCP tool. |
 | 5 | pending | build | UI + Remaining MCP Tools | `HardwareFirmwarePage` + API client + sidebar entry + `find_unsigned_firmware` + `extract_dtb` MCP tools. ComponentMap overlay toggle. |
 
@@ -120,6 +120,12 @@ Direction: Android device images contain 20-40 hardware firmware blobs (modem, T
 | `fdt>=0.3.3` pip dep | complete | 2 | Added to backend/pyproject.toml (pure-Python, Apache-2.0). Requires `docker compose up -d --build backend worker` per rule 8. |
 | Parser unit tests | complete | 2 | 13 test functions + parametrized malformed-input across 10 formats. Synthetic fixtures only (no firmware binaries checked in). |
 | `_build_fixtures.py` helper | complete | 2 | Pure-Python generators: ELF64, kmod with .modinfo, OP-TEE TA with .ta_head, MBN v3 header + cert chain, DTB, DTBO, Broadcom firmware with embedded version. Self-signed RSA-2048 X.509 via `cryptography`. |
+| `graph.py` — driver↔firmware resolver | complete | 3 | `build_driver_firmware_graph()` resolves kmod `.modinfo firmware=` + DTB firmware_names + vmlinux string scan against blob inventory by basename; writes `driver_references` to .ko rows; creates idempotent Finding rows (source=`hardware_firmware_graph`) for unresolved. |
+| `list_firmware_drivers` MCP tool | complete | 3 | Collapses edges into per-driver summaries; optional `module_pattern` substring filter; outputs resolved + unresolved in markdown. |
+| `/hardware-firmware/firmware-edges` + `/drivers` REST endpoints | complete | 3 | New router under `/api/v1/projects/{project_id}/hardware-firmware`; returns FirmwareEdgesResponse (overlay) + FirmwareDriversListResponse. Registered in `main.py`. |
+| `loads_firmware` edge type documented | complete | 3 | Comment-level in `component_map_service.py:ComponentEdge` — no runtime entanglement; frontend renders the overlay from the separate endpoint. |
+| unpack.py hook extended | complete | 3 | Post-detection, if count > 0, `_run_hardware_firmware_detection_safe` fires `build_driver_firmware_graph` in a second session (rule 7). |
+| Graph unit tests | complete | 3 | 17 tests across 4 classes covering `_resolve_firmware_name`, `_scan_vmlinux_firmware_strings`, `build_driver_firmware_graph`, plus idempotency on second run. Mock-based per existing project pattern (no async-sqlite harness). |
 
 ## Decision Log
 
@@ -135,6 +141,10 @@ Direction: Android device images contain 20-40 hardware firmware blobs (modem, T
 - 2026-04-17T02:00Z: Phase 2 — Parser execution happens inline in `_walk_and_classify` (inside the executor), not as a separate pass. Reason: avoids a second FS walk; parsers are fast enough (pyelftools/LIEF/fdt) that the added cost is negligible; keeps detection a single atomic "classify + parse + persist" pipeline.
 - 2026-04-17T02:00Z: Phase 2 — Parsers MUST NOT raise (contract enforced by defensive try/except in detector). Reason: one bad blob cannot abort detection for the other 20+ blobs in an Android image. Parsers surface errors through `metadata["error"]` instead.
 - 2026-04-17T02:00Z: Phase 2 — Test fixtures are all synthesized in-memory from `_build_fixtures.py` helpers (no real firmware binaries checked in). Reason: avoids licensing/export-control issues; keeps repo small; parsers tested against controlled inputs with known-correct expected values.
+- 2026-04-17T02:15Z: Phase 3 — Firmware-overlay edges served from a SEPARATE endpoint (`/hardware-firmware/firmware-edges`), NOT baked into the cached component_map. Reason: keeps the existing component_map cache FS-pure; lets frontend toggle overlay cheaply; avoids invalidating large cached graphs when detection re-runs. ComponentEdge dataclass gets `loads_firmware` type documented in comment only.
+- 2026-04-17T02:15Z: Phase 3 — Graph builder uses TWO independent AsyncSessions (one for detection, one for graph build), fired sequentially from `_run_hardware_firmware_detection_safe`. Reason: CLAUDE.md rule 7 — never share AsyncSession across concurrency boundaries; separate sessions also give cleaner transaction boundaries (detection commits before graph starts).
+- 2026-04-17T02:15Z: Phase 3 — Missing-firmware findings dedup by title within the same firmware_id + source=`hardware_firmware_graph`. Reason: graph builder runs on every detection (and on every API call to `/firmware-edges`) — we must not create duplicate findings on re-runs.
+- 2026-04-17T02:15Z: Phase 3 — vmlinux string scan capped at first 32 MB of file + 500 unique references per file. Reason: vmlinux on modern Android can be 30-50 MB uncompressed; the regex scan cost scales linearly. 32 MB covers the whole image for typical cases while capping worst-case cost.
 
 ## Review Queue
 
@@ -161,9 +171,10 @@ Integration point for Phase 1 is `backend/app/workers/unpack.py:484` (Android fa
 
 ## Continuation State
 
-Phase: 2 (complete, uncommitted) → Phase 3 (pending)
-Sub-step: awaiting commit of Phase 2; Phase 3 delegation next
+Phase: 3 (complete, uncommitted) → Phase 4 (pending)
+Sub-step: Phase 3 committed; Phase 4 (CVE matcher) next
 Phase 1: committed at ac6a493 (14 files, 1059+/-3 lines)
+Phase 2: committed at 5c9c464 (15 files, 2413+/-27 lines)
 Phase 2 files created (10):
   backend/app/services/hardware_firmware/parsers/__init__.py
   backend/app/services/hardware_firmware/parsers/base.py

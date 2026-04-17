@@ -43,9 +43,18 @@ logger = logging.getLogger(__name__)
 async def _run_hardware_firmware_detection_safe(
     firmware_id: uuid.UUID, extracted_path: str,
 ) -> None:
-    """Post-extraction detection task. Own session; safe to fire-and-forget."""
+    """Post-extraction detection + graph build. Own sessions; fire-and-forget.
+
+    Detection and graph build each use an independent AsyncSession (per
+    CLAUDE.md rule 7 — never share an AsyncSession across concurrency
+    boundaries).  The graph build is skipped when detection produced no
+    blobs.
+    """
     from app.database import async_session_factory
     from app.services.hardware_firmware import detect_hardware_firmware
+    from app.services.hardware_firmware.graph import build_driver_firmware_graph
+
+    count = 0
     try:
         async with async_session_factory() as db:
             count = await detect_hardware_firmware(firmware_id, db, extracted_path)
@@ -53,6 +62,22 @@ async def _run_hardware_firmware_detection_safe(
             logger.info("Hardware firmware detection complete: %d blobs", count)
     except Exception:
         logger.warning("Hardware firmware detection failed", exc_info=True)
+        return
+
+    if count <= 0:
+        return
+
+    try:
+        async with async_session_factory() as db:
+            result = await build_driver_firmware_graph(firmware_id, db)
+            await db.commit()
+            logger.info(
+                "Hardware firmware graph: %d edges, %d unresolved",
+                len(result.edges),
+                result.unresolved_count,
+            )
+    except Exception:
+        logger.warning("Hardware firmware graph build failed", exc_info=True)
 
 
 def _analyze_filesystem(result: UnpackResult, extraction_dir: str) -> None:

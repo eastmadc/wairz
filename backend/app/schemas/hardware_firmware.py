@@ -46,3 +46,50 @@ class HardwareFirmwareFilter(BaseModel):
     category: str | None = None
     vendor: str | None = None
     signed_only: bool | None = None
+
+
+# ---------------------------------------------------------------------------
+# Phase 3 — driver <-> firmware graph schemas
+# ---------------------------------------------------------------------------
+
+
+class FirmwareEdgeResponse(BaseModel):
+    """One edge in the driver <-> firmware graph.
+
+    ``firmware_blob_path`` is ``None`` when the driver requests firmware that
+    is not present in the extracted image (an unresolved / missing
+    reference).
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    driver_path: str
+    firmware_name: str
+    firmware_blob_path: str | None = None
+    source: str  # kmod_modinfo | vmlinux_strings | dtb_firmware_name
+
+
+class FirmwareEdgesResponse(BaseModel):
+    """Response for the ``/component-map/firmware-edges``-style overlay."""
+
+    edges: list[FirmwareEdgeResponse]
+    kmod_drivers: int
+    dtb_sources: int
+    unresolved_count: int
+
+
+class FirmwareDriverResponse(BaseModel):
+    """Driver (kmod / vmlinux / DTB source) with its firmware dependencies."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    driver_path: str
+    format: str  # ko | vmlinux | dtb
+    firmware_deps: list[str]  # requested firmware names (both resolved + unresolved)
+    firmware_blobs: list[str]  # resolved blob paths
+    total: int  # count of firmware_deps
+
+
+class FirmwareDriversListResponse(BaseModel):
+    drivers: list[FirmwareDriverResponse]
+    total: int
