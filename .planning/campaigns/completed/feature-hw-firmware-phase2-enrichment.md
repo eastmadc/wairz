@@ -12,7 +12,7 @@ final_commits:
   - e6cd4b0 (p2 — kernel CVE attribution)
   - 28fc27f (p3 — 5 MediaTek parsers)
   - 3f7fcf0 (p4 — vulns.git Tier 5 matcher)
-  - (p5 — UX + HBOM, this commit)
+  - a102004 (p5 — UX + HBOM)
 depends_on: feature-android-hardware-firmware-detection
 scope:
   - backend/app/services/hardware_firmware/
