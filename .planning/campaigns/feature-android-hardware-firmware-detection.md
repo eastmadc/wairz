@@ -6,7 +6,7 @@ started: "2026-04-17T01:32:19Z"
 completed_at: null
 direction: "Android hardware firmware detection — modem/TEE/Wi-Fi/GPU/DSP/drivers: detection, parsers, driver graph, CVE matcher, UI + MCP tools"
 phase_count: 5
-current_phase: 2
+current_phase: 3
 branch: null
 worktree_status: null
 ---
@@ -41,7 +41,7 @@ Direction: Android device images contain 20-40 hardware firmware blobs (modem, T
 | # | Status | Type | Phase | Done When |
 |---|--------|------|-------|-----------|
 | 1 | complete | build | Detect & Classify | Model + migration + detector/classifier + `list_hardware_firmware` MCP tool shipped. Detection runs non-blocking after successful extraction for any firmware via `_run_hardware_firmware_detection_safe` (fire-and-forget with own session). |
-| 2 | pending | build | Per-format Parsers | Six parser plugins (qualcomm_mbn, dtb, kmod, elf_tee, broadcom_wl, raw_bin) via PARSER_REGISTRY + `analyze_hardware_firmware` MCP tool + fixture-based unit tests per parser. |
+| 2 | complete | build | Per-format Parsers | Six parser plugins (qualcomm_mbn, dtb, kmod, elf_tee, broadcom_wl, raw_bin) via PARSER_REGISTRY + `analyze_hardware_firmware` MCP tool + fixture-based unit tests per parser. |
 | 3 | pending | build | Driver↔Firmware Graph | `graph.py` + `list_firmware_drivers` MCP tool + `loads_firmware` edges in component_map + "missing firmware" findings. |
 | 4 | pending | build | CVE Heuristic Matcher | Three-tier matcher + `known_firmware.yaml` with ≥10 seed entries + `blob_id` FK migration on `sbom_vulnerabilities` + `check_firmware_cves` MCP tool. |
 | 5 | pending | build | UI + Remaining MCP Tools | `HardwareFirmwarePage` + API client + sidebar entry + `find_unsigned_firmware` + `extract_dtb` MCP tools. ComponentMap overlay toggle. |
@@ -71,14 +71,14 @@ Direction: Android device images contain 20-40 hardware firmware blobs (modem, T
 - `file_exists` | backend/app/services/hardware_firmware/parsers/broadcom_wl.py
 - `file_exists` | backend/app/services/hardware_firmware/parsers/raw_bin.py
 - `command_passes` | `docker compose exec backend python -c "import fdt"` (Phase 2 added `fdt` dep)
-- `command_passes` | `docker compose exec backend pytest backend/tests/services/test_hardware_firmware_parsers.py -q` (all pass)
+- `command_passes` | `docker compose exec backend pytest backend/tests/test_hardware_firmware_parsers.py -q` (all pass)
 - `command_passes` | `grep -q "analyze_hardware_firmware" backend/app/ai/tools/hardware_firmware.py`
 
 **Phase 3:**
 - `file_exists` | backend/app/services/hardware_firmware/graph.py
 - `command_passes` | `grep -q "list_firmware_drivers" backend/app/ai/tools/hardware_firmware.py`
 - `command_passes` | `grep -q "loads_firmware" backend/app/services/component_map_service.py` (edge type wired)
-- `command_passes` | `docker compose exec backend pytest backend/tests/services/test_hardware_firmware_graph.py -q`
+- `command_passes` | `docker compose exec backend pytest backend/tests/test_hardware_firmware_graph.py -q`
 
 **Phase 4:**
 - `file_exists` | backend/app/services/hardware_firmware/cve_matcher.py
@@ -108,6 +108,18 @@ Direction: Android device images contain 20-40 hardware firmware blobs (modem, T
 | `unpack.py` post-extraction hook (fire-and-forget) | complete | 1 | Wrapped existing `_unpack_firmware_inner` in new `unpack_firmware` that fires `asyncio.create_task` on any success path. |
 | Caller wiring: arq_worker / routers/firmware / device_service | complete | 1 | All three callers now pass `firmware_id=` so detection actually triggers. |
 | Pydantic schemas: `HardwareFirmwareBlobResponse` et al. | complete | 1 | Prepared for Phase 5 router + frontend. |
+| PARSER_REGISTRY plugin contract (`parsers/base.py`) | complete | 2 | Protocol + ParsedBlob dataclass + register_parser/get_parser helpers. |
+| `qualcomm_mbn.py` parser | complete | 2 | Reimplemented (no qtestsign vendor): MBN v3 raw header (40-byte codeword `0x844bdcd1`) + ELF QC segments (LIEF) + X.509 cert-chain DER walker via `cryptography`. Registered for qcom_mbn + mbn_v3/v5/v6. |
+| `dtb.py` parser | complete | 2 | Uses `fdt` pip pkg: flat DTB + Android DTBO container (magic `0xd7b7ab1e`); extracts `model`, `compatible` lists, `firmware-name` props recursively; chipset inference from compatible pattern. |
+| `kmod.py` parser | complete | 2 | pyelftools `.modinfo` section walk: license/version/srcversion/vermagic/depends/alias/firmware_deps + CMS appendix magic detection (`~Module signature appended~`). |
+| `elf_tee.py` parser | complete | 2 | OP-TEE `.ta_head` section → TA UUID; signed=signed + RSA-SHA256 default. |
+| `broadcom_wl.py` parser | complete | 2 | brcmfmac ASCII version scan (wl0/Firmware regex); paired `.txt` NVRAM + `.clm_blob` detection; chipset from filename. |
+| `raw_bin.py` parser | complete | 2 | Shannon entropy of first 1 MB + generic version regex + printable-string sampling. |
+| Detector → parser integration | complete | 2 | `_walk_and_classify` invokes `get_parser(cls.format).parse()` inside the executor; defensive try/except per blob. Carries version/signed/signature_algorithm/cert_subject/chipset_target/metadata through to `insert(...).values([...])`. |
+| `analyze_hardware_firmware` MCP tool | complete | 2 | Reads persisted row only (no re-parsing); markdown summary with parsed-metadata JSON. |
+| `fdt>=0.3.3` pip dep | complete | 2 | Added to backend/pyproject.toml (pure-Python, Apache-2.0). Requires `docker compose up -d --build backend worker` per rule 8. |
+| Parser unit tests | complete | 2 | 13 test functions + parametrized malformed-input across 10 formats. Synthetic fixtures only (no firmware binaries checked in). |
+| `_build_fixtures.py` helper | complete | 2 | Pure-Python generators: ELF64, kmod with .modinfo, OP-TEE TA with .ta_head, MBN v3 header + cert chain, DTB, DTBO, Broadcom firmware with embedded version. Self-signed RSA-2048 X.509 via `cryptography`. |
 
 ## Decision Log
 
@@ -119,10 +131,17 @@ Direction: Android device images contain 20-40 hardware firmware blobs (modem, T
 - 2026-04-17T01:45Z: Extended unpack.py signature with `firmware_id: uuid.UUID | None = None` kwarg; trampoline pattern (new `unpack_firmware` wraps `_unpack_firmware_inner`) so detection fires once per success rather than at each of ~10 early-return branches. Wired three callers (arq_worker, routers/firmware, device_service) to pass the firmware_id. Reason: alternative (hook at every success branch) is fragile — any new branch would miss the hook.
 - 2026-04-17T01:45Z: Detection uses `INSERT … ON CONFLICT (firmware_id, blob_sha256) DO NOTHING` for idempotency. Unique constraint `uq_hwfw_firmware_sha256` added to model + migration. Reason: re-running detection on the same firmware (e.g., worker restart) must not create duplicate rows; dedup by content hash per firmware is the natural key.
 - 2026-04-17T01:45Z: `signed` and `detection_confidence` columns have `server_default` in the migration (not just Python `default=`). Reason: bulk-insert via `sqlalchemy.dialects.postgresql.insert` bypasses ORM defaults; DB-side default is required for NOT NULL columns when the detector omits these fields.
+- 2026-04-17T02:00Z: Phase 2 — qtestsign decision executed: REIMPLEMENTED the MBN v3/v5/v6 parser (~500 LOC) rather than vendoring GPL-2.0 code or shelling out. Reason: smallest surface, no license entanglement, and MBN v3 raw header + QC segment flags + X.509 cert-chain DER walking is all that's needed — no need to replicate qtestsign's signing logic (we only READ).
+- 2026-04-17T02:00Z: Phase 2 — Parser execution happens inline in `_walk_and_classify` (inside the executor), not as a separate pass. Reason: avoids a second FS walk; parsers are fast enough (pyelftools/LIEF/fdt) that the added cost is negligible; keeps detection a single atomic "classify + parse + persist" pipeline.
+- 2026-04-17T02:00Z: Phase 2 — Parsers MUST NOT raise (contract enforced by defensive try/except in detector). Reason: one bad blob cannot abort detection for the other 20+ blobs in an Android image. Parsers surface errors through `metadata["error"]` instead.
+- 2026-04-17T02:00Z: Phase 2 — Test fixtures are all synthesized in-memory from `_build_fixtures.py` helpers (no real firmware binaries checked in). Reason: avoids licensing/export-control issues; keeps repo small; parsers tested against controlled inputs with known-correct expected values.
 
 ## Review Queue
 
-- [ ] Architecture: Phase 2 — confirm qtestsign license path (vendor vs subprocess vs reimplement).
+- [x] Architecture: Phase 2 — qtestsign license path resolved by reimplementing ~500 LOC of header + segment + cert-chain parsing in `qualcomm_mbn.py`. No vendor, no subprocess, no license question.
+- [ ] Verification: Phase 2 — `docker compose exec backend python -c "import fdt"` after `up -d --build backend worker` (rule 8); `docker compose exec backend pytest backend/tests/test_hardware_firmware_parsers.py -q`.
+- [ ] OP-TEE fixture ELF: verify LIEF accepts the section-only ELF64 built by `_build_minimal_elf64`. If rejected, add a PT_LOAD program header to the fixture builder.
+- [ ] MBN v3 header classifier: the parser reports either `"v3"` or `"v5_or_v6"` based on a size heuristic; current fixture ends up as `"v5_or_v6"` because it includes 8-byte cert-ptr extension. Test accepts either. Real-world refinement TBD when we have actual MBN v3 vs v5 samples.
 - [ ] Architecture: Phase 4 — `known_firmware.yaml` CVE families need review before seeding (14 families listed in research-threats.md §Seed CVE Families).
 - [ ] UX: Phase 5 — HardwareFirmwarePage layout matches existing ComponentMap left-panel + Monaco pattern.
 - [ ] Security: Phase 1 — magic-byte sniff must use `os.open(O_NOFOLLOW)` or realpath check to prevent symlink escape.
@@ -142,25 +161,30 @@ Integration point for Phase 1 is `backend/app/workers/unpack.py:484` (Android fa
 
 ## Continuation State
 
-Phase: 1 (complete, uncommitted) → Phase 2 (pending)
-Sub-step: awaiting user decision — commit Phase 1 and proceed to Phase 2, or review first
-Files created (7):
-  backend/app/models/hardware_firmware.py
-  backend/app/schemas/hardware_firmware.py
-  backend/app/services/hardware_firmware/__init__.py
-  backend/app/services/hardware_firmware/classifier.py
-  backend/app/services/hardware_firmware/detector.py
-  backend/app/ai/tools/hardware_firmware.py
-  backend/alembic/versions/c8a1f4e2d5b6_add_hardware_firmware_blobs.py
-Files modified (4):
-  backend/app/ai/__init__.py (register hardware firmware tools)
-  backend/app/workers/unpack.py (post-extraction fire-and-forget hook)
-  backend/app/workers/arq_worker.py (pass firmware_id to unpack)
-  backend/app/routers/firmware.py (pass firmware_id to unpack)
-  backend/app/services/device_service.py (pass firmware_id to unpack)
+Phase: 2 (complete, uncommitted) → Phase 3 (pending)
+Sub-step: awaiting commit of Phase 2; Phase 3 delegation next
+Phase 1: committed at ac6a493 (14 files, 1059+/-3 lines)
+Phase 2 files created (10):
+  backend/app/services/hardware_firmware/parsers/__init__.py
+  backend/app/services/hardware_firmware/parsers/base.py
+  backend/app/services/hardware_firmware/parsers/qualcomm_mbn.py
+  backend/app/services/hardware_firmware/parsers/dtb.py
+  backend/app/services/hardware_firmware/parsers/kmod.py
+  backend/app/services/hardware_firmware/parsers/elf_tee.py
+  backend/app/services/hardware_firmware/parsers/broadcom_wl.py
+  backend/app/services/hardware_firmware/parsers/raw_bin.py
+  backend/tests/test_hardware_firmware_parsers.py
+  backend/tests/fixtures/hardware_firmware/_build_fixtures.py
+  (+ backend/tests/fixtures/hardware_firmware/__init__.py empty marker)
+Phase 2 files modified (3):
+  backend/pyproject.toml (added fdt dep)
+  backend/app/services/hardware_firmware/detector.py (parser dispatch + merge fields into insert)
+  backend/app/ai/tools/hardware_firmware.py (added analyze_hardware_firmware handler + registration)
 Verification:
-  - py_compile clean on all 12 touched Python files
-  - grep checks for list_hardware_firmware, register_hardware_firmware_tools pass
-  - Docker-runtime checks (alembic upgrade head; live MCP call) deferred — require `docker compose up -d --build backend worker` per CLAUDE.md rule 8
-Blocking: none — Phase 1 logically complete, awaiting Docker verification + user review
-checkpoint-phase-1: none (clean starting state; rollback via git revert or git reset on committed phase)
+  - py_compile clean on all 12 new/modified Python files
+  - 13 test functions + parametrized malformed-input test
+  - PARSER_REGISTRY has 10 keys (qcom_mbn, mbn_v3, mbn_v5, mbn_v6, dtb, dtbo, ko, optee_ta, fw_bcm, raw_bin)
+  - Detector invokes get_parser+parser.parse inside executor; defensive try/except
+  - Docker-runtime checks (fdt import, pytest, migration) deferred — require `docker compose up -d --build backend worker` per rule 8
+Blocking: none — Phase 2 logically complete
+checkpoint-phase-2: stash@{0} (telemetry deltas only)

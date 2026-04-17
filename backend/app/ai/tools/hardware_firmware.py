@@ -1,6 +1,14 @@
-"""Hardware firmware MCP tools — list detected modem/TEE/Wi-Fi/GPU/DSP blobs."""
+"""Hardware firmware MCP tools.
+
+Tools for inspecting detected modem / TEE / Wi-Fi / BT / GPU / DSP / kernel
+firmware blobs from the current firmware.  Detection runs automatically
+after extraction; Phase 2 adds per-format parsers that fill in version,
+signing, chipset, and format-specific metadata.
+"""
 
 from __future__ import annotations
+
+import json
 
 from sqlalchemy import select
 
@@ -52,6 +60,59 @@ async def _handle_list_hardware_firmware(input: dict, context: ToolContext) -> s
     return "\n".join(lines)
 
 
+async def _handle_analyze_hardware_firmware(input: dict, context: ToolContext) -> str:
+    """Return detailed per-blob analysis for a single detected hardware firmware path."""
+    blob_path = input.get("blob_path")
+    if not blob_path:
+        return "Error: blob_path is required."
+
+    stmt = select(HardwareFirmwareBlob).where(
+        HardwareFirmwareBlob.firmware_id == context.firmware_id,
+        HardwareFirmwareBlob.blob_path == blob_path,
+    )
+    result = await context.db.execute(stmt)
+    blob = result.scalars().first()
+    if blob is None:
+        return f"No hardware firmware blob found at path: {blob_path}"
+
+    lines = [
+        f"# Hardware firmware: {blob.blob_path}",
+        "",
+        f"- **Category:** {blob.category}",
+        f"- **Vendor:** {blob.vendor or 'unknown'}",
+        f"- **Format:** {blob.format}",
+        f"- **Size:** {blob.file_size:,} bytes",
+        f"- **SHA-256:** `{blob.blob_sha256}`",
+        f"- **Partition:** {blob.partition or '-'}",
+    ]
+    if blob.version:
+        lines.append(f"- **Version:** {blob.version}")
+    lines.append(f"- **Signed:** {blob.signed}")
+    if blob.signature_algorithm:
+        lines.append(f"- **Signature algorithm:** {blob.signature_algorithm}")
+    if blob.cert_subject:
+        lines.append(f"- **Signing cert subject:** `{blob.cert_subject}`")
+    if blob.chipset_target:
+        lines.append(f"- **Chipset target:** {blob.chipset_target}")
+
+    lines.append(f"- **Detection source:** {blob.detection_source}")
+    lines.append(f"- **Detection confidence:** {blob.detection_confidence}")
+
+    md = blob.metadata_
+    if md:
+        lines.append("")
+        lines.append("## Parser metadata")
+        lines.append("")
+        lines.append("```json")
+        try:
+            lines.append(json.dumps(md, indent=2, default=str, sort_keys=True))
+        except (TypeError, ValueError):
+            lines.append(str(md))
+        lines.append("```")
+
+    return "\n".join(lines)
+
+
 def register_hardware_firmware_tools(registry: ToolRegistry) -> None:
     """Register hardware firmware MCP tools with the given registry."""
     registry.register(
@@ -81,4 +142,28 @@ def register_hardware_firmware_tools(registry: ToolRegistry) -> None:
             },
         },
         handler=_handle_list_hardware_firmware,
+    )
+
+    registry.register(
+        name="analyze_hardware_firmware",
+        description=(
+            "Deep analysis of a single detected hardware firmware blob: parsed "
+            "headers, version, signature algorithm, signing-cert subject, chipset "
+            "target, and parser-specific metadata (MBN segments, DTB compatibles, "
+            ".modinfo, etc.).  Use the blob_path returned by list_hardware_firmware."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "blob_path": {
+                    "type": "string",
+                    "description": (
+                        "Absolute path to the blob inside the extracted firmware "
+                        "(as reported by list_hardware_firmware)."
+                    ),
+                },
+            },
+            "required": ["blob_path"],
+        },
+        handler=_handle_analyze_hardware_firmware,
     )
