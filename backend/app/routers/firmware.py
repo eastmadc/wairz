@@ -212,7 +212,7 @@ async def _run_unpack_background(
 
     try:
         output_base = os.path.dirname(storage_path)
-        result = await unpack_firmware(storage_path, output_base, _update_progress)
+        result = await unpack_firmware(storage_path, output_base, _update_progress, firmware_id=firmware_id)
 
         async with async_session_factory() as db:
             try:

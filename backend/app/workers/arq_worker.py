@@ -81,7 +81,7 @@ async def unpack_firmware_job(
 
     try:
         output_base = os.path.dirname(storage_path)
-        result = await unpack_firmware(storage_path, output_base, _update_progress)
+        result = await unpack_firmware(storage_path, output_base, _update_progress, firmware_id=fid)
 
         async with async_session_factory() as db:
             try:

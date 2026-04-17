@@ -9,8 +9,10 @@ Delegates to specialized modules:
 - unpack_android: OTA extraction, sparse images, super.img partitions
 """
 
+import asyncio
 import logging
 import os
+import uuid
 
 # Re-export public API for backward compatibility
 from app.workers.unpack_common import (  # noqa: F401
@@ -36,6 +38,21 @@ from app.workers.unpack_linux import (  # noqa: F401
 from app.workers.unpack_android import _extract_android_ota, _extract_boot_img  # noqa: F401
 
 logger = logging.getLogger(__name__)
+
+
+async def _run_hardware_firmware_detection_safe(
+    firmware_id: uuid.UUID, extracted_path: str,
+) -> None:
+    """Post-extraction detection task. Own session; safe to fire-and-forget."""
+    from app.database import async_session_factory
+    from app.services.hardware_firmware import detect_hardware_firmware
+    try:
+        async with async_session_factory() as db:
+            count = await detect_hardware_firmware(firmware_id, db, extracted_path)
+            await db.commit()
+            logger.info("Hardware firmware detection complete: %d blobs", count)
+    except Exception:
+        logger.warning("Hardware firmware detection failed", exc_info=True)
 
 
 def _analyze_filesystem(result: UnpackResult, extraction_dir: str) -> None:
@@ -145,6 +162,7 @@ async def unpack_firmware(
     firmware_path: str,
     output_base_dir: str,
     progress_callback=None,
+    firmware_id: uuid.UUID | None = None,
 ) -> UnpackResult:
     """Orchestrate the full unpacking pipeline with adaptive fallback.
 
@@ -158,7 +176,25 @@ async def unpack_firmware(
     Args:
         progress_callback: Optional async callable(stage: str, progress: int)
             called at key pipeline stages to report progress (0-100).
+        firmware_id: If provided, schedules a post-extraction hardware firmware
+            detection task (fire-and-forget) after a successful extraction.
     """
+    result = await _unpack_firmware_inner(
+        firmware_path, output_base_dir, progress_callback,
+    )
+    if result.success and result.extracted_path and firmware_id is not None:
+        asyncio.create_task(
+            _run_hardware_firmware_detection_safe(firmware_id, result.extracted_path),
+        )
+    return result
+
+
+async def _unpack_firmware_inner(
+    firmware_path: str,
+    output_base_dir: str,
+    progress_callback=None,
+) -> UnpackResult:
+    """Internal unpack body (see unpack_firmware for docs)."""
     import shutil
     import tarfile as _tarfile
 

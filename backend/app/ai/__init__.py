@@ -9,6 +9,7 @@ from app.ai.tools.comparison import register_comparison_tools
 from app.ai.tools.documents import register_document_tools
 from app.ai.tools.emulation import register_emulation_tools
 from app.ai.tools.fuzzing import register_fuzzing_tools
+from app.ai.tools.hardware_firmware import register_hardware_firmware_tools
 from app.ai.tools.network import register_network_tools
 from app.ai.tools.filesystem import register_filesystem_tools
 from app.ai.tools.reporting import register_reporting_tools
@@ -33,6 +34,7 @@ def create_tool_registry() -> ToolRegistry:
     register_android_tools(registry)
     register_android_bytecode_tools(registry)
     register_android_sast_tools(registry)
+    register_hardware_firmware_tools(registry)
     register_emulation_tools(registry)
     register_fuzzing_tools(registry)
     register_comparison_tools(registry)
