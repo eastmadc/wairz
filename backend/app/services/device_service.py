@@ -292,7 +292,7 @@ class DeviceService:
         from app.database import async_session_factory
 
         try:
-            result = await unpack_firmware(storage_path, output_base)
+            result = await unpack_firmware(storage_path, output_base, firmware_id=firmware_id)
 
             async with async_session_factory() as db:
                 try:
