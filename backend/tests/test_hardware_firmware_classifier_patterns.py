@@ -181,7 +181,8 @@ def test_classify_aw883xx_acf_bin_raw() -> None:
     assert isinstance(cls, Classification)
     assert cls.vendor == "awinic"
     assert cls.category == "audio"
-    assert cls.format == "raw_bin"
+    # Phase 3: ACF now routes to the native awinic_acf parser.
+    assert cls.format == "awinic_acf"
     assert cls.confidence == "high"
     assert cls.product is not None
 

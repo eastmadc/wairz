@@ -27,6 +27,7 @@ patterns:
     product: "AW88xxx Smart PA acoustic calibration file"
     category: audio
     confidence: high
+    format: awinic_acf
     source: awinic-driver/aw883xx_patch
   - pattern: "^aw88[0-9a-z]+_fw[_a-z0-9]*\\.bin$"
     vendor: awinic
@@ -49,24 +50,28 @@ patterns:
     product: "MediaTek Wi-Fi RAM code"
     category: wifi
     confidence: high
+    format: mtk_wifi_hdr
     source: AOSP-vendor
   - pattern: "^mt76[0-9a-z_]+(_hdr)?\\.bin$"
     vendor: mediatek
     product: "MediaTek MT76xx Wi-Fi firmware"
     category: wifi
     confidence: high
+    format: mtk_wifi_hdr
     source: linux-firmware
   - pattern: "^mt79[0-9a-z_]+(_hdr)?\\.bin$"
     vendor: mediatek
     product: "MediaTek MT79xx Wi-Fi firmware"
     category: wifi
     confidence: high
+    format: mtk_wifi_hdr
     source: linux-firmware
   - pattern: "^mt76[0-9]{2}[_.][a-z0-9._-]+$"
     vendor: mediatek
     product: "MediaTek MT76xx connectivity firmware"
     category: wifi
     confidence: medium
+    format: mtk_wifi_hdr
   - pattern: "^mt66[0-9]{2}_(fm|bt|wmt|ant)_[a-z0-9_.]*\\.(bin|cfg)$"
     vendor: mediatek
     product: "MediaTek MT66xx connectivity combo (Wi-Fi/BT/FM/GPS)"
@@ -87,11 +92,13 @@ patterns:
     product: "MediaTek MD1 modem image"
     category: modem
     confidence: high
+    format: mtk_modem
   - pattern: "^md1dsp(_[a-z0-9.]+)?\\.(img|bin)$"
     vendor: mediatek
     product: "MediaTek MD1 DSP image"
     category: dsp
     confidence: high
+    format: mtk_modem
   - pattern: "^preloader[_a-z0-9.-]*\\.(bin|img)$"
     vendor: mediatek
     product: "MediaTek preloader"
@@ -103,7 +110,7 @@ patterns:
     product: "MediaTek LK (Little Kernel) bootloader"
     category: bootloader
     confidence: high
-    format: mtk_gfh
+    format: mtk_lk
   - pattern: "^spmfw[_a-z0-9.-]*\\.(img|bin)$"
     vendor: mediatek
     product: "MediaTek SPM firmware"

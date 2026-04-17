@@ -43,8 +43,12 @@ FORMATS: set[str] = {
     "kinibi_mclf",
     "optee_ta",
     "shannon_toc",
-    "mtk_gfh",
+    # Phase 3 — MediaTek + Awinic native parsers
+    "mtk_lk",
     "mtk_preloader",
+    "mtk_modem",
+    "mtk_wifi_hdr",
+    "awinic_acf",
 }
 
 
@@ -201,9 +205,9 @@ def _classify_by_magic(magic: bytes) -> Classification | None:
     if magic[:4] == b"TRUS":
         return Classification("tee", "unknown", "kinibi_mclf", "high")
 
-    # MediaTek LK image
+    # MediaTek LK partition record (magic 0x58881688, little-endian)
     if magic[:4] == b"\x88\x16\x88\x58":
-        return Classification("bootloader", "mediatek", "mtk_gfh", "high")
+        return Classification("bootloader", "mediatek", "mtk_lk", "high")
 
     # MediaTek preloader: MMM\x01 header, second byte starts with 0x38
     if len(magic) >= 5 and magic[:4] == b"MMM\x01" and magic[4] == 0x38:
