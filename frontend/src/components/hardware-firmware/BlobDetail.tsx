@@ -1,6 +1,7 @@
 import { Badge } from '@/components/ui/badge'
 import { Loader2 } from 'lucide-react'
 import type { HardwareFirmwareBlob, FirmwareCveMatch } from '@/api/hardwareFirmware'
+import { displayPath } from './BlobTable'
 
 interface BlobDetailProps {
   blob: HardwareFirmwareBlob | null
@@ -29,7 +30,12 @@ export default function BlobDetail({ blob, cves, loading }: BlobDetailProps) {
   return (
     <div className="space-y-3 rounded-lg border border-border p-4">
       <div>
-        <p className="break-all font-mono text-xs text-foreground">{blob.blob_path}</p>
+        <p
+          className="break-all font-mono text-xs text-foreground"
+          title={blob.blob_path}
+        >
+          {displayPath(blob.blob_path)}
+        </p>
         <div className="mt-2 flex flex-wrap items-center gap-1.5">
           <Badge variant="outline" className="text-[10px]">{blob.category}</Badge>
           <Badge variant="outline" className="text-[10px]">{blob.vendor ?? 'unknown'}</Badge>
