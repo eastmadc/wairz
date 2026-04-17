@@ -377,6 +377,7 @@ class FirmwareService:
         except (zipfile.BadZipFile, OSError):
             pass  # Corrupted or unreadable — treat as non-ZIP firmware
 
+        extraction_diagnostics: dict = {}
         if is_zip:
             try:
                 is_android = _is_android_firmware_zip(storage_path)
@@ -499,6 +500,24 @@ class FirmwareService:
                             "Nested extraction of zip_contents failed",
                             exc_info=True,
                         )
+                    # Diagnose archive-named files that failed to extract
+                    # (vendor-encrypted / signed containers). Surfaced in
+                    # device_metadata so the UI can flag partial extraction.
+                    try:
+                        from app.workers.unpack_common import (
+                            diagnose_failed_archives,
+                        )
+                        if zip_root and os.path.isdir(zip_root):
+                            extraction_diagnostics = await zip_loop.run_in_executor(
+                                None,
+                                diagnose_failed_archives,
+                                [zip_root],
+                            )
+                    except Exception:
+                        logger.warning(
+                            "Archive diagnostic scan failed",
+                            exc_info=True,
+                        )
                     # Recompute hash and size for the actual firmware content
                     sha256_hash = hashlib.sha256()
                     file_size = 0
@@ -515,6 +534,11 @@ class FirmwareService:
             file_size=file_size,
             storage_path=storage_path,
             version_label=version_label,
+            device_metadata=(
+                {"extraction_diagnostics": extraction_diagnostics}
+                if extraction_diagnostics
+                else None
+            ),
         )
         self.db.add(firmware)
         await self.db.flush()

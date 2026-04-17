@@ -31,6 +31,7 @@ from app.workers.unpack_linux import (  # noqa: F401
     check_tar_bomb,
     detect_architecture,
     detect_architecture_from_elf,
+    detect_architecture_from_kernel,
     detect_kernel,
     detect_os_info,
     _firmware_tar_filter,
@@ -139,6 +140,14 @@ def _analyze_filesystem(result: UnpackResult, extraction_dir: str) -> None:
             result.extraction_dir = binwalk_dir
 
     arch, endian = detect_architecture(fs_root)
+    if arch is None:
+        # Fallback: rootfs has no ELFs (encrypted payloads, MCU-only images).
+        # Walk sibling extraction trees for a kernel image header we can
+        # fingerprint — this is the only arch signal when rootfs is opaque.
+        parent = os.path.dirname(extraction_dir.rstrip("/"))
+        arch, endian = detect_architecture_from_kernel(
+            [d for d in (extraction_dir, parent) if d],
+        )
     result.architecture = arch
     result.endianness = endian
     result.os_info = detect_os_info(fs_root)

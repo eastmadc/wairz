@@ -47,6 +47,23 @@ export interface BinaryInfo {
   arch_detection_method?: string | null
 }
 
+export interface ExtractionDiagnostic {
+  path: string
+  size_bytes: number
+  suffix: string
+  magic_hex: string
+  format?: string
+  vendor?: string
+  note?: string
+}
+
+export interface ExtractionDiagnostics {
+  partial_extraction: boolean
+  encrypted_archives: ExtractionDiagnostic[]
+  unrecognised_archives: ExtractionDiagnostic[]
+  summary: string
+}
+
 export interface FirmwareDetail extends FirmwareSummary {
   project_id: string
   storage_path: string | null
@@ -56,6 +73,12 @@ export interface FirmwareDetail extends FirmwareSummary {
   unpack_stage: string | null
   unpack_progress: number | null
   binary_info: BinaryInfo | null
+  device_metadata: {
+    extraction_diagnostics?: ExtractionDiagnostics
+    detection_roots?: string[]
+    detection_audit?: Record<string, unknown>
+    [key: string]: unknown
+  } | null
 }
 
 export interface FileEntry {

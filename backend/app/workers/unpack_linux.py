@@ -103,6 +103,93 @@ def detect_architecture_from_elf(path: str) -> tuple[str | None, str | None]:
         return None, None
 
 
+# ARM 32-bit zImage header: arch/arm/boot/compressed/head.S
+# 0x24: magic 0x016F2818 (LE)  |  0x30: endian marker
+_ZIMAGE_ARM_MAGIC = 0x016F2818
+_ZIMAGE_ENDIAN_LE = 0x04030201
+_ZIMAGE_ENDIAN_BE = 0x01020304
+# ARM64 Image header: Documentation/arm64/booting.rst
+# 0x38: "ARM\x64" magic  |  0x30: flags (bit 0 = endianness)
+_ARM64_IMAGE_MAGIC = b"ARM\x64"
+_KERNEL_IMAGE_PREFIXES = (
+    "zimage", "vmlinuz", "vmlinux", "uimage", "kernel", "image",
+)
+
+
+def _parse_kernel_header(data: bytes) -> tuple[str | None, str | None] | None:
+    """Parse an ARM/ARM64 kernel image header for arch + endianness.
+
+    Returns (arch, endianness) on recognised header, else None. Reads only
+    the first 64 bytes — no decompression needed.
+    """
+    if len(data) < 0x40:
+        return None
+    # ARM 32-bit zImage
+    magic_arm = int.from_bytes(data[0x24:0x28], "little")
+    if magic_arm == _ZIMAGE_ARM_MAGIC:
+        endian_word = int.from_bytes(data[0x30:0x34], "little")
+        if endian_word == _ZIMAGE_ENDIAN_BE:
+            return "arm", "big"
+        return "arm", "little"
+    # ARM64 Image
+    if data[0x38:0x3C] == _ARM64_IMAGE_MAGIC:
+        flags = int.from_bytes(data[0x30:0x38], "little")
+        return "aarch64", "big" if flags & 1 else "little"
+    return None
+
+
+def detect_architecture_from_kernel(
+    scan_dirs: list[str], max_scan: int = 30, max_depth: int = 6,
+) -> tuple[str | None, str | None]:
+    """Fallback arch detection by scanning for kernel image headers.
+
+    Walks ``scan_dirs`` (non-recursively following symlinks) looking for
+    files named like ``zImage``/``vmlinuz``/``uImage``/``Image``. Parses
+    their headers with ``_parse_kernel_header`` and returns on the first
+    match.
+
+    This exists so firmware with an encrypted / missing rootfs — common on
+    signed medical-device updates — still yields an ``architecture`` value
+    when the ELF-voting path in ``detect_architecture`` finds nothing.
+    """
+    seen = 0
+    for scan_dir in scan_dirs:
+        if not scan_dir or not os.path.isdir(scan_dir):
+            continue
+        real_scan = os.path.realpath(scan_dir)
+        for root, dirs, files in os.walk(scan_dir, followlinks=False):
+            try:
+                rel_depth = os.path.relpath(root, scan_dir).count(os.sep)
+            except ValueError:
+                rel_depth = 0
+            if rel_depth >= max_depth:
+                dirs[:] = []
+                continue
+            dirs[:] = [d for d in dirs if not d.startswith(".")]
+            for name in files:
+                low = name.lower()
+                if not any(low.startswith(p) for p in _KERNEL_IMAGE_PREFIXES):
+                    continue
+                full = os.path.join(root, name)
+                # Skip symlinks escaping the scan_dir
+                try:
+                    if os.path.islink(full):
+                        target = os.path.realpath(full)
+                        if not target.startswith(real_scan):
+                            continue
+                    with open(full, "rb") as fh:
+                        head = fh.read(0x40)
+                except OSError:
+                    continue
+                seen += 1
+                parsed = _parse_kernel_header(head)
+                if parsed:
+                    return parsed
+                if seen >= max_scan:
+                    return None, None
+    return None, None
+
+
 def detect_kernel(extraction_dir: str, fs_root: str | None) -> str | None:
     """Scan the extraction directory for a kernel image."""
     if fs_root:

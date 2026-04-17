@@ -52,6 +52,7 @@ class FirmwareDetailResponse(BaseModel):
     unpack_stage: str | None = None
     unpack_progress: int | None = None
     binary_info: BinaryInfoResponse | None = None
+    device_metadata: dict | None = None
     created_at: datetime
 
 

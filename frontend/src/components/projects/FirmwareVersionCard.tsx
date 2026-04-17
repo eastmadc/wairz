@@ -15,6 +15,7 @@ import {
   ChevronDown,
   Terminal,
   Microchip,
+  ShieldAlert,
 } from 'lucide-react'
 import type { FirmwareSummary, FirmwareDetail } from '@/types'
 import { Badge } from '@/components/ui/badge'
@@ -119,6 +120,16 @@ export default function FirmwareVersionCard({
             )}
             {isUnpacked && (
               <Badge variant="default" className="text-xs">unpacked</Badge>
+            )}
+            {fwDetail?.device_metadata?.extraction_diagnostics?.partial_extraction && (
+              <Badge
+                variant="outline"
+                className="text-xs border-amber-500 text-amber-700 dark:text-amber-400"
+                title={fwDetail.device_metadata.extraction_diagnostics.summary}
+              >
+                <ShieldAlert className="mr-1 h-3 w-3" />
+                partial extraction
+              </Badge>
             )}
             {fwDetail?.binary_info && (
               <Badge variant="outline" className="text-xs">standalone binary</Badge>
@@ -304,6 +315,34 @@ export default function FirmwareVersionCard({
             </div>
             {rootfsError && uploadingRootfs === null && (
               <p className="text-xs text-destructive mt-1">{rootfsError}</p>
+            )}
+          </div>
+        )}
+
+        {fwDetail?.device_metadata?.extraction_diagnostics?.partial_extraction && (
+          <div className="mt-3 rounded border border-amber-500/40 bg-amber-500/5 p-3 text-xs">
+            <div className="flex items-center gap-2 font-medium text-amber-700 dark:text-amber-400 mb-1">
+              <ShieldAlert className="h-3.5 w-3.5" />
+              Partial extraction
+            </div>
+            <p className="text-muted-foreground mb-2">
+              {fwDetail.device_metadata.extraction_diagnostics.summary}
+            </p>
+            {fwDetail.device_metadata.extraction_diagnostics.encrypted_archives.length > 0 && (
+              <ul className="space-y-1">
+                {fwDetail.device_metadata.extraction_diagnostics.encrypted_archives.slice(0, 8).map((e, i) => (
+                  <li key={i} className="font-mono">
+                    <span className="text-amber-700 dark:text-amber-400">{e.vendor ?? '?'}</span>
+                    {' '}{e.path}
+                    {' '}<span className="text-muted-foreground">({formatFileSize(e.size_bytes)})</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+            {fwDetail.device_metadata.extraction_diagnostics.encrypted_archives[0]?.note && (
+              <p className="text-muted-foreground mt-2 italic">
+                {fwDetail.device_metadata.extraction_diagnostics.encrypted_archives[0].note}
+              </p>
             )}
           </div>
         )}

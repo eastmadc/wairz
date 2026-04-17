@@ -429,3 +429,141 @@ class TestRecursiveNestedExtraction:
         # (new_dirs may still be 0 or include anything that isn't the symlink)
         for d in new_dirs:
             assert "link.tar_extracted" not in d
+
+
+# ─── Test 7: Encrypted-container diagnostic ───────────────────────────────
+
+class TestDiagnoseFailedArchives:
+    """Surface vendor-encrypted / unrecognised archive-named files that
+    ``_recursive_extract_nested`` silently dropped."""
+
+    def test_empty_tree_returns_empty_dict(self, tmp_path: Path):
+        from app.workers.unpack_common import diagnose_failed_archives
+
+        (tmp_path / "note.txt").write_text("x")
+        assert diagnose_failed_archives([str(tmp_path)]) == {}
+
+    def test_real_tar_xz_not_flagged(self, tmp_path: Path):
+        """A genuine tar.xz that extracted cleanly must not be flagged."""
+        import lzma
+
+        from app.workers.unpack_common import diagnose_failed_archives
+
+        inner = tmp_path / "inner.txt"
+        inner.write_text("hello")
+        tar_path = tmp_path / "real.tar"
+        with tarfile.open(tar_path, "w") as tf:
+            tf.add(inner, arcname="inner.txt")
+        xz_path = tmp_path / "real.tar.xz"
+        with open(tar_path, "rb") as src, lzma.open(xz_path, "wb") as dst:
+            dst.write(src.read())
+        tar_path.unlink()
+
+        result = diagnose_failed_archives([str(tmp_path)])
+        assert result == {}
+
+    def test_edan_signed_container_flagged(self, tmp_path: Path):
+        """EDAN MPM magic (16 bytes) is recognised and tagged with vendor."""
+        from app.workers.unpack_common import diagnose_failed_archives
+
+        magic = bytes.fromhex("a3dfbbbf4e947c6649859f5e45d273ed")
+        (tmp_path / "rootfs_partition.tar.xz").write_bytes(magic + b"\x00" * 64)
+        (tmp_path / "boot_partition.tar.xz").write_bytes(magic + b"\xff" * 64)
+
+        result = diagnose_failed_archives([str(tmp_path)])
+        assert result["partial_extraction"] is True
+        assert len(result["encrypted_archives"]) == 2
+        assert all(e["vendor"] == "edan" for e in result["encrypted_archives"])
+        assert all(e["format"] == "edan_mpm_signed" for e in result["encrypted_archives"])
+        assert "edan" in result["summary"]
+
+    def test_unknown_container_flagged_as_unrecognised(self, tmp_path: Path):
+        """Random bytes named .tar.xz land in unrecognised_archives."""
+        from app.workers.unpack_common import diagnose_failed_archives
+
+        (tmp_path / "mystery.tar.xz").write_bytes(b"\x00" * 64)
+
+        result = diagnose_failed_archives([str(tmp_path)])
+        assert result["partial_extraction"] is True
+        assert len(result["encrypted_archives"]) == 0
+        assert len(result["unrecognised_archives"]) == 1
+
+    def test_populated_extracted_sibling_skipped(self, tmp_path: Path):
+        """If a *_extracted/ sibling has content, the archive is considered
+        successfully extracted and NOT flagged."""
+        from app.workers.unpack_common import diagnose_failed_archives
+
+        # Archive file (invalid but with populated sibling)
+        (tmp_path / "pkg.tar.xz").write_bytes(b"\x00" * 64)
+        sibling = tmp_path / "pkg.tar.xz_extracted"
+        sibling.mkdir()
+        (sibling / "payload").write_text("x")
+
+        result = diagnose_failed_archives([str(tmp_path)])
+        assert result == {}
+
+
+# ─── Test 8: Architecture fallback from zImage ────────────────────────────
+
+class TestArchFallbackFromKernel:
+    """Rootfs-less firmware still yields ``architecture`` from a kernel
+    image header — used when rootfs payloads are vendor-encrypted."""
+
+    def test_arm_zimage_header_returns_arm_little(self, tmp_path: Path):
+        from app.workers.unpack_linux import detect_architecture_from_kernel
+
+        # ARM zImage: magic 0x016F2818 at 0x24, endian marker at 0x30
+        head = bytearray(0x40)
+        head[0x24:0x28] = (0x016F2818).to_bytes(4, "little")
+        head[0x30:0x34] = (0x04030201).to_bytes(4, "little")
+        path = tmp_path / "zImage-restore"
+        path.write_bytes(bytes(head) + b"\x00" * 1024)
+
+        arch, endian = detect_architecture_from_kernel([str(tmp_path)])
+        assert arch == "arm"
+        assert endian == "little"
+
+    def test_arm_big_endian_zimage_returns_big(self, tmp_path: Path):
+        from app.workers.unpack_linux import detect_architecture_from_kernel
+
+        head = bytearray(0x40)
+        head[0x24:0x28] = (0x016F2818).to_bytes(4, "little")
+        head[0x30:0x34] = (0x01020304).to_bytes(4, "little")
+        (tmp_path / "zImage").write_bytes(bytes(head) + b"\x00" * 1024)
+
+        arch, endian = detect_architecture_from_kernel([str(tmp_path)])
+        assert arch == "arm"
+        assert endian == "big"
+
+    def test_aarch64_image_header(self, tmp_path: Path):
+        from app.workers.unpack_linux import detect_architecture_from_kernel
+
+        head = bytearray(0x40)
+        head[0x38:0x3C] = b"ARM\x64"  # arm64 magic
+        head[0x30:0x38] = (0).to_bytes(8, "little")  # LE flag
+        (tmp_path / "Image").write_bytes(bytes(head) + b"\x00" * 1024)
+
+        arch, endian = detect_architecture_from_kernel([str(tmp_path)])
+        assert arch == "aarch64"
+        assert endian == "little"
+
+    def test_no_kernel_returns_none(self, tmp_path: Path):
+        from app.workers.unpack_linux import detect_architecture_from_kernel
+
+        (tmp_path / "notes.txt").write_text("nothing to see")
+        assert detect_architecture_from_kernel([str(tmp_path)]) == (None, None)
+
+    def test_walks_nested_extracted_dirs(self, tmp_path: Path):
+        """RespArray shape: zImage lives 2 dirs deep in a sibling _extracted/."""
+        from app.workers.unpack_linux import detect_architecture_from_kernel
+
+        nested = tmp_path / "zImage-restore.tar.xz_extracted" / "zImage-restore"
+        nested.mkdir(parents=True)
+        head = bytearray(0x40)
+        head[0x24:0x28] = (0x016F2818).to_bytes(4, "little")
+        head[0x30:0x34] = (0x04030201).to_bytes(4, "little")
+        (nested / "zImage-restore").write_bytes(bytes(head) + b"\x00" * 1024)
+
+        arch, endian = detect_architecture_from_kernel([str(tmp_path)])
+        assert arch == "arm"
+        assert endian == "little"
