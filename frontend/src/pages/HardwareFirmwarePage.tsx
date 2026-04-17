@@ -37,6 +37,8 @@ export default function HardwareFirmwarePage() {
   const [category, setCategory] = useState<string | null>(null)
   const [vendor, setVendor] = useState<string | null>(null)
   const [signedOnly, setSignedOnly] = useState(false)
+  const [hideKernelModules, setHideKernelModules] = useState(true)
+  const [dedupeBySha, setDedupeBySha] = useState(true)
 
   const [selectedBlobId, setSelectedBlobId] = useState<string | null>(null)
   const [blobDetail, setBlobDetail] = useState<HardwareFirmwareBlob | null>(null)
@@ -145,23 +147,45 @@ export default function HardwareFirmwarePage() {
     }
   }, [projectId, selectedFirmwareId, selectedBlobId, loadAll])
 
-  // Derived values
-  const totalBlobs = blobs.length
-  const unsignedCount = useMemo(
-    () =>
-      blobs.filter((b) => b.signed === 'unsigned' || b.signed === 'weakly_signed').length,
+  // Client-side filtering — apply kernel-module hide + sha dedup on top of
+  // the server's category/vendor/signed filters.
+  const visibleBlobs = useMemo(() => {
+    let list = blobs
+    if (hideKernelModules) {
+      list = list.filter((b) => b.category !== 'kernel_module')
+    }
+    if (dedupeBySha) {
+      const seen = new Set<string>()
+      list = list.filter((b) => {
+        if (seen.has(b.blob_sha256)) return false
+        seen.add(b.blob_sha256)
+        return true
+      })
+    }
+    return list
+  }, [blobs, hideKernelModules, dedupeBySha])
+
+  // Derived values (from the POST-FILTER list so stats match what the user sees)
+  const totalBlobs = visibleBlobs.length
+  const kernelModuleCount = useMemo(
+    () => blobs.filter((b) => b.category === 'kernel_module').length,
     [blobs],
+  )
+  const hiddenDupCount = blobs.length - visibleBlobs.length - (hideKernelModules ? kernelModuleCount : 0)
+  const notSignedCount = useMemo(
+    () =>
+      visibleBlobs.filter(
+        (b) => b.signed === 'unsigned' || b.signed === 'weakly_signed' || b.signed === 'unknown',
+      ).length,
+    [visibleBlobs],
   )
   const vendorCount = useMemo(() => {
     const set = new Set<string>()
-    for (const b of blobs) {
+    for (const b of visibleBlobs) {
       if (b.vendor) set.add(b.vendor)
     }
     return set.size
-  }, [blobs])
-  // We don't have an aggregate CVE count on the list endpoint; surface the
-  // number of matches for the currently-selected blob (0 when none selected).
-  // The "Run CVE match" button's banner reports the total after a fresh run.
+  }, [visibleBlobs])
   const cveCount = blobCves.length
 
   const categories = useMemo(() => {
@@ -259,7 +283,7 @@ export default function HardwareFirmwarePage() {
         <>
           <StatsHeader
             totalBlobs={totalBlobs}
-            unsignedCount={unsignedCount}
+            notSignedCount={notSignedCount}
             vendorCount={vendorCount}
             cveCount={cveCount}
           />
@@ -283,8 +307,38 @@ export default function HardwareFirmwarePage() {
                     onVendor={setVendor}
                     onSignedOnly={setSignedOnly}
                   />
+                  <div className="flex flex-wrap items-center gap-4 text-xs text-muted-foreground">
+                    <label className="inline-flex cursor-pointer items-center gap-1.5">
+                      <input
+                        type="checkbox"
+                        checked={hideKernelModules}
+                        onChange={(e) => setHideKernelModules(e.target.checked)}
+                        className="h-3.5 w-3.5"
+                      />
+                      <span>
+                        Hide kernel modules
+                        {kernelModuleCount > 0 && (
+                          <span className="ml-1 opacity-70">({kernelModuleCount})</span>
+                        )}
+                      </span>
+                    </label>
+                    <label className="inline-flex cursor-pointer items-center gap-1.5">
+                      <input
+                        type="checkbox"
+                        checked={dedupeBySha}
+                        onChange={(e) => setDedupeBySha(e.target.checked)}
+                        className="h-3.5 w-3.5"
+                      />
+                      <span>
+                        Dedupe by SHA-256
+                        {hiddenDupCount > 0 && (
+                          <span className="ml-1 opacity-70">({hiddenDupCount} hidden)</span>
+                        )}
+                      </span>
+                    </label>
+                  </div>
                   <BlobTable
-                    blobs={blobs}
+                    blobs={visibleBlobs}
                     selectedId={selectedBlobId}
                     onSelect={setSelectedBlobId}
                   />

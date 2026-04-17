@@ -7,8 +7,7 @@ interface BlobTableProps {
   onSelect: (id: string) => void
 }
 
-// Exhaustive Record fallback per CLAUDE.md rule 9 — new backend "signed"
-// values must be added here OR the lookup falls back via `??`.
+// Exhaustive Record fallback per CLAUDE.md rule 9.
 const SIGNED_STYLE: Record<string, string> = {
   signed: 'border-green-500/50 text-green-600 dark:text-green-400',
   unsigned: 'border-red-500/50 text-red-600 dark:text-red-400',
@@ -22,6 +21,18 @@ function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
 }
 
+// Strip storage prefix so paths display as "partition_4_erofs/lib/modules/foo.ko"
+// instead of the full container storage path.  Matches any path containing
+// "/extracted/rootfs/", "/extracted/", or "/firmware/<uuid>/extracted".
+export function displayPath(abs: string): string {
+  const markers = ['/extracted/rootfs/', '/extracted/']
+  for (const m of markers) {
+    const idx = abs.indexOf(m)
+    if (idx >= 0) return abs.slice(idx + m.length)
+  }
+  return abs
+}
+
 export default function BlobTable({ blobs, selectedId, onSelect }: BlobTableProps) {
   if (blobs.length === 0) {
     return (
@@ -32,14 +43,14 @@ export default function BlobTable({ blobs, selectedId, onSelect }: BlobTableProp
   }
 
   return (
-    <div className="overflow-x-auto">
+    <div className="overflow-x-auto rounded-md border border-border">
       <table className="w-full text-xs">
         <thead>
-          <tr className="border-b border-border text-left text-muted-foreground">
-            <th className="py-2 pr-3 font-medium">Path</th>
+          <tr className="border-b border-border bg-muted/30 text-left text-muted-foreground">
+            <th className="py-2 pl-3 pr-3 font-medium">Path</th>
+            <th className="py-2 pr-3 font-medium">Category</th>
             <th className="py-2 pr-3 font-medium">Vendor</th>
             <th className="py-2 pr-3 font-medium">Format</th>
-            <th className="py-2 pr-3 font-medium">Version</th>
             <th className="py-2 pr-3 font-medium text-right">Size</th>
             <th className="py-2 pr-3 font-medium">Signed</th>
           </tr>
@@ -47,7 +58,8 @@ export default function BlobTable({ blobs, selectedId, onSelect }: BlobTableProp
         <tbody>
           {blobs.map((b) => {
             const isSelected = selectedId === b.id
-            const signedStyle = SIGNED_STYLE[b.signed] ?? 'border-border text-muted-foreground'
+            const signedStyle =
+              SIGNED_STYLE[b.signed] ?? 'border-border text-muted-foreground'
             return (
               <tr
                 key={b.id}
@@ -56,12 +68,12 @@ export default function BlobTable({ blobs, selectedId, onSelect }: BlobTableProp
                   isSelected ? 'bg-accent/60' : 'hover:bg-accent/30'
                 }`}
               >
-                <td className="py-1.5 pr-3 font-mono text-[11px]" title={b.blob_path}>
-                  <div className="max-w-[260px] truncate">{b.blob_path}</div>
+                <td className="py-1.5 pl-3 pr-3 font-mono text-[11px]" title={b.blob_path}>
+                  <div className="max-w-[340px] truncate">{displayPath(b.blob_path)}</div>
                 </td>
-                <td className="py-1.5 pr-3">{b.vendor ?? '-'}</td>
+                <td className="py-1.5 pr-3 text-muted-foreground">{b.category}</td>
+                <td className="py-1.5 pr-3">{b.vendor ?? '—'}</td>
                 <td className="py-1.5 pr-3 font-mono text-[11px]">{b.format}</td>
-                <td className="py-1.5 pr-3 font-mono text-[11px]">{b.version ?? '-'}</td>
                 <td className="py-1.5 pr-3 text-right tabular-nums">
                   {formatBytes(b.file_size)}
                 </td>

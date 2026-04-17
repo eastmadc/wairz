@@ -2,14 +2,14 @@ import { Cpu, ShieldAlert, Factory, Bug } from 'lucide-react'
 
 interface StatsHeaderProps {
   totalBlobs: number
-  unsignedCount: number
+  notSignedCount: number  // unsigned + unknown + weakly_signed
   vendorCount: number
   cveCount: number
 }
 
 export default function StatsHeader({
   totalBlobs,
-  unsignedCount,
+  notSignedCount,
   vendorCount,
   cveCount,
 }: StatsHeaderProps) {
@@ -22,9 +22,10 @@ export default function StatsHeader({
       />
       <StatCard
         icon={<ShieldAlert className="h-4 w-4 text-muted-foreground" />}
-        label="Unsigned"
-        value={unsignedCount}
-        alert={unsignedCount > 0}
+        label="Not signed"
+        hint="unsigned / unknown / weakly"
+        value={notSignedCount}
+        alert={notSignedCount > 0}
       />
       <StatCard
         icon={<Factory className="h-4 w-4 text-muted-foreground" />}
@@ -44,11 +45,13 @@ export default function StatsHeader({
 function StatCard({
   icon,
   label,
+  hint,
   value,
   alert,
 }: {
   icon: React.ReactNode
   label: string
+  hint?: string
   value: number
   alert?: boolean
 }) {
@@ -63,6 +66,7 @@ function StatCard({
         <span>{label}</span>
       </div>
       <p className={`mt-1 text-2xl font-bold ${alert ? 'text-red-500' : ''}`}>{value}</p>
+      {hint && <p className="text-[10px] text-muted-foreground/70">{hint}</p>}
     </div>
   )
 }
