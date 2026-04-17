@@ -130,8 +130,8 @@ Replace hand-rolled regexes with YAML-sourced patterns.
 
 ## Active Context
 
-Phase: **4 — Kernel vulns.git Subsystem Index** (Phases 1-3 complete)
-Sub-step: Pending — delegation to build specialist.
+Phase: **5 — Tree UX + CycloneDX HBOM** (Phases 1-4 complete)
+Sub-step: Pending — final phase.
 
 ## Feature Ledger
 
@@ -214,6 +214,41 @@ Sub-step: Pending — delegation to build specialist.
 - ✅ command_passes (parser tests — 39 passing in test_hardware_firmware_parsers.py alone)
 - ⏳ manual (fixture Android image populates version/signed/chipset on each new format) — unit tests cover the field extraction; runtime validation on DPCS10 deferred.
 
+### Phase 4 — Kernel vulns.git Subsystem Index (complete 2026-04-17)
+
+**Files created:**
+- `backend/app/services/hardware_firmware/kernel_vulns_index.py` (541 LOC) — git clone/pull, CVE JSON walker, Redis pipelined writer, semver-aware `lookup`, `is_populated`, `last_sync`.
+- `backend/tests/test_hardware_firmware_kernel_vulns_index.py` (559 LOC, 41 tests inc. inline FakeRedis, schema edge cases, Tier-5 integration).
+- `backend/scripts/sync_kernel_vulns.py` (31 LOC standalone CLI).
+
+**Files modified:**
+- `cve_matcher.py` (+190 LOC) — `_KMOD_TO_SUBSYSTEM` (45 entries), `_kmod_basename` normaliser, `_match_kernel_subsystem` async function, wiring after Tier 4.
+- `arq_worker.py` (+30 LOC) — `sync_kernel_vulns_job` + daily 03:00 UTC cron via `arq.cron`.
+- `config.py` (+3 lines) — `kernel_vulns_git_url`, `kernel_vulns_cache_dir`, `kernel_vulns_sync_timeout`.
+- `models/sbom.py` — match_tier comment extended.
+- `docker-compose.yml` — named volume `kernel_vulns_data` mounted on backend + worker at `/data/kernel-vulns`.
+
+**Live verification (inside backend container, 2026-04-17 15:43 UTC):**
+- git clone of kernel.org `vulns.git` succeeded — 53 MB.
+- Indexed **10,725 CVEs across 1,603 subsystems** in ~9s.
+- `kvi.lookup("net/bluetooth/", "6.6.102")` returns **354 high-confidence CVE matches**.
+- Sample: `CVE-2021-47620`.
+
+**Test results:**
+- 41 new kernel_vulns_index tests pass.
+- Full hw-firmware regression: 181/181 pass (baseline 140 after Phase 3).
+- Ruff: clean on all Phase-4 files. 3 pre-existing S110 in arq_worker.py untouched.
+
+**End conditions:**
+- ✅ file_exists (kernel_vulns_index.py)
+- ✅ command_passes (41 new tests)
+- ✅ manual: bluetooth.ko on 6.6.102 returns ≥1 high-confidence CVE — **smashed at 354 matches**.
+
+**Real-world schema findings (recorded during live run):**
+1. kernel.org CNA uses `cveID` (capital D), not spec-standard `cveId`. Extractor accepts both.
+2. vulns.git encodes affected ranges as `status="unaffected" lessThan="X"` entries — extractor derives `[None, X)` from those.
+3. Single-point `status="affected" version="6.11"` without `lessThan` → `_next_patch()` helper generates implicit upper bound `6.11.1`.
+
 ## Decision Log
 
 **2026-04-17** — **Campaign structure.** Intake file was already phase-decomposed with strong OSS research; adopted its 5-phase breakdown verbatim. Deviations from intake documented here as they arise.
@@ -229,6 +264,8 @@ Sub-step: Pending — delegation to build specialist.
 **2026-04-17** — **Phase 3 no-deps strategy.** Intake suggested adding `md1imgpy` and `kaitaistruct`. Rejected both and wrote 5 native Python parsers instead. Reason: (1) GPL-3/AGPL licensing review overhead, (2) pip-install fragility in Docker, (3) kaitai-struct-compiler build-time complexity, (4) backend+worker rebuild coupling (CLAUDE.md rule 8). Trade-off: parsers carry less feature surface than vendored implementations but cover all extraction we need (version, chipset, signing, section table). 845 LOC total, zero deps.
 
 **2026-04-17** — **Direction alignment check (after Phase 3).** Direction remains: three original gaps (Vendor=None, 0 CVEs, flat table). Phase 1 fixed #1, Phase 2 fixed #2 for kernel modules, Phase 3 enriches metadata on blobs that were Vendor-populated but version-empty. Phase 4 extends #2 to per-subsystem CVE attribution. Phase 5 fixes #3. All aligned. No course correction needed.
+
+**2026-04-17** — **Phase 4 live-verified.** Delegated agent actually ran the kernel.org vulns.git clone inside the container and verified end-to-end: 10,725 CVEs indexed, 354 high-confidence bluetooth CVEs on kernel 6.6.102. Not just unit-tested — this is the first phase with a live network-dependent path confirmed working. Future sessions: the Redis index has 24h TTL, so if tests fail because Redis is cold, re-run `docker compose exec backend python scripts/sync_kernel_vulns.py`.
 
 ## Continuation State
 

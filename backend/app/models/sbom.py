@@ -91,7 +91,7 @@ class SbomVulnerability(Base):
 
     # Multi-tier matcher provenance (populated for hardware firmware rows).
     # match_confidence: high | medium | low
-    # match_tier: chipset_cpe | nvd_freetext | curated_yaml | kernel_cpe
+    # match_tier: chipset_cpe | nvd_freetext | curated_yaml | kernel_cpe | kernel_subsystem
     match_confidence: Mapped[str | None] = mapped_column(String(16))
     match_tier: Mapped[str | None] = mapped_column(String(32))
 
