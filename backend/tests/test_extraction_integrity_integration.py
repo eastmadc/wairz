@@ -356,3 +356,86 @@ async def test_detector_with_no_walk_roots_returns_zero(tmp_path: Path) -> None:
     )
     assert count == 0
     assert db.rows == []
+
+
+# ---------------------------------------------------------------------------
+# Phase 5 regression guard
+# ---------------------------------------------------------------------------
+
+
+def test_no_new_direct_extracted_path_reads():
+    """Regression guard: walks outside approved files must use get_detection_roots.
+
+    Enforces CLAUDE.md Learned Rule #16. Per-binary flows (emulation,
+    fuzzing, sandbox, device dump) legitimately need ``extracted_path``
+    because they resolve a single binary path, not a tree walk — they are
+    allowlisted below. The helper module itself, the unpackers (which
+    ASSIGN extracted_path), and the firmware service (the authoritative
+    writer) are also allowlisted.
+    """
+    allowlist = {
+        # Helper + writer
+        "firmware_paths.py",
+        "firmware_service.py",
+        # Unpackers — assign extracted_path
+        "unpack.py",
+        "unpack_android.py",
+        "unpack_linux.py",
+        "unpack_common.py",
+        # Per-binary flows — need a single rootfs for binary resolution
+        "emulation_service.py",
+        "fuzzing_service.py",
+        "device_service.py",
+        "arq_worker.py",
+        # Export is a single-archive bundling step, not a detection walk
+        "export_service.py",
+    }
+    # MCP tools: per-binary flows (emulation, fuzzing, comparison of
+    # single-firmware extraction status) still need extracted_path.
+    mcp_allowlist = {"emulation.py", "fuzzing.py", "comparison.py"}
+
+    from pathlib import Path as _P
+
+    # Resolve candidate source roots robustly across layouts:
+    #   - Container: tests at /app/tests, sources at /app/app/services + /app/app/ai/tools
+    #   - Host repo: tests at backend/tests, sources at backend/app/services + backend/app/ai/tools
+    tests_dir = _P(__file__).resolve().parent
+    backend_dir = tests_dir.parent  # .../backend or /app
+    candidate_roots = [
+        backend_dir / "app" / "services",
+        backend_dir / "app" / "ai" / "tools",
+    ]
+
+    offenders = []
+    scanned_any = False
+    for root in candidate_roots:
+        if not root.is_dir():
+            continue
+        scanned_any = True
+        for path in root.rglob("*.py"):
+            if path.name in allowlist or path.name in mcp_allowlist:
+                continue
+            text = path.read_text()
+            if (
+                "firmware.extracted_path" in text
+                or "fw.extracted_path" in text
+                or "fw_row.extracted_path" in text
+            ):
+                # Allow comment-only references
+                non_comment = [
+                    line for line in text.splitlines()
+                    if ("firmware.extracted_path" in line
+                        or "fw.extracted_path" in line
+                        or "fw_row.extracted_path" in line)
+                    and not line.strip().startswith("#")
+                ]
+                if non_comment:
+                    offenders.append(str(path.relative_to(backend_dir)))
+    assert scanned_any, (
+        "Regression guard could not locate source directories — "
+        f"expected one of {[str(p) for p in candidate_roots]} to exist."
+    )
+    assert not offenders, (
+        f"Direct firmware.extracted_path reads found: {offenders}. "
+        f"Use get_detection_roots() per CLAUDE.md rule 16."
+    )

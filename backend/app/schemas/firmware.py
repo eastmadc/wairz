@@ -92,3 +92,21 @@ class FirmwareMetadataResponse(BaseModel):
     uboot_header: UBootHeaderResponse | None = None
     uboot_env: dict[str, str] = {}
     mtd_partitions: list[MTDPartitionResponse] = []
+
+
+# ── Detection audit (Phase 5 extraction-integrity observability) ──
+
+
+class FirmwareDetectionAuditResponse(BaseModel):
+    """Per-firmware detection audit — surfaces orphan-rate + root coverage.
+
+    Mirrors ``device_metadata['detection_audit']`` written by the detector
+    (and the backfill script) plus a live-recomputed ``orphans_preview``
+    populated only when the caller passes ``?recompute=true``.
+    """
+
+    firmware_id: uuid.UUID
+    extracted_path: str | None = None
+    detection_roots: list[str] = []
+    audit: dict = {}
+    orphans_preview: list[str] | None = None

@@ -93,6 +93,12 @@
         "pattern": "fnmatch\\.fnmatch\\(\\w+,\\s*pattern\\)",
         "filePattern": "backend/app/services/*.py",
         "message": "Learned from S37: User-facing file search should be case-insensitive. Use fnmatch.fnmatch(name.lower(), pattern.lower()) instead."
+      },
+      {
+        "name": "auto-extraction-roots-no-direct-extracted-path",
+        "pattern": "firmware\\.extracted_path",
+        "filePattern": "backend/app/services/{hardware_firmware,sbom_service,yara_service,security_audit_service,file_service,assessment_service,update_mechanism_service,clamav_service,virustotal_service,abusech_service}/**/*.py",
+        "message": "Learned from feature-extraction-integrity (CLAUDE.md rule 16): Filesystem walks MUST use get_detection_roots(firmware) from app/services/firmware_paths.py - firmware.extracted_path is ONE rootfs and misses scatter-zip siblings, multi-archive containers, and nested unblob output. Per-binary flows (emulation/fuzzing/device/sandbox) may still use extracted_path. Originally uncovered by DPCS10 md1dsp.img bug + RespArray ZIP regression."
       }
     ]
   },
