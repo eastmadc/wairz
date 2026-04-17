@@ -4,6 +4,9 @@ import os
 import re
 from dataclasses import dataclass
 
+from app.services.hardware_firmware.patterns_loader import VENDORS
+from app.services.hardware_firmware.patterns_loader import match as pattern_match
+
 CATEGORIES: set[str] = {
     "modem",
     "tee",
@@ -23,23 +26,6 @@ CATEGORIES: set[str] = {
     "kernel_module",
     "bootloader",
     "other",
-}
-
-VENDORS: set[str] = {
-    "qualcomm",
-    "mediatek",
-    "samsung",
-    "broadcom",
-    "nvidia",
-    "imagination",
-    "arm",
-    "apple",
-    "cypress",
-    "unisoc",
-    "hisilicon",
-    "intel",
-    "realtek",
-    "unknown",
 }
 
 FORMATS: set[str] = {
@@ -62,6 +48,14 @@ FORMATS: set[str] = {
 }
 
 
+# Re-export VENDORS from patterns_loader so callers that used to import the
+# hard-coded constant keep working.  The loader seeds the Wairz core set
+# (qualcomm, mediatek, samsung, broadcom, nvidia, imagination, arm, apple,
+# cypress, unisoc, hisilicon, intel, realtek, unknown) even when YAML is
+# absent, so nothing downstream loses vendors.
+__all__ = ["CATEGORIES", "FORMATS", "VENDORS", "Classification", "classify"]
+
+
 @dataclass
 class Classification:
     """Result of classifying a firmware blob candidate."""
@@ -70,9 +64,13 @@ class Classification:
     vendor: str
     format: str
     confidence: str  # high|medium|low
+    product: str | None = None
 
 
 # Qualcomm PIL filename patterns (stems + extensions).  Case-insensitive.
+# These stay hand-rolled: the Qualcomm stem list is already comprehensive and
+# the category inference (_category_from_qcom_name) depends on substring
+# semantics that don't map cleanly to per-blob YAML rules.
 _QCOM_EXT = re.compile(r"\.(mbn|mdt|b0[0-9a-f])$", re.IGNORECASE)
 _QCOM_STEMS = {
     "xbl.elf",
@@ -98,31 +96,20 @@ _QCOM_STEMS = {
     "tzbsp.mbn",
 }
 
-# Qualcomm Adreno GPU firmware (aNNN_zap/sqe/gmu)
+# Qualcomm Adreno GPU firmware (aNNN_zap/sqe/gmu) — kept as a fallback so
+# the ELF-as-Adreno path in classify() stays symmetrical with the pre-YAML
+# behaviour.  Raw-bin Adreno blobs are caught by firmware_patterns.yaml.
 _ADRENO_RE = re.compile(r"^a\d+_(zap|sqe|gmu)\b", re.IGNORECASE)
 
-# Vendor Wi-Fi / Bluetooth patterns
-_BRCM_WIFI_RE = re.compile(r"^brcmfmac.*\.bin$", re.IGNORECASE)
-_BRCM_BT_RE = re.compile(r"^bcm.*\.hcd$", re.IGNORECASE)
-_RTL_WIFI_RE = re.compile(r"^(rtl.*_fw\.bin|rtw88.*_fw\.bin)$", re.IGNORECASE)
-_MTK_WIFI_RE = re.compile(r"^(mt76.*\.bin|wifi_ram_code_mt.*\.bin)$", re.IGNORECASE)
-
-# Touch / fingerprint / NFC patterns
-_GOODIX_RE = re.compile(r"^goodix.*\.bin$", re.IGNORECASE)
-_SILEAD_RE = re.compile(r"^silead.*\.bin$", re.IGNORECASE)
-_SYNAPTICS_TOUCH_RE = re.compile(r"^synaptics_.*\.img$", re.IGNORECASE)
-_FT_TOUCH_RE = re.compile(r"^ft_.*\.bin$", re.IGNORECASE)
-_HIMAX_TOUCH_RE = re.compile(r"^himax_.*\.bin$", re.IGNORECASE)
-_NFC_RE = re.compile(r"^(pn54x_fw.*|sn100u_fw.*|nfc_fw\..*)", re.IGNORECASE)
-
-# Kinibi TEE TA patterns
-_TLBIN_RE = re.compile(r"\.tlbin$", re.IGNORECASE)
-
-# Qualcomm Venus video codec / IPA network accelerator
+# Qualcomm Venus video codec / IPA network accelerator — ELF-only heuristic.
 _VENUS_RE = re.compile(r"^(venus\.mbn|video-firmware\.elf)$", re.IGNORECASE)
 _IPA_RE = re.compile(r"^(ipa_fws\.elf|ipa_uc\.elf)$", re.IGNORECASE)
 
-# Firmware-partition directory hints (Qualcomm-specific)
+# Kinibi TA by extension — raw-bin fallback when TRUS magic doesn't match.
+_TLBIN_RE = re.compile(r"\.tlbin$", re.IGNORECASE)
+
+# Firmware-partition directory hints (Qualcomm-specific — keeps the
+# fallback-to-qualcomm ELF behaviour for .b00/.b01/.bNN chunks).
 _FW_PARTITION_HINTS = (
     "/vendor/firmware_mnt/",
     "/firmware/image/",
@@ -226,22 +213,46 @@ def _classify_by_magic(magic: bytes) -> Classification | None:
 
 
 def classify(path: str, magic: bytes, size: int) -> Classification | None:
-    """Classify a firmware blob candidate; return None to skip."""
+    """Classify a firmware blob candidate; return None to skip.
+
+    Order of precedence (each step short-circuits on match):
+      1. Kernel module — ELF + ET_REL + ``.ko`` extension.
+      2. Magic-byte — DTB, DTBO, Shannon TOC, Kinibi MCLF, MTK LK, MTK preloader.
+      3. Qualcomm PIL — comprehensive stem/extension list (Adreno + PIL).
+      4. Filename patterns — YAML-driven classifier (broad vendor coverage).
+      5. Kinibi ``.tlbin`` / MCRegistry — fallback when TRUS magic is absent.
+      6. DTB/DTBO by extension — fallback when magic bytes are missing.
+      7. Path fallback — any file in a known firmware partition is captured.
+    """
     name = os.path.basename(path)
     lname = name.lower()
     lpath = path.replace(os.sep, "/").lower()
 
     primary = _classify_by_magic(magic)
-
     is_elf = len(magic) >= 4 and magic[:4] == b"\x7fELF"
 
-    # Kernel module: ELF with ET_REL and .ko extension
+    # Kernel module: ELF with ET_REL and .ko extension.  We still need the
+    # ELF + ET_REL check — YAML can only match on filename, but many .ko
+    # files in Android trees are actually shared-object plug-ins or stub
+    # firmware renamed with a .ko suffix.
     if lname.endswith(".ko") and is_elf and _is_elf_relocatable(magic):
+        # Pattern table may supply vendor/category/product (e.g. mali_kbase_*,
+        # bmi160_*, stk3x1x*).  Fall back to "unknown" / "kernel_module" if
+        # no YAML entry catches it.
+        pm = pattern_match(name)
+        if pm is not None and pm.format == "ko":
+            return Classification(
+                category=pm.category,
+                vendor=pm.vendor,
+                format="ko",
+                confidence=pm.confidence,
+                product=pm.product,
+            )
         return Classification("kernel_module", "unknown", "ko", "high")
 
     # ELF: secondary inspection via filename/path
     if is_elf and primary is None:
-        # Adreno GPU firmware
+        # Adreno GPU firmware (kept as a fast-path over YAML)
         if _ADRENO_RE.match(name):
             return Classification("gpu", "qualcomm", "elf", "high")
         # Qualcomm PIL (single-file or split .b0X)
@@ -261,46 +272,26 @@ def classify(path: str, magic: bytes, size: int) -> Classification | None:
         # are NOT hardware firmware — skip them so we don't flood the UI.
         return None
 
-    # Qualcomm split PIL pieces (.b00..b0F, .mdt) even if magic didn't hit ELF at .bNN start
+    # Qualcomm split PIL pieces (.b00..b0F, .mdt) even if magic didn't hit ELF
+    # at .bNN start.  Keep this above the YAML pipeline — the PIL split-file
+    # heuristic requires the stem-table lookup, which is hard to express in
+    # YAML without false positives.
     if primary is None and _is_qcom_filename(name):
         cat = _category_from_qcom_name(name)
         return Classification(cat, "qualcomm", "qcom_mbn", "medium")
 
-    # Broadcom Wi-Fi firmware
-    if primary is None and _BRCM_WIFI_RE.match(name):
-        return Classification("wifi", "broadcom", "fw_bcm", "high")
-    # Broadcom / Cypress Bluetooth HCD
-    if primary is None and _BRCM_BT_RE.match(name):
-        return Classification("bluetooth", "broadcom", "raw_bin", "high")
-    # Realtek Wi-Fi
-    if primary is None and _RTL_WIFI_RE.match(name):
-        return Classification("wifi", "realtek", "raw_bin", "high")
-    # MediaTek Wi-Fi
-    if primary is None and _MTK_WIFI_RE.match(name):
-        return Classification("wifi", "mediatek", "raw_bin", "high")
-
-    # Goodix touch/fingerprint
-    if primary is None and _GOODIX_RE.match(name):
-        if "goodix_fp" in lpath or "fingerprint" in lpath:
-            return Classification("fingerprint", "unknown", "raw_bin", "medium")
-        if "goodix_touch" in lpath or "touch" in lpath:
-            return Classification("touchpad", "unknown", "raw_bin", "medium")
-        return Classification("fingerprint", "unknown", "raw_bin", "low")
-    # Silead touch/fingerprint (primarily fingerprint)
-    if primary is None and _SILEAD_RE.match(name):
-        return Classification("fingerprint", "unknown", "raw_bin", "medium")
-
-    # Touchscreen controllers
-    if primary is None and (
-        _SYNAPTICS_TOUCH_RE.match(name)
-        or _FT_TOUCH_RE.match(name)
-        or _HIMAX_TOUCH_RE.match(name)
-    ):
-        return Classification("touchpad", "unknown", "raw_bin", "medium")
-
-    # NFC controller
-    if primary is None and _NFC_RE.match(name):
-        return Classification("nfc", "unknown", "raw_bin", "medium")
+    # YAML-driven filename pipeline.  Handles vendor Wi-Fi, BT, touch,
+    # sensors, NFC, modem, audio, USB-PD, etc.
+    if primary is None:
+        pm = pattern_match(name)
+        if pm is not None:
+            return Classification(
+                category=pm.category,
+                vendor=pm.vendor,
+                format=pm.format,
+                confidence=pm.confidence,
+                product=pm.product,
+            )
 
     # Kinibi TA by extension (.tlbin) when magic didn't match TRUS (some variants)
     if primary is None and (_TLBIN_RE.search(lname) or "mcregistry" in lpath):

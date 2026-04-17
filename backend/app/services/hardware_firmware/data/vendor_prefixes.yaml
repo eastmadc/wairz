@@ -1,0 +1,623 @@
+# Vendor prefixes — display names + aliases.
+#
+# Sourced from Wairz's hardware firmware VENDORS set plus a slimmed extract of
+# the Linux kernel's Documentation/devicetree/bindings/vendor-prefixes.yaml.
+# First-match-wins lookups use the `prefix` field (lowercase canonical name).
+# Aliases are alternate lowercase tokens that map to the same canonical prefix.
+#
+# License note: DT vendor-prefixes.yaml upstream is GPL-2.0 OR BSD-2-Clause.
+# Display names are short, factual corporate names — no trademarks asserted.
+#
+# Keep this list tight (~150-250 entries).  Add new prefixes only when a
+# matching firmware_patterns.yaml entry references them, or when a blob
+# clearly originates from the vendor but has no pattern match yet.
+
+vendors:
+  # -----------------------------------------------------------------------
+  # Wairz core VENDORS — these must stay, classifier.py depends on them.
+  # -----------------------------------------------------------------------
+  - prefix: qualcomm
+    display: "Qualcomm Technologies, Inc."
+    aliases: [qcom]
+  - prefix: mediatek
+    display: "MediaTek Inc."
+    aliases: [mtk]
+  - prefix: samsung
+    display: "Samsung Electronics"
+    aliases: []
+  - prefix: broadcom
+    display: "Broadcom Inc."
+    aliases: [brcm]
+  - prefix: nvidia
+    display: "NVIDIA Corporation"
+    aliases: []
+  - prefix: imagination
+    display: "Imagination Technologies"
+    aliases: [img, powervr]
+  - prefix: arm
+    display: "Arm Ltd."
+    aliases: [mali]
+  - prefix: apple
+    display: "Apple Inc."
+    aliases: []
+  - prefix: cypress
+    display: "Cypress Semiconductor (Infineon)"
+    aliases: []
+  - prefix: unisoc
+    display: "UNISOC Communications"
+    aliases: [spreadtrum]
+  - prefix: hisilicon
+    display: "HiSilicon Technologies Co., Ltd."
+    aliases: [hisi, hi3660, hi3670, hi3710]
+  - prefix: intel
+    display: "Intel Corporation"
+    aliases: []
+  - prefix: realtek
+    display: "Realtek Semiconductor Corp."
+    aliases: [rtl, rtw]
+  - prefix: unknown
+    display: "Unknown Vendor"
+    aliases: []
+
+  # -----------------------------------------------------------------------
+  # Consumer silicon / SoC / chipset
+  # -----------------------------------------------------------------------
+  - prefix: awinic
+    display: "Shanghai Awinic Technology Co., Ltd."
+    aliases: []
+  - prefix: bosch
+    display: "Bosch Sensortec GmbH"
+    aliases: [bosch-sensortec]
+  - prefix: invensense
+    display: "InvenSense Inc. (TDK)"
+    aliases: [tdk-invensense]
+  - prefix: sensortek
+    display: "Sensortek Technology Corp."
+    aliases: [stk]
+  - prefix: goodix
+    display: "Shenzhen Huiding Technology Co., Ltd."
+    aliases: [gtp]
+  - prefix: silead
+    display: "Silead Inc."
+    aliases: []
+  - prefix: himax
+    display: "Himax Technologies, Inc."
+    aliases: [hx]
+  - prefix: focaltech
+    display: "FocalTech Systems Co., Ltd."
+    aliases: [ft, focal]
+  - prefix: elan
+    display: "ELAN Microelectronics Corp."
+    aliases: [ekt]
+  - prefix: synaptics
+    display: "Synaptics Inc."
+    aliases: [syna, rmi]
+  - prefix: atmel
+    display: "Atmel Corporation (Microchip)"
+    aliases: [maxtouch, mxt]
+  - prefix: melfas
+    display: "MELFAS Inc."
+    aliases: []
+  - prefix: cirrus
+    display: "Cirrus Logic, Inc."
+    aliases: [wolfson]
+  - prefix: realtek-audio
+    display: "Realtek Audio Codec"
+    aliases: [alc]
+  - prefix: maxim
+    display: "Maxim Integrated (Analog Devices)"
+    aliases: [max]
+  - prefix: analog
+    display: "Analog Devices, Inc."
+    aliases: [adi]
+  - prefix: wolfson
+    display: "Wolfson Microelectronics (Cirrus Logic)"
+    aliases: [wm]
+  - prefix: infineon
+    display: "Infineon Technologies AG"
+    aliases: [ifineon]
+  - prefix: nxp
+    display: "NXP Semiconductors"
+    aliases: [freescale, fsl, nxp-nfc]
+  - prefix: ti
+    display: "Texas Instruments"
+    aliases: [texas-instruments, tps, ccg]
+  - prefix: st
+    display: "STMicroelectronics"
+    aliases: [stm, stmicro, st-ericsson]
+  - prefix: amazon
+    display: "Amazon.com Inc."
+    aliases: [amzn]
+  - prefix: google
+    display: "Google LLC"
+    aliases: []
+  - prefix: microsoft
+    display: "Microsoft Corporation"
+    aliases: []
+  - prefix: oppo
+    display: "OPPO Electronics Corp."
+    aliases: []
+  - prefix: vivo
+    display: "Vivo Mobile Communication Co."
+    aliases: []
+  - prefix: xiaomi
+    display: "Xiaomi Inc."
+    aliases: [mi]
+  - prefix: huawei
+    display: "Huawei Technologies Co., Ltd."
+    aliases: []
+  - prefix: motorola
+    display: "Motorola Mobility"
+    aliases: [moto]
+  - prefix: lg
+    display: "LG Electronics"
+    aliases: []
+  - prefix: sony
+    display: "Sony Corporation"
+    aliases: []
+  - prefix: asus
+    display: "ASUSTeK Computer Inc."
+    aliases: []
+  - prefix: lenovo
+    display: "Lenovo Group Ltd."
+    aliases: []
+  - prefix: oneplus
+    display: "OnePlus Technology"
+    aliases: []
+  - prefix: nothing
+    display: "Nothing Technology Limited"
+    aliases: []
+
+  # -----------------------------------------------------------------------
+  # SoC / silicon vendors (Linux DT well-known)
+  # -----------------------------------------------------------------------
+  - prefix: allwinner
+    display: "Allwinner Technology"
+    aliases: [sunxi]
+  - prefix: rockchip
+    display: "Fuzhou Rockchip Electronics"
+    aliases: [rk]
+  - prefix: amlogic
+    display: "Amlogic, Inc."
+    aliases: []
+  - prefix: actions
+    display: "Actions Semiconductor"
+    aliases: []
+  - prefix: altera
+    display: "Altera Corporation (Intel)"
+    aliases: []
+  - prefix: xilinx
+    display: "Xilinx Inc. (AMD)"
+    aliases: [xlnx]
+  - prefix: lattice
+    display: "Lattice Semiconductor"
+    aliases: []
+  - prefix: microchip
+    display: "Microchip Technology Inc."
+    aliases: [microsemi]
+  - prefix: nordic
+    display: "Nordic Semiconductor"
+    aliases: [nrf]
+  - prefix: silabs
+    display: "Silicon Labs"
+    aliases: [silergy]
+  - prefix: espressif
+    display: "Espressif Systems"
+    aliases: [esp]
+  - prefix: marvell
+    display: "Marvell Technology"
+    aliases: [mrvl]
+  - prefix: chipone
+    display: "ChipOne Technology"
+    aliases: [icn]
+  - prefix: himax-display
+    display: "Himax Display (LCD controller)"
+    aliases: []
+  - prefix: novatek
+    display: "Novatek Microelectronics"
+    aliases: []
+  - prefix: ilitek
+    display: "ILI Technology Corp."
+    aliases: [ilt]
+
+  # -----------------------------------------------------------------------
+  # Wireless / modem silicon
+  # -----------------------------------------------------------------------
+  - prefix: atheros
+    display: "Qualcomm Atheros"
+    aliases: [ath]
+  - prefix: ralink
+    display: "Ralink Technology (MediaTek)"
+    aliases: [rt]
+  - prefix: quectel
+    display: "Quectel Wireless Solutions"
+    aliases: []
+  - prefix: sierra
+    display: "Sierra Wireless"
+    aliases: []
+  - prefix: telit
+    display: "Telit Communications"
+    aliases: []
+  - prefix: nordic-ble
+    display: "Nordic Semiconductor BLE"
+    aliases: []
+  - prefix: cambridge-silicon-radio
+    display: "Cambridge Silicon Radio (Qualcomm)"
+    aliases: [csr]
+  - prefix: murata
+    display: "Murata Manufacturing"
+    aliases: []
+
+  # -----------------------------------------------------------------------
+  # Sensors / imaging / biometrics
+  # -----------------------------------------------------------------------
+  - prefix: kionix
+    display: "Kionix (Rohm)"
+    aliases: [rohm]
+  - prefix: memsic
+    display: "MEMSIC Inc."
+    aliases: []
+  - prefix: stmicro-sensor
+    display: "STMicroelectronics MEMS"
+    aliases: []
+  - prefix: liteon
+    display: "LITE-ON Technology"
+    aliases: [ltr]
+  - prefix: sitronix
+    display: "Sitronix Technology"
+    aliases: []
+  - prefix: rohm
+    display: "ROHM Semiconductor"
+    aliases: []
+  - prefix: vishay
+    display: "Vishay Intertechnology"
+    aliases: [vcnl]
+  - prefix: omnivision
+    display: "OmniVision Technologies"
+    aliases: [ov]
+  - prefix: sony-imx
+    display: "Sony IMX image sensors"
+    aliases: [imx-sensor]
+  - prefix: samsung-isocell
+    display: "Samsung ISOCELL image sensors"
+    aliases: []
+  - prefix: plantower
+    display: "Plantower Technology"
+    aliases: []
+  - prefix: fingerprint-cards
+    display: "Fingerprint Cards AB"
+    aliases: [fpc]
+  - prefix: egistec
+    display: "Egis Technology Inc."
+    aliases: [egistek]
+  - prefix: synaptics-fp
+    display: "Synaptics Fingerprint"
+    aliases: [validity]
+
+  # -----------------------------------------------------------------------
+  # Display / GPU silicon
+  # -----------------------------------------------------------------------
+  - prefix: vivante
+    display: "Vivante Corporation"
+    aliases: [gc]
+  - prefix: vivante-etnaviv
+    display: "Vivante Etnaviv (upstream driver)"
+    aliases: []
+  - prefix: pixelworks
+    display: "Pixelworks"
+    aliases: []
+  - prefix: pixcir
+    display: "Pixcir Microelectronics"
+    aliases: []
+
+  # -----------------------------------------------------------------------
+  # Storage / memory
+  # -----------------------------------------------------------------------
+  - prefix: sandisk
+    display: "SanDisk (Western Digital)"
+    aliases: []
+  - prefix: micron
+    display: "Micron Technology"
+    aliases: []
+  - prefix: toshiba
+    display: "Toshiba Memory (Kioxia)"
+    aliases: [kioxia]
+  - prefix: sk-hynix
+    display: "SK Hynix"
+    aliases: [hynix]
+  - prefix: phison
+    display: "Phison Electronics"
+    aliases: []
+  - prefix: silicon-motion
+    display: "Silicon Motion"
+    aliases: [smi]
+  - prefix: crucial
+    display: "Crucial (Micron)"
+    aliases: []
+
+  # -----------------------------------------------------------------------
+  # Power / PMIC / audio / misc
+  # -----------------------------------------------------------------------
+  - prefix: dialog
+    display: "Dialog Semiconductor (Renesas)"
+    aliases: [da, renesas-da]
+  - prefix: richtek
+    display: "Richtek Technology"
+    aliases: []
+  - prefix: fairchild
+    display: "Fairchild Semiconductor (onsemi)"
+    aliases: [fsa]
+  - prefix: onsemi
+    display: "ON Semiconductor"
+    aliases: []
+  - prefix: idt
+    display: "Integrated Device Technology (Renesas)"
+    aliases: []
+  - prefix: rt-audio
+    display: "Realtek Audio"
+    aliases: []
+  - prefix: aac
+    display: "AAC Technologies"
+    aliases: []
+  - prefix: everest
+    display: "Everest Semiconductor"
+    aliases: [es]
+  - prefix: nau
+    display: "Nuvoton Audio"
+    aliases: [nuvoton]
+  - prefix: tas
+    display: "TI TAS audio amp"
+    aliases: []
+
+  # -----------------------------------------------------------------------
+  # Platform vendors / OEM / additional DT upstream prefixes
+  # -----------------------------------------------------------------------
+  - prefix: adt
+    display: "ADT (DT vendor)"
+    aliases: []
+  - prefix: arrow
+    display: "Arrow Electronics"
+    aliases: []
+  - prefix: aspeed
+    display: "ASPEED Technology"
+    aliases: []
+  - prefix: atheros-ar
+    display: "Qualcomm Atheros AR"
+    aliases: []
+  - prefix: atlas
+    display: "Atlas Scientific"
+    aliases: []
+  - prefix: axentia
+    display: "Axentia Technologies"
+    aliases: []
+  - prefix: bananapi
+    display: "BananaPi / SINOVOIP"
+    aliases: []
+  - prefix: beagle
+    display: "BeagleBoard.org"
+    aliases: []
+  - prefix: boundary
+    display: "Boundary Devices"
+    aliases: []
+  - prefix: brightlight
+    display: "Brightlight"
+    aliases: []
+  - prefix: cherry
+    display: "Cherry GmbH"
+    aliases: []
+  - prefix: chrontel
+    display: "Chrontel, Inc."
+    aliases: []
+  - prefix: compulab
+    display: "CompuLab Ltd."
+    aliases: []
+  - prefix: congatec
+    display: "Congatec AG"
+    aliases: []
+  - prefix: dell
+    display: "Dell Inc."
+    aliases: []
+  - prefix: dhcom
+    display: "DH electronics GmbH"
+    aliases: []
+  - prefix: dlg
+    display: "Dialog Semiconductor (alias)"
+    aliases: []
+  - prefix: dlink
+    display: "D-Link Corp."
+    aliases: []
+  - prefix: edt
+    display: "Emerging Display Technologies"
+    aliases: []
+  - prefix: elgin
+    display: "Elgin Indústria e Comércio"
+    aliases: []
+  - prefix: energymicro
+    display: "Energy Micro (Silicon Labs)"
+    aliases: []
+  - prefix: fcs
+    display: "Fairchild (FCS)"
+    aliases: []
+  - prefix: friendlyarm
+    display: "FriendlyARM"
+    aliases: []
+  - prefix: fsl-imx
+    display: "Freescale i.MX"
+    aliases: [imx]
+  - prefix: gateworks
+    display: "Gateworks Corporation"
+    aliases: []
+  - prefix: gemtek
+    display: "Gemtek Technology"
+    aliases: []
+  - prefix: hardkernel
+    display: "Hardkernel (ODROID)"
+    aliases: [odroid]
+  - prefix: himax-touch
+    display: "Himax Touch Controller"
+    aliases: []
+  - prefix: holtek
+    display: "Holtek Semiconductor"
+    aliases: [htk]
+  - prefix: inforce
+    display: "Inforce Computing"
+    aliases: []
+  - prefix: ingenic
+    display: "Ingenic Semiconductor"
+    aliases: []
+  - prefix: iwave
+    display: "iWave Systems Technologies"
+    aliases: []
+  - prefix: kobo
+    display: "Rakuten Kobo"
+    aliases: []
+  - prefix: kyocera
+    display: "Kyocera Corporation"
+    aliases: []
+  - prefix: lantiq
+    display: "Lantiq Semiconductor"
+    aliases: []
+  - prefix: linksprite
+    display: "LinkSprite Technologies"
+    aliases: []
+  - prefix: linux
+    display: "Linux-specific binding"
+    aliases: []
+  - prefix: mikrotik
+    display: "MikroTik"
+    aliases: []
+  - prefix: minix
+    display: "MINIX Technology"
+    aliases: []
+  - prefix: mips
+    display: "MIPS Technologies"
+    aliases: []
+  - prefix: nintendo
+    display: "Nintendo Co., Ltd."
+    aliases: []
+  - prefix: nokia
+    display: "Nokia Corporation"
+    aliases: []
+  - prefix: ns
+    display: "National Semiconductor (TI)"
+    aliases: []
+  - prefix: openembed
+    display: "OpenEmbed"
+    aliases: []
+  - prefix: openrisc
+    display: "OpenRISC Project"
+    aliases: []
+  - prefix: panasonic
+    display: "Panasonic Corporation"
+    aliases: []
+  - prefix: pine64
+    display: "Pine64"
+    aliases: []
+  - prefix: plathome
+    display: "Plat'Home Co., Ltd."
+    aliases: []
+  - prefix: qnap
+    display: "QNAP Systems"
+    aliases: []
+  - prefix: radxa
+    display: "Radxa Limited"
+    aliases: []
+  - prefix: raspberrypi
+    display: "Raspberry Pi Foundation"
+    aliases: [rpi]
+  - prefix: renesas
+    display: "Renesas Electronics"
+    aliases: []
+  - prefix: ricoh
+    display: "Ricoh Co., Ltd."
+    aliases: []
+  - prefix: samtec
+    display: "Samtec Inc."
+    aliases: []
+  - prefix: seagate
+    display: "Seagate Technology"
+    aliases: []
+  - prefix: sifive
+    display: "SiFive Inc."
+    aliases: []
+  - prefix: siliconfile
+    display: "SiliconFile Technologies (Samsung)"
+    aliases: []
+  - prefix: simtek
+    display: "Simtek Corporation"
+    aliases: []
+  - prefix: skyworks
+    display: "Skyworks Solutions"
+    aliases: []
+  - prefix: smsc
+    display: "SMSC (Microchip)"
+    aliases: []
+  - prefix: socionext
+    display: "Socionext Inc."
+    aliases: []
+  - prefix: solidrun
+    display: "SolidRun Ltd."
+    aliases: []
+  - prefix: sophon
+    display: "Sophgo Technology"
+    aliases: [sg]
+  - prefix: starfive
+    display: "StarFive Technology"
+    aliases: []
+  - prefix: starry
+    display: "Starry Electronic Technology"
+    aliases: []
+  - prefix: syntek
+    display: "Syntek Semiconductor"
+    aliases: []
+  - prefix: tbs
+    display: "TBS Technologies"
+    aliases: []
+  - prefix: tcl
+    display: "TCL Corporation"
+    aliases: []
+  - prefix: technexion
+    display: "TechNexion Ltd."
+    aliases: []
+  - prefix: technologic
+    display: "Technologic Systems"
+    aliases: []
+  - prefix: telechips
+    display: "Telechips Inc."
+    aliases: []
+  - prefix: terasic
+    display: "Terasic Technologies"
+    aliases: []
+  - prefix: toradex
+    display: "Toradex AG"
+    aliases: []
+  - prefix: u-boot
+    display: "Das U-Boot"
+    aliases: []
+  - prefix: ublox
+    display: "u-blox AG"
+    aliases: []
+  - prefix: vaisala
+    display: "Vaisala"
+    aliases: []
+  - prefix: variscite
+    display: "Variscite Ltd."
+    aliases: []
+  - prefix: wd
+    display: "Western Digital"
+    aliases: []
+  - prefix: wiligear
+    display: "Wiligear, Ltd."
+    aliases: []
+  - prefix: xiaomi-redmi
+    display: "Xiaomi Redmi"
+    aliases: []
+  - prefix: yamaha
+    display: "Yamaha Corporation"
+    aliases: []
+  - prefix: zte
+    display: "ZTE Corporation"
+    aliases: []
+  - prefix: zyxel
+    display: "Zyxel Communications"
+    aliases: []

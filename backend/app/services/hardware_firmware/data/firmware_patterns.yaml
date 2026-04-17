@@ -1,0 +1,532 @@
+# Firmware filename patterns → vendor/category/product classification.
+#
+# Schema (per entry, ordered, first-match-wins):
+#   pattern:    Python regex applied to the lowercased basename (not full path)
+#   vendor:     Canonical vendor prefix (must exist in vendor_prefixes.yaml)
+#   category:   One of classifier.CATEGORIES (wifi|modem|bluetooth|gpu|dsp|camera|
+#                 audio|sensor|touchpad|nfc|usb|display|fingerprint|dtb|
+#                 kernel_module|bootloader|tee|other)
+#   product:    Optional human-readable product name (stored in metadata_.product)
+#   confidence: high | medium | low (affects downstream CVE match weighting)
+#   source:     Optional attribution (WHENCE, LineageOS device tree, vendor driver)
+#   format:     Optional format override (defaults to raw_bin).  Must be in
+#                 classifier.FORMATS.
+#
+# Authoring notes:
+# - Patterns are applied to the lowercased filename.  Use lowercase in regex.
+# - Escape dots (`\\.`) — default re flags are 0.
+# - Prefer anchored patterns (`^…$`) so foo_bar.bin.sig does not match foo_bar.bin.
+# - When multiple patterns could match, order them most-specific → least-specific.
+
+patterns:
+  # =====================================================================
+  # Awinic — Smart PA audio amplifier (ACF + boot firmware)
+  # =====================================================================
+  - pattern: "^aw88[0-9a-z]+_acf\\.bin$"
+    vendor: awinic
+    product: "AW88xxx Smart PA acoustic calibration file"
+    category: audio
+    confidence: high
+    source: awinic-driver/aw883xx_patch
+  - pattern: "^aw88[0-9a-z]+_fw[_a-z0-9]*\\.bin$"
+    vendor: awinic
+    product: "AW88xxx Smart PA boot firmware"
+    category: audio
+    confidence: high
+    source: awinic-driver
+  - pattern: "^aw88[0-9a-z]+[_.][a-z0-9._-]+\\.bin$"
+    vendor: awinic
+    product: "AW88xxx Smart PA firmware/calibration blob"
+    category: audio
+    confidence: medium
+    source: awinic-driver
+
+  # =====================================================================
+  # MediaTek Wi-Fi / BT / FM / WMT combo
+  # =====================================================================
+  - pattern: "^wifi_ram_code_[a-z0-9_]+\\.bin$"
+    vendor: mediatek
+    product: "MediaTek Wi-Fi RAM code"
+    category: wifi
+    confidence: high
+    source: AOSP-vendor
+  - pattern: "^mt76[0-9a-z_]+(_hdr)?\\.bin$"
+    vendor: mediatek
+    product: "MediaTek MT76xx Wi-Fi firmware"
+    category: wifi
+    confidence: high
+    source: linux-firmware
+  - pattern: "^mt79[0-9a-z_]+(_hdr)?\\.bin$"
+    vendor: mediatek
+    product: "MediaTek MT79xx Wi-Fi firmware"
+    category: wifi
+    confidence: high
+    source: linux-firmware
+  - pattern: "^mt76[0-9]{2}[_.][a-z0-9._-]+$"
+    vendor: mediatek
+    product: "MediaTek MT76xx connectivity firmware"
+    category: wifi
+    confidence: medium
+  - pattern: "^mt66[0-9]{2}_(fm|bt|wmt|ant)_[a-z0-9_.]*\\.(bin|cfg)$"
+    vendor: mediatek
+    product: "MediaTek MT66xx connectivity combo (Wi-Fi/BT/FM/GPS)"
+    category: wifi
+    confidence: high
+    source: AOSP-vendor
+  - pattern: "^mt66[0-9]{2}_(patch|patchmcu)_[a-z0-9_.-]*\\.(bin|cfg)$"
+    vendor: mediatek
+    product: "MediaTek MT66xx connectivity patch"
+    category: wifi
+    confidence: high
+
+  # =====================================================================
+  # MediaTek modem / preloader / LK
+  # =====================================================================
+  - pattern: "^md1img(_[a-z0-9.]+)?\\.(img|bin)$"
+    vendor: mediatek
+    product: "MediaTek MD1 modem image"
+    category: modem
+    confidence: high
+  - pattern: "^md1dsp(_[a-z0-9.]+)?\\.(img|bin)$"
+    vendor: mediatek
+    product: "MediaTek MD1 DSP image"
+    category: dsp
+    confidence: high
+  - pattern: "^preloader[_a-z0-9.-]*\\.(bin|img)$"
+    vendor: mediatek
+    product: "MediaTek preloader"
+    category: bootloader
+    confidence: high
+    format: mtk_preloader
+  - pattern: "^lk[_a-z0-9.-]*\\.(bin|img)$"
+    vendor: mediatek
+    product: "MediaTek LK (Little Kernel) bootloader"
+    category: bootloader
+    confidence: high
+    format: mtk_gfh
+  - pattern: "^spmfw[_a-z0-9.-]*\\.(img|bin)$"
+    vendor: mediatek
+    product: "MediaTek SPM firmware"
+    category: other
+    confidence: high
+  - pattern: "^sspm[_a-z0-9.-]*\\.(img|bin)$"
+    vendor: mediatek
+    product: "MediaTek SSPM co-processor firmware"
+    category: dsp
+    confidence: high
+  - pattern: "^mcupm[_a-z0-9.-]*\\.(img|bin)$"
+    vendor: mediatek
+    product: "MediaTek MCU-PM firmware"
+    category: other
+    confidence: high
+
+  # =====================================================================
+  # MediaTek ISP / camera
+  # =====================================================================
+  - pattern: "^camera_dip_isp[0-9]*\\.ko$"
+    vendor: mediatek
+    product: "MediaTek ISP (DIP) camera driver"
+    category: camera
+    confidence: high
+    format: ko
+  - pattern: "^fdvt_dip[0-9]*\\.ko$"
+    vendor: mediatek
+    product: "MediaTek FDVT/DIP camera driver"
+    category: camera
+    confidence: high
+    format: ko
+  - pattern: "^mtk_ccu[_a-z0-9]*\\.bin$"
+    vendor: mediatek
+    product: "MediaTek CCU (Camera Control Unit) firmware"
+    category: camera
+    confidence: high
+  - pattern: "^(camera|cam)_fw[_a-z0-9]*\\.bin$"
+    vendor: mediatek
+    product: "MediaTek camera firmware"
+    category: camera
+    confidence: medium
+
+  # =====================================================================
+  # ARM Mali GPU kernel modules (on MediaTek SoCs)
+  # =====================================================================
+  - pattern: "^mali_kbase_mt[0-9]+_[a-z0-9_]+\\.ko$"
+    vendor: arm
+    product: "Mali GPU kbase driver (on MediaTek SoC)"
+    category: gpu
+    confidence: high
+    format: ko
+    source: mali-kbase
+  - pattern: "^mali(_kbase)?[_a-z0-9-]*\\.ko$"
+    vendor: arm
+    product: "Mali GPU driver"
+    category: gpu
+    confidence: high
+    format: ko
+
+  # =====================================================================
+  # Bosch sensors (IMU, pressure, mag)
+  # =====================================================================
+  - pattern: "^bmi(160|260|270|323)[_a-z0-9.-]*\\.ko$"
+    vendor: bosch
+    product: "Bosch BMIxxx 6-axis IMU (accel+gyro)"
+    category: sensor
+    confidence: high
+    format: ko
+  - pattern: "^bmp(280|380|388|390)[_a-z0-9.-]*\\.ko$"
+    vendor: bosch
+    product: "Bosch BMPxxx barometric pressure sensor"
+    category: sensor
+    confidence: high
+    format: ko
+  - pattern: "^bmm(150|350)[_a-z0-9.-]*\\.ko$"
+    vendor: bosch
+    product: "Bosch BMMxxx magnetometer"
+    category: sensor
+    confidence: high
+    format: ko
+  - pattern: "^bma[0-9]{3}[_a-z0-9.-]*\\.ko$"
+    vendor: bosch
+    product: "Bosch BMA accelerometer"
+    category: sensor
+    confidence: high
+    format: ko
+
+  # =====================================================================
+  # InvenSense / TDK sensors (IMU)
+  # =====================================================================
+  - pattern: "^icm(426|427|428|429|456)[0-9]{2}[_a-z0-9.-]*\\.ko$"
+    vendor: invensense
+    product: "InvenSense ICM-xxxxx 6-axis IMU"
+    category: sensor
+    confidence: high
+    format: ko
+  - pattern: "^icm(426|427|428|429|456)[0-9]{2}[_a-z0-9.-]*\\.bin$"
+    vendor: invensense
+    product: "InvenSense ICM-xxxxx sensor firmware"
+    category: sensor
+    confidence: high
+  - pattern: "^mpu(60|65|68|92|93|95|98)[0-9]{2}[_a-z0-9.-]*\\.ko$"
+    vendor: invensense
+    product: "InvenSense MPUxxxx IMU"
+    category: sensor
+    confidence: high
+    format: ko
+
+  # =====================================================================
+  # Sensortek proximity / ALS
+  # =====================================================================
+  - pattern: "^stk3[0-9a-z]+[_a-z0-9.-]*\\.ko$"
+    vendor: sensortek
+    product: "Sensortek STK3x1x ambient light / proximity sensor"
+    category: sensor
+    confidence: high
+    format: ko
+  - pattern: "^stk8[0-9a-z]+[_a-z0-9.-]*\\.ko$"
+    vendor: sensortek
+    product: "Sensortek STK8xxx accelerometer"
+    category: sensor
+    confidence: high
+    format: ko
+
+  # =====================================================================
+  # NXP NFC controllers (PN5x / SN1xx / NQ)
+  # =====================================================================
+  - pattern: "^pn5(47|48|51|53|57|60|61)[_a-z0-9.-]*\\.ko$"
+    vendor: nxp
+    product: "NXP PN5xx NFC controller"
+    category: nfc
+    confidence: high
+    format: ko
+  - pattern: "^pn5(47|48|51|53|57|60|61)[_a-z0-9.-]*\\.bin$"
+    vendor: nxp
+    product: "NXP PN5xx NFC firmware"
+    category: nfc
+    confidence: high
+  - pattern: "^pn5(47|48|51|53|57|60|61)[_.][a-z0-9_.-]+$"
+    vendor: nxp
+    product: "NXP PN5xx NFC blob"
+    category: nfc
+    confidence: medium
+  - pattern: "^sn(100u|110u|220)[_a-z0-9.-]*\\.(bin|cfg|ko)$"
+    vendor: nxp
+    product: "NXP SN1xx NFC controller"
+    category: nfc
+    confidence: high
+  - pattern: "^nq[_a-z0-9.-]*\\.(bin|ko)$"
+    vendor: nxp
+    product: "NXP NQ-series NFC"
+    category: nfc
+    confidence: high
+  - pattern: "^libnfc-nxp[_a-z0-9.-]*\\.conf$"
+    vendor: nxp
+    product: "NXP NFC configuration"
+    category: nfc
+    confidence: medium
+
+  # =====================================================================
+  # Goodix — fingerprint + touch
+  # =====================================================================
+  - pattern: "^goodix[_a-z0-9]*_fp[_a-z0-9.-]*\\.(bin|cfg)$"
+    vendor: goodix
+    product: "Goodix fingerprint sensor firmware"
+    category: fingerprint
+    confidence: high
+  - pattern: "^goodix[_a-z0-9]*_touch[_a-z0-9.-]*\\.(bin|cfg)$"
+    vendor: goodix
+    product: "Goodix touchscreen firmware"
+    category: touchpad
+    confidence: high
+  - pattern: "^goodix[_a-z0-9.-]+\\.(bin|cfg)$"
+    vendor: goodix
+    product: "Goodix HID firmware"
+    category: touchpad
+    confidence: medium
+  - pattern: "^gt[0-9]{3,4}[_a-z0-9.-]*\\.(bin|cfg)$"
+    vendor: goodix
+    product: "Goodix GTxxx touch controller"
+    category: touchpad
+    confidence: high
+
+  # =====================================================================
+  # Silead — touch controllers (rarely fingerprint)
+  # =====================================================================
+  - pattern: "^silead[_a-z0-9.-]+\\.(fw|bin)$"
+    vendor: silead
+    product: "Silead touch controller firmware"
+    category: touchpad
+    confidence: high
+  - pattern: "^mssl[0-9]+[_a-z0-9.-]*\\.(fw|bin)$"
+    vendor: silead
+    product: "Silead MSSLxxxx touch firmware"
+    category: touchpad
+    confidence: high
+
+  # =====================================================================
+  # FocalTech — touch controllers
+  # =====================================================================
+  - pattern: "^ft[_]?[38567][0-9a-z]+[_a-z0-9.-]*\\.(bin|cfg|img)$"
+    vendor: focaltech
+    product: "FocalTech FTxxxx touch controller firmware"
+    category: touchpad
+    confidence: high
+  - pattern: "^ft[0-9]{4}[_a-z0-9.-]*\\.(bin|cfg|img)$"
+    vendor: focaltech
+    product: "FocalTech FT touch firmware"
+    category: touchpad
+    confidence: high
+
+  # =====================================================================
+  # Himax — touch controllers
+  # =====================================================================
+  - pattern: "^himax_[_a-z0-9.-]+\\.(bin|img|cfg)$"
+    vendor: himax
+    product: "Himax touch firmware"
+    category: touchpad
+    confidence: high
+  - pattern: "^hx[0-9]{3,4}[_a-z0-9.-]*\\.(bin|img)$"
+    vendor: himax
+    product: "Himax HXxxx touch firmware"
+    category: touchpad
+    confidence: high
+
+  # =====================================================================
+  # Synaptics — touch + fingerprint
+  # =====================================================================
+  - pattern: "^synaptics_[_a-z0-9.-]+\\.img$"
+    vendor: synaptics
+    product: "Synaptics touch firmware"
+    category: touchpad
+    confidence: high
+  - pattern: "^syna_[_a-z0-9.-]+\\.(bin|img)$"
+    vendor: synaptics
+    product: "Synaptics touch firmware"
+    category: touchpad
+    confidence: high
+  - pattern: "^syna_fp[_a-z0-9.-]*\\.(bin|img)$"
+    vendor: synaptics
+    product: "Synaptics fingerprint firmware"
+    category: fingerprint
+    confidence: high
+
+  # =====================================================================
+  # ELAN — touch + fingerprint
+  # =====================================================================
+  - pattern: "^ekt[0-9]{3,4}[_a-z0-9.-]*\\.(bin|fw|iap)$"
+    vendor: elan
+    product: "ELAN EKTxxx touch controller"
+    category: touchpad
+    confidence: high
+  - pattern: "^elan_[_a-z0-9.-]+\\.(bin|fw)$"
+    vendor: elan
+    product: "ELAN touch / fingerprint firmware"
+    category: touchpad
+    confidence: medium
+
+  # =====================================================================
+  # Broadcom Wi-Fi + Bluetooth
+  # =====================================================================
+  - pattern: "^brcmfmac[_a-z0-9.-]*\\.(bin|txt|clm_blob)$"
+    vendor: broadcom
+    product: "Broadcom BRCMFMAC Wi-Fi firmware"
+    category: wifi
+    confidence: high
+    format: fw_bcm
+    source: linux-firmware
+  - pattern: "^bcm[0-9a-z_-]+\\.hcd$"
+    vendor: broadcom
+    product: "Broadcom Bluetooth HCI firmware (.hcd)"
+    category: bluetooth
+    confidence: high
+  - pattern: "^bcmdhd[_a-z0-9.-]*\\.(bin|cal)$"
+    vendor: broadcom
+    product: "Broadcom BCMDHD Wi-Fi firmware"
+    category: wifi
+    confidence: high
+    format: fw_bcm
+
+  # =====================================================================
+  # Cypress (Infineon) Wi-Fi
+  # =====================================================================
+  - pattern: "^cyfmac[_a-z0-9.-]*\\.(bin|clm_blob|txt)$"
+    vendor: cypress
+    product: "Cypress CYFMAC Wi-Fi firmware"
+    category: wifi
+    confidence: high
+    source: linux-firmware
+
+  # =====================================================================
+  # Realtek Wi-Fi + Bluetooth
+  # =====================================================================
+  - pattern: "^rtl[0-9a-z_]+_fw\\.bin$"
+    vendor: realtek
+    product: "Realtek RTL Wi-Fi firmware"
+    category: wifi
+    confidence: high
+    source: linux-firmware
+  - pattern: "^rtw88[0-9a-z_]+_fw\\.bin$"
+    vendor: realtek
+    product: "Realtek RTW88 Wi-Fi firmware"
+    category: wifi
+    confidence: high
+    source: linux-firmware
+  - pattern: "^rtw89[0-9a-z_]+_fw\\.bin$"
+    vendor: realtek
+    product: "Realtek RTW89 Wi-Fi firmware"
+    category: wifi
+    confidence: high
+    source: linux-firmware
+  - pattern: "^rtl[0-9a-z_]+\\.bin$"
+    vendor: realtek
+    product: "Realtek RTL firmware blob"
+    category: wifi
+    confidence: medium
+  - pattern: "^rtl8[0-9a-z]+_config\\.bin$"
+    vendor: realtek
+    product: "Realtek RTL Bluetooth config"
+    category: bluetooth
+    confidence: high
+  - pattern: "^rtl_bt\\/rtl[0-9a-z_]+_(fw|config)\\.bin$"
+    vendor: realtek
+    product: "Realtek RTL Bluetooth firmware"
+    category: bluetooth
+    confidence: high
+
+  # =====================================================================
+  # Qualcomm Adreno GPU firmware (fallback; the classifier prefers
+  # _ADRENO_RE for ELF blobs, but explicit rules catch non-ELF .fw).
+  # =====================================================================
+  - pattern: "^a[0-9]{3,4}_zap\\.(elf|mdt|mbn)$"
+    vendor: qualcomm
+    product: "Qualcomm Adreno ZAP shader"
+    category: gpu
+    confidence: high
+    format: elf
+  - pattern: "^a[0-9]{3,4}_sqe\\.(fw|elf)$"
+    vendor: qualcomm
+    product: "Qualcomm Adreno SQE microcode"
+    category: gpu
+    confidence: high
+  - pattern: "^a[0-9]{3,4}_gmu\\.(bin|fw)$"
+    vendor: qualcomm
+    product: "Qualcomm Adreno GMU firmware"
+    category: gpu
+    confidence: high
+
+  # =====================================================================
+  # Qualcomm Venus / IPA (non-ELF fallback — most are ELF, caught
+  # earlier; these rules cover .fw / .bin distributions).
+  # =====================================================================
+  - pattern: "^venus(-[0-9]+)?\\.(fw|b[0-9a-f]{2}|mdt)$"
+    vendor: qualcomm
+    product: "Qualcomm Venus video codec firmware"
+    category: other
+    confidence: high
+
+  # =====================================================================
+  # Texas Instruments USB PD / USB Type-C
+  # =====================================================================
+  - pattern: "^tps6598[0-9][_a-z0-9.-]*\\.(bin|tar|img)$"
+    vendor: ti
+    product: "TI TPS6598x USB Type-C PD controller firmware"
+    category: usb
+    confidence: high
+  - pattern: "^tps6598[0-9]_pdo[_a-z0-9.-]*\\.bin$"
+    vendor: ti
+    product: "TI TPS6598x PD policy objects"
+    category: usb
+    confidence: high
+  - pattern: "^ccg[0-9]+[_a-z0-9.-]*\\.(bin|cyacd)$"
+    vendor: ti
+    product: "Cypress/TI CCGx USB-C PD controller firmware"
+    category: usb
+    confidence: high
+
+  # =====================================================================
+  # Cirrus Logic audio (CS35L41 + friends)
+  # =====================================================================
+  - pattern: "^cs35l[0-9]{2}[_a-z0-9.-]*\\.(bin|wmfw)$"
+    vendor: cirrus
+    product: "Cirrus Logic CS35Lxx Smart Amp firmware"
+    category: audio
+    confidence: high
+  - pattern: "^cs4[0-9]{3}[_a-z0-9.-]*\\.(bin|wmfw)$"
+    vendor: cirrus
+    product: "Cirrus Logic CS4xxx audio DSP firmware"
+    category: audio
+    confidence: high
+
+  # =====================================================================
+  # TI audio (TAS smart amps)
+  # =====================================================================
+  - pattern: "^tas25[0-9]{2}[_a-z0-9.-]*\\.(bin|cfg)$"
+    vendor: ti
+    product: "TI TAS25xx Smart Amp firmware"
+    category: audio
+    confidence: high
+
+  # =====================================================================
+  # USB camera / generic USB devices (sketchy attribution — low conf)
+  # =====================================================================
+  - pattern: "^usbcam_[_a-z0-9.-]+\\.(bin|fw)$"
+    vendor: unknown
+    product: "Generic USB camera firmware"
+    category: camera
+    confidence: low
+
+  # =====================================================================
+  # Nordic / generic BLE controllers
+  # =====================================================================
+  - pattern: "^nrf5[0-9]{4}[_a-z0-9.-]*\\.(bin|hex)$"
+    vendor: nordic
+    product: "Nordic nRF5xxxx BLE SoC firmware"
+    category: bluetooth
+    confidence: high
+
+  # =====================================================================
+  # Finger-print cards (FPC) — common Android sensor
+  # =====================================================================
+  - pattern: "^fpc[0-9]{3,4}[_a-z0-9.-]*\\.(bin|cfg|ko)$"
+    vendor: fingerprint-cards
+    product: "Fingerprint Cards FPCxxxx fingerprint sensor"
+    category: fingerprint
+    confidence: high
