@@ -1,0 +1,304 @@
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useParams } from 'react-router-dom'
+import { AlertTriangle, Cpu, Loader2, RefreshCw, ShieldAlert } from 'lucide-react'
+import { Button } from '@/components/ui/button'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import {
+  getFirmwareDrivers,
+  getHardwareFirmwareBlob,
+  getHardwareFirmwareCves,
+  listHardwareFirmware,
+  runCveMatch,
+  type FirmwareCveMatch,
+  type FirmwareDriver,
+  type HardwareFirmwareBlob,
+} from '@/api/hardwareFirmware'
+import { listFirmware } from '@/api/firmware'
+import { useProjectStore } from '@/stores/projectStore'
+import { extractErrorMessage } from '@/utils/error'
+import FirmwareSelector from '@/components/projects/FirmwareSelector'
+import StatsHeader from '@/components/hardware-firmware/StatsHeader'
+import BlobFilters from '@/components/hardware-firmware/BlobFilters'
+import BlobTable from '@/components/hardware-firmware/BlobTable'
+import BlobDetail from '@/components/hardware-firmware/BlobDetail'
+import DriversTable from '@/components/hardware-firmware/DriversTable'
+import type { FirmwareDetail } from '@/types'
+
+export default function HardwareFirmwarePage() {
+  const { projectId } = useParams<{ projectId: string }>()
+  const selectedFirmwareId = useProjectStore((s) => s.selectedFirmwareId)
+
+  const [firmwareList, setFirmwareList] = useState<FirmwareDetail[]>([])
+  const [blobs, setBlobs] = useState<HardwareFirmwareBlob[]>([])
+  const [drivers, setDrivers] = useState<FirmwareDriver[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+
+  const [category, setCategory] = useState<string | null>(null)
+  const [vendor, setVendor] = useState<string | null>(null)
+  const [signedOnly, setSignedOnly] = useState(false)
+
+  const [selectedBlobId, setSelectedBlobId] = useState<string | null>(null)
+  const [blobDetail, setBlobDetail] = useState<HardwareFirmwareBlob | null>(null)
+  const [blobCves, setBlobCves] = useState<FirmwareCveMatch[]>([])
+  const [cveLoading, setCveLoading] = useState(false)
+
+  const [running, setRunning] = useState(false)
+  const [runResult, setRunResult] = useState<string | null>(null)
+
+  // Load firmware list for selector
+  useEffect(() => {
+    if (projectId) {
+      listFirmware(projectId).then(setFirmwareList).catch(() => {})
+    }
+  }, [projectId])
+
+  // Load blobs + drivers whenever project / firmware / filters change
+  const loadAll = useCallback(async () => {
+    if (!projectId) return
+    setLoading(true)
+    setError(null)
+    try {
+      const [blobsResp, driversResp] = await Promise.all([
+        listHardwareFirmware(projectId, {
+          firmwareId: selectedFirmwareId,
+          category: category ?? undefined,
+          vendor: vendor ?? undefined,
+          signedOnly,
+        }),
+        getFirmwareDrivers(projectId, selectedFirmwareId).catch(() => ({
+          drivers: [] as FirmwareDriver[],
+          total: 0,
+        })),
+      ])
+      setBlobs(blobsResp.blobs)
+      setDrivers(driversResp.drivers)
+    } catch (err) {
+      setError(extractErrorMessage(err, 'Failed to load hardware firmware data'))
+    } finally {
+      setLoading(false)
+    }
+  }, [projectId, selectedFirmwareId, category, vendor, signedOnly])
+
+  useEffect(() => {
+    loadAll()
+  }, [loadAll])
+
+  // Load detail + CVEs when a blob is selected
+  useEffect(() => {
+    if (!projectId || !selectedBlobId) {
+      setBlobDetail(null)
+      setBlobCves([])
+      return
+    }
+    let cancelled = false
+    setCveLoading(true)
+    Promise.all([
+      getHardwareFirmwareBlob(projectId, selectedBlobId, selectedFirmwareId),
+      getHardwareFirmwareCves(projectId, selectedBlobId, selectedFirmwareId).catch(
+        () => [] as FirmwareCveMatch[],
+      ),
+    ])
+      .then(([blob, cves]) => {
+        if (cancelled) return
+        setBlobDetail(blob)
+        setBlobCves(cves)
+      })
+      .catch((err) => {
+        if (cancelled) return
+        setBlobDetail(null)
+        setBlobCves([])
+        setError(extractErrorMessage(err, 'Failed to load blob detail'))
+      })
+      .finally(() => {
+        if (!cancelled) setCveLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [projectId, selectedBlobId, selectedFirmwareId])
+
+  const handleRunCveMatch = useCallback(async () => {
+    if (!projectId) return
+    setRunning(true)
+    setRunResult(null)
+    try {
+      const res = await runCveMatch(projectId, {
+        forceRescan: false,
+        firmwareId: selectedFirmwareId,
+      })
+      setRunResult(`Found ${res.count} match(es).`)
+      // Refresh the list and any selected blob's CVEs.
+      await loadAll()
+      if (selectedBlobId) {
+        const cves = await getHardwareFirmwareCves(
+          projectId,
+          selectedBlobId,
+          selectedFirmwareId,
+        ).catch(() => [] as FirmwareCveMatch[])
+        setBlobCves(cves)
+      }
+    } catch (err) {
+      setError(extractErrorMessage(err, 'CVE matcher failed'))
+    } finally {
+      setRunning(false)
+    }
+  }, [projectId, selectedFirmwareId, selectedBlobId, loadAll])
+
+  // Derived values
+  const totalBlobs = blobs.length
+  const unsignedCount = useMemo(
+    () =>
+      blobs.filter((b) => b.signed === 'unsigned' || b.signed === 'weakly_signed').length,
+    [blobs],
+  )
+  const vendorCount = useMemo(() => {
+    const set = new Set<string>()
+    for (const b of blobs) {
+      if (b.vendor) set.add(b.vendor)
+    }
+    return set.size
+  }, [blobs])
+  // We don't have an aggregate CVE count on the list endpoint; surface the
+  // number of matches for the currently-selected blob (0 when none selected).
+  // The "Run CVE match" button's banner reports the total after a fresh run.
+  const cveCount = blobCves.length
+
+  const categories = useMemo(() => {
+    const set = new Set<string>()
+    for (const b of blobs) set.add(b.category)
+    return [...set].sort()
+  }, [blobs])
+
+  const vendors = useMemo(() => {
+    const set = new Set<string>()
+    for (const b of blobs) {
+      if (b.vendor) set.add(b.vendor)
+    }
+    return [...set].sort()
+  }, [blobs])
+
+  if (!projectId) {
+    return null
+  }
+
+  if (loading && blobs.length === 0) {
+    return (
+      <div className="flex h-[calc(100vh-8rem)] items-center justify-center text-muted-foreground">
+        <Loader2 className="mr-2 h-5 w-5 animate-spin" />
+        <span className="text-sm">Loading hardware firmware...</span>
+      </div>
+    )
+  }
+
+  const hasData = totalBlobs > 0
+
+  return (
+    <div className="mx-auto max-w-7xl space-y-4">
+      {/* Header */}
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="flex items-center gap-3">
+          <Cpu className="h-6 w-6 text-muted-foreground" />
+          <div>
+            <h1 className="text-lg font-semibold">Hardware Firmware</h1>
+            <p className="text-sm text-muted-foreground">
+              Modem / TEE / Wi-Fi / GPU / DSP blobs, drivers, and three-tier CVE matches.
+            </p>
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          <FirmwareSelector projectId={projectId} firmwareList={firmwareList} />
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleRunCveMatch}
+            disabled={running || !hasData}
+          >
+            {running ? (
+              <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <ShieldAlert className="mr-1.5 h-3.5 w-3.5" />
+            )}
+            Run CVE match
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={loadAll}
+            disabled={loading}
+            title="Reload blobs and drivers"
+          >
+            <RefreshCw className="mr-1.5 h-3.5 w-3.5" />
+            Refresh
+          </Button>
+        </div>
+      </div>
+
+      {runResult && (
+        <div className="rounded-md border border-border bg-muted/30 px-3 py-2 text-xs">
+          {runResult}
+        </div>
+      )}
+
+      {error && (
+        <div className="flex items-start gap-2 rounded-md border border-red-500/30 bg-red-500/5 px-3 py-2 text-xs text-red-600 dark:text-red-400">
+          <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+          <span>{error}</span>
+        </div>
+      )}
+
+      {!hasData ? (
+        <div className="flex flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-border p-10 text-center text-sm text-muted-foreground">
+          <Cpu className="h-6 w-6 text-muted-foreground" />
+          <p>No hardware firmware detected.</p>
+          <p className="text-xs">
+            Upload an Android firmware image to trigger automatic detection.
+          </p>
+        </div>
+      ) : (
+        <>
+          <StatsHeader
+            totalBlobs={totalBlobs}
+            unsignedCount={unsignedCount}
+            vendorCount={vendorCount}
+            cveCount={cveCount}
+          />
+
+          <Tabs defaultValue="blobs" className="w-full">
+            <TabsList>
+              <TabsTrigger value="blobs">Blobs ({totalBlobs})</TabsTrigger>
+              <TabsTrigger value="drivers">Drivers ({drivers.length})</TabsTrigger>
+            </TabsList>
+
+            <TabsContent value="blobs" className="pt-3">
+              <div className="grid grid-cols-1 gap-4 lg:grid-cols-[1fr_minmax(360px,440px)]">
+                <div className="space-y-3">
+                  <BlobFilters
+                    categories={categories}
+                    vendors={vendors}
+                    category={category}
+                    vendor={vendor}
+                    signedOnly={signedOnly}
+                    onCategory={setCategory}
+                    onVendor={setVendor}
+                    onSignedOnly={setSignedOnly}
+                  />
+                  <BlobTable
+                    blobs={blobs}
+                    selectedId={selectedBlobId}
+                    onSelect={setSelectedBlobId}
+                  />
+                </div>
+                <BlobDetail blob={blobDetail} cves={blobCves} loading={cveLoading} />
+              </div>
+            </TabsContent>
+
+            <TabsContent value="drivers" className="pt-3">
+              <DriversTable drivers={drivers} />
+            </TabsContent>
+          </Tabs>
+        </>
+      )}
+    </div>
+  )
+}

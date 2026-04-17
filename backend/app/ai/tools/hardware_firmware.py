@@ -9,6 +9,7 @@ signing, chipset, and format-specific metadata.
 from __future__ import annotations
 
 import json
+import os
 
 from sqlalchemy import select
 
@@ -181,6 +182,145 @@ async def _handle_list_firmware_drivers(input: dict, context: ToolContext) -> st
     return "\n".join(lines)
 
 
+async def _handle_find_unsigned_firmware(input: dict, context: ToolContext) -> str:
+    """List unsigned / weakly-signed / unknown-signed firmware blobs grouped by category."""
+    stmt = (
+        select(HardwareFirmwareBlob)
+        .where(
+            HardwareFirmwareBlob.firmware_id == context.firmware_id,
+            HardwareFirmwareBlob.signed.in_(["unsigned", "unknown", "weakly_signed"]),
+        )
+        .order_by(HardwareFirmwareBlob.category, HardwareFirmwareBlob.blob_path)
+    )
+    blobs = (await context.db.execute(stmt)).scalars().all()
+    if not blobs:
+        return "No unsigned or weakly-signed hardware firmware blobs detected."
+
+    by_cat: dict[str, list[HardwareFirmwareBlob]] = {}
+    for b in blobs:
+        by_cat.setdefault(b.category, []).append(b)
+
+    lines = [f"# Unsigned / weakly-signed firmware ({len(blobs)} blob(s))"]
+    for cat in sorted(by_cat.keys()):
+        group = by_cat[cat]
+        lines.append(f"\n## {cat} ({len(group)})")
+        for b in group:
+            size_kb = b.file_size // 1024
+            v = b.vendor or "unknown"
+            lines.append(
+                f"- `{b.blob_path}` - {v}/{b.format} - {size_kb} KB - **{b.signed}**"
+            )
+    return "\n".join(lines)
+
+
+async def _handle_extract_dtb(input: dict, context: ToolContext) -> str:
+    """Parse a DTB and emit the compatible -> firmware-name mapping per node."""
+    dtb_path = input.get("dtb_path")
+    if not dtb_path:
+        return "Error: dtb_path is required."
+
+    # Validate against the sandbox
+    try:
+        real_path = context.resolve_path(dtb_path)
+    except Exception as exc:
+        return f"Error: path resolution failed: {exc}"
+
+    if not os.path.isfile(real_path):
+        return f"Error: not a file: {dtb_path}"
+
+    try:
+        import fdt  # type: ignore[import-untyped]
+    except ImportError:
+        return "Error: fdt library not installed (pip install fdt)."
+
+    try:
+        with open(real_path, "rb") as f:
+            data = f.read(16 * 1024 * 1024)
+    except OSError as exc:
+        return f"Error reading {dtb_path}: {exc}"
+
+    try:
+        dt = fdt.parse_dtb(data)
+    except Exception as exc:
+        return f"Error parsing DTB: {exc}"
+
+    compat_map: list[dict] = []
+
+    def _prop_strings(prop) -> list[str]:
+        """Extract strings from a prop — tries both .data and .value shapes."""
+        out: list[str] = []
+        data = getattr(prop, "data", None)
+        if isinstance(data, list):
+            for v in data:
+                if isinstance(v, str) and v:
+                    out.append(v.rstrip("\x00"))
+            if out:
+                return out
+        if isinstance(data, (bytes, bytearray)):
+            for chunk in bytes(data).split(b"\x00"):
+                if chunk:
+                    try:
+                        out.append(chunk.decode("utf-8", errors="replace"))
+                    except Exception:
+                        continue
+            if out:
+                return out
+        val = getattr(prop, "value", None)
+        if isinstance(val, list):
+            for v in val:
+                if isinstance(v, str) and v:
+                    out.append(v.rstrip("\x00"))
+        elif isinstance(val, str):
+            out.append(val.rstrip("\x00"))
+        return out
+
+    def _walk(node, parent_path: str = "") -> None:
+        node_name = getattr(node, "name", "")
+        node_path = (
+            f"{parent_path}/{node_name}" if node_name and node_name != "/" else "/"
+        )
+        compat_prop = None
+        fwname_prop = None
+        for prop in getattr(node, "props", []):
+            pname = getattr(prop, "name", "")
+            if pname == "compatible":
+                compat_prop = prop
+            elif pname == "firmware-name":
+                fwname_prop = prop
+        if compat_prop is not None:
+            compat_strings = _prop_strings(compat_prop)
+            fw_names = _prop_strings(fwname_prop) if fwname_prop is not None else []
+            compat_map.append(
+                {
+                    "path": node_path,
+                    "compatible": compat_strings,
+                    "firmware_name": fw_names,
+                }
+            )
+        for child in getattr(node, "nodes", []):
+            _walk(child, node_path)
+
+    _walk(dt.root)
+
+    if not compat_map:
+        return f"No compatible nodes found in {dtb_path}."
+
+    lines = [
+        f"# DTB: {dtb_path}",
+        "",
+        f"{len(compat_map)} nodes with `compatible` props:",
+    ]
+    for entry in compat_map[:100]:
+        compat = ", ".join(entry["compatible"][:3]) if entry["compatible"] else "-"
+        fw = ", ".join(entry["firmware_name"]) if entry["firmware_name"] else "-"
+        lines.append(
+            f"- `{entry['path']}` -> compatible=`{compat}` - firmware-name=`{fw}`"
+        )
+    if len(compat_map) > 100:
+        lines.append(f"\n_(+{len(compat_map) - 100} more nodes truncated)_")
+    return "\n".join(lines)
+
+
 async def _handle_check_firmware_cves(input: dict, context: ToolContext) -> str:
     """Run the three-tier CVE matcher against all detected hw-firmware blobs."""
     from app.services.hardware_firmware.cve_matcher import match_firmware_cves
@@ -324,4 +464,41 @@ def register_hardware_firmware_tools(registry: ToolRegistry) -> None:
             },
         },
         handler=_handle_check_firmware_cves,
+    )
+
+    registry.register(
+        name="find_unsigned_firmware",
+        description=(
+            "Fast triage: list all hardware firmware blobs whose signed status "
+            "is 'unsigned', 'unknown', or 'weakly_signed'. Grouped by category "
+            "(modem/tee/wifi/gpu/dsp/etc.).  Useful for spotting unvalidated "
+            "binaries in an Android image at a glance."
+        ),
+        input_schema={"type": "object", "properties": {}},
+        handler=_handle_find_unsigned_firmware,
+    )
+
+    registry.register(
+        name="extract_dtb",
+        description=(
+            "Parse a Device Tree Blob (DTB or DTBO) at the given path and emit "
+            "the compatible_string -> firmware_name mapping per node. Useful "
+            "for understanding which drivers the kernel will bind to and which "
+            "firmware files they request.  The path is validated against the "
+            "firmware sandbox."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "dtb_path": {
+                    "type": "string",
+                    "description": (
+                        "Firmware-relative path to a .dtb or .dtbo file "
+                        "(e.g. /dtbs/qcom/sm8450.dtb)."
+                    ),
+                },
+            },
+            "required": ["dtb_path"],
+        },
+        handler=_handle_extract_dtb,
     )

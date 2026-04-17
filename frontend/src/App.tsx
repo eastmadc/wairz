@@ -8,6 +8,7 @@ import ExplorePage from '@/pages/ExplorePage'
 import FindingsPage from '@/pages/FindingsPage'
 import ComponentMapPage from '@/pages/ComponentMapPage'
 import SbomPage from '@/pages/SbomPage'
+import HardwareFirmwarePage from '@/pages/HardwareFirmwarePage'
 import EmulationPage from '@/pages/EmulationPage'
 import FuzzingPage from '@/pages/FuzzingPage'
 import ComparisonPage from '@/pages/ComparisonPage'
@@ -32,6 +33,7 @@ export default function App() {
           <Route path="/projects/:projectId/findings" element={<FindingsPage />} />
           <Route path="/projects/:projectId/map" element={<ComponentMapPage />} />
           <Route path="/projects/:projectId/sbom" element={<SbomPage />} />
+          <Route path="/projects/:projectId/hardware-firmware" element={<HardwareFirmwarePage />} />
           <Route path="/projects/:projectId/emulation" element={<EmulationPage />} />
           <Route path="/projects/:projectId/fuzzing" element={<FuzzingPage />} />
           <Route path="/projects/:projectId/compare" element={<ComparisonPage />} />

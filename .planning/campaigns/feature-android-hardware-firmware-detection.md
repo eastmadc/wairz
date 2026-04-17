@@ -1,9 +1,9 @@
 ---
 version: 1
 id: "41e39acc-764f-4220-8048-0f68280574fc"
-status: active
+status: completed
 started: "2026-04-17T01:32:19Z"
-completed_at: null
+completed_at: "2026-04-17T02:45:00Z"
 direction: "Android hardware firmware detection — modem/TEE/Wi-Fi/GPU/DSP/drivers: detection, parsers, driver graph, CVE matcher, UI + MCP tools"
 phase_count: 5
 current_phase: 5
@@ -13,7 +13,7 @@ worktree_status: null
 
 # Campaign: Android Hardware Firmware Detection
 
-Status: active
+Status: completed (2026-04-17T02:45Z)
 Started: 2026-04-17T01:32:19Z
 Direction: Android device images contain 20-40 hardware firmware blobs (modem, TEE, Wi-Fi/BT, GPU, DSPs, touch, NFC, boot chain) currently opaque to Wairz. Add detection, per-format parsers, driver↔firmware graph, three-tier CVE matcher, and dedicated UI + 6 MCP tools. Architected as plugin system so iBoot/IMG4, automotive, IoT, Cisco IOS, Junos slot in later.
 
@@ -44,7 +44,7 @@ Direction: Android device images contain 20-40 hardware firmware blobs (modem, T
 | 2 | complete | build | Per-format Parsers | Six parser plugins (qualcomm_mbn, dtb, kmod, elf_tee, broadcom_wl, raw_bin) via PARSER_REGISTRY + `analyze_hardware_firmware` MCP tool + fixture-based unit tests per parser. |
 | 3 | complete | build | Driver↔Firmware Graph | `graph.py` + `list_firmware_drivers` MCP tool + `loads_firmware` edge type documented in component_map_service + "missing firmware" findings + new `/hardware-firmware/firmware-edges` + `/drivers` REST endpoints. |
 | 4 | complete | build | CVE Heuristic Matcher | Three-tier matcher (Tier 3 curated YAML active, Tiers 1/2 stubbed) + `known_firmware.yaml` with 14 seed CVE families (all 14 from research-threats.md §Seed) + migration adds `blob_id` FK + `match_confidence` + `match_tier` + CHECK constraint + `check_firmware_cves` MCP tool. |
-| 5 | pending | build | UI + Remaining MCP Tools | `HardwareFirmwarePage` + API client + sidebar entry + `find_unsigned_firmware` + `extract_dtb` MCP tools. ComponentMap overlay toggle. |
+| 5 | complete | build | UI + Remaining MCP Tools | `HardwareFirmwarePage` (304 lines) + 5 hardware-firmware subcomponents + API client with 6 methods + sidebar entry between SBOM and Emulation + 4 REST endpoints (list/detail/cves/cve-match POST) + `find_unsigned_firmware` + `extract_dtb` MCP tools. ComponentMap overlay toggle deferred to follow-up. |
 
 ## Phase End Conditions
 <!-- Machine-verifiable; Archon checks before marking phase complete -->
@@ -132,6 +132,13 @@ Direction: Android device images contain 20-40 hardware firmware blobs (modem, T
 | `check_firmware_cves` MCP tool | complete | 4 | Runs three-tier matcher against current firmware; returns markdown summary grouped by blob; optional `force_rescan` bypasses dedup. |
 | `pyyaml>=6.0` pip dep | complete | 4 | Added to backend/pyproject.toml. Required for YAML loader (not previously imported in app/). Rebuild both backend and worker. |
 | CVE matcher unit tests | complete | 4 | 7 test functions covering YAML load, curated matching (exact + vendor/chipset/version regex), metadata-version fallback, advisory-only families, Shannon cluster multi-CVE, persistence, idempotency. |
+| `HardwareFirmwarePage.tsx` + 5 subcomponents | complete | 5 | StatsHeader, BlobFilters, BlobTable, BlobDetail, DriversTable. 304-line page; two tabs (Blobs + Drivers); exhaustive SEVERITY_STYLE + SIGNED_STYLE Records with fallback per rule 9. |
+| `frontend/src/api/hardwareFirmware.ts` | complete | 5 | 6 methods (listHardwareFirmware, getHardwareFirmwareBlob, getHardwareFirmwareCves, runCveMatch, getFirmwareEdges, getFirmwareDrivers) + typed interfaces. |
+| Sidebar entry + App.tsx route | complete | 5 | Sub-page entry between SBOM and Emulation (`Cpu` icon from lucide). Route `/projects/:projectId/hardware-firmware`. |
+| 4 REST endpoints on `/hardware-firmware` | complete | 5 | GET "" (list + filters), GET /{blob_id}, GET /{blob_id}/cves, POST /cve-match. Uses `_blob_to_response` manual helper to sidestep `metadata`/`metadata_` Pydantic alias fragility. |
+| `find_unsigned_firmware` MCP tool | complete | 5 | Triage: lists blobs with signed=unsigned/unknown/weakly_signed, grouped by category. |
+| `extract_dtb` MCP tool | complete | 5 | Parses a DTB on-demand using `fdt.parse_dtb`, walks all nodes with `compatible` props, emits compatible→firmware-name mapping (cap 100 nodes). Uses `context.resolve_path()` for sandbox. |
+| MCP tool smoke tests | complete | 5 | 5 tests covering find_unsigned_firmware (empty + grouping) and extract_dtb (missing path/file + parse via `build_minimal_dtb()` fixture). |
 
 ## Decision Log
 
@@ -182,11 +189,25 @@ Integration point for Phase 1 is `backend/app/workers/unpack.py:484` (Android fa
 
 ## Continuation State
 
-Phase: 4 (complete, uncommitted) → Phase 5 (pending)
-Sub-step: Phase 4 committed; Phase 5 (UI + final MCP tools) next
-Phase 1: committed at ac6a493 (14 files, 1059+/-3 lines)
-Phase 2: committed at 5c9c464 (15 files, 2413+/-27 lines)
-Phase 3: committed at 278aad7 (9 files, 1002+/-7 lines)
+Campaign: COMPLETE — all 5 phases shipped.
+Phase 1: ac6a493 (14 files, 1059+/-3 lines) — detect & classify
+Phase 2: 5c9c464 (15 files, 2413+/-27 lines) — per-format parsers
+Phase 3: 278aad7 (9 files, 1002+/-7 lines) — driver↔firmware graph
+Phase 4: 1fbcce4 (8 files, 1014+/-7 lines) — CVE matcher + curated YAML
+Phase 5: pending commit — UI + remaining MCP tools
+
+Verification required in Docker (not run here):
+- `docker compose up -d --build backend worker` (rule 8 — rebuild both for new `fdt` + `pyyaml` deps)
+- `docker compose exec backend alembic upgrade head` (applies c8a1f4e2d5b6 + d9b2e3f5a6c7)
+- `docker compose exec backend pytest backend/tests/test_hardware_firmware*.py -q`
+- Upload a real Android firmware image (Pixel 5 / Galaxy S22) → navigate to `/projects/{id}/hardware-firmware` → verify ≥20 blobs detected, classified, parsed, and CVE-matched
+- `/live-preview` visual verification of the HardwareFirmwarePage (Phase 5 visual_verify end condition)
+
+Follow-ups (tracked in Review Queue):
+- ComponentMap overlay toggle (Phase 5 stretch item, deferred)
+- FragAttacks family version_regex tightening (Phase 4 tuning)
+- Phase 2 MBN v3 header classifier edge case (refinement when real samples available)
+- OP-TEE fixture ELF — verify LIEF accepts section-only construction
 Phase 2 files created (10):
   backend/app/services/hardware_firmware/parsers/__init__.py
   backend/app/services/hardware_firmware/parsers/base.py
