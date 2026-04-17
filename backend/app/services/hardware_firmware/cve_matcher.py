@@ -1,4 +1,4 @@
-"""Three-tier CVE matcher for hardware firmware blobs.
+"""Multi-tier CVE matcher for hardware firmware blobs.
 
 Tier 1 — Chipset CPE lookup (high confidence): if blob.chipset_target
   matches a CPE in the NVD dictionary, query by CPE.
@@ -6,6 +6,11 @@ Tier 2 — NVD free-text (medium): keyword search on "{vendor} {category}
   firmware" against NVD descriptions, filter by version substring.
 Tier 3 — Curated YAML (high, human-vetted): load known_firmware.yaml
   and match each entry against the blob's vendor/category/version/chipset.
+Tier 4 — Kernel CPE (medium): read the ``linux-kernel`` SbomComponent
+  rows (produced by sbom_service ``_scan_kernel_from_vermagic`` and
+  enriched by grype) and mirror their CVEs onto every kernel_module blob
+  so each .ko surfaces the kernel-level findings instead of leaving them
+  on the component alone.
 
 Results land in sbom_vulnerabilities with blob_id set and
 match_confidence + match_tier populated.  Idempotent — dedups on
@@ -16,15 +21,16 @@ from __future__ import annotations
 import logging
 import re
 import uuid
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
 import yaml
-from sqlalchemy import select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.hardware_firmware import HardwareFirmwareBlob
-from app.models.sbom import SbomVulnerability
+from app.models.sbom import SbomComponent, SbomVulnerability
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +47,7 @@ class CveMatch:
     cvss_score: float | None
     description: str
     confidence: str  # high | medium | low
-    tier: str  # chipset_cpe | nvd_freetext | curated_yaml
+    tier: str  # chipset_cpe | nvd_freetext | curated_yaml | kernel_cpe
 
 
 def _load_known_firmware() -> list[dict]:
@@ -188,12 +194,77 @@ async def _match_nvd_freetext(
     return []
 
 
+async def _match_kernel_cpe(
+    blobs: Sequence[HardwareFirmwareBlob],
+    firmware_id: uuid.UUID,
+    db: AsyncSession,
+) -> list[CveMatch]:
+    """Tier 4 — mirror linux-kernel component CVEs onto each kernel_module blob.
+
+    Reads ``SbomComponent`` rows flagged as the Linux kernel (by name /
+    type / ``kernel_*`` detection source) for this firmware, pulls the
+    grype-supplied ``SbomVulnerability`` rows attached to those
+    components, and projects a ``CveMatch`` onto every ``kernel_module``
+    blob.  The persistence layer in :func:`match_firmware_cves` dedups on
+    ``(blob_id, cve_id)``, so callers can safely re-run this tier.
+    """
+    kmod_blobs = [b for b in blobs if (b.category or "").lower() == "kernel_module"]
+    if not kmod_blobs:
+        return []
+
+    # Locate every linux-kernel SbomComponent for this firmware.  Match on
+    # name (case-insensitive) plus a loose "operating-system" type or any
+    # detection source beginning with ``kernel_``.
+    name_lower = func.lower(SbomComponent.name)
+    comp_stmt = select(SbomComponent).where(
+        SbomComponent.firmware_id == firmware_id,
+        name_lower.in_(("linux-kernel", "linux_kernel", "linux")),
+        or_(
+            SbomComponent.type == "operating-system",
+            SbomComponent.detection_source.like("kernel_%"),
+        ),
+    )
+    components = (await db.execute(comp_stmt)).scalars().all()
+    if not components:
+        return []
+
+    comp_ids = [c.id for c in components]
+    vuln_stmt = select(SbomVulnerability).where(
+        SbomVulnerability.component_id.in_(comp_ids),
+    )
+    vulns = (await db.execute(vuln_stmt)).scalars().all()
+    if not vulns:
+        return []
+
+    matches: list[CveMatch] = []
+    for vuln in vulns:
+        # cvss_score arrives as Decimal off the Numeric column; coerce so
+        # downstream consumers see a float | None consistently with the
+        # other tiers.
+        cvss_score = float(vuln.cvss_score) if vuln.cvss_score is not None else None
+        severity = vuln.severity or "unknown"
+        description = vuln.description or ""
+        for blob in kmod_blobs:
+            matches.append(
+                CveMatch(
+                    blob_id=blob.id,
+                    cve_id=vuln.cve_id,
+                    severity=severity,
+                    cvss_score=cvss_score,
+                    description=description,
+                    confidence="medium",
+                    tier="kernel_cpe",
+                )
+            )
+    return matches
+
+
 async def match_firmware_cves(
     firmware_id: uuid.UUID,
     db: AsyncSession,
     force_rescan: bool = False,
 ) -> list[CveMatch]:
-    """Run the 3-tier matcher for all hardware firmware blobs of one firmware.
+    """Run the multi-tier matcher for all hardware firmware blobs of one firmware.
 
     - Skips blobs that already have cves in sbom_vulnerabilities unless
       force_rescan=True.
@@ -227,6 +298,9 @@ async def match_firmware_cves(
         # Tier 1 / Tier 2 stubs
         all_matches.extend(await _match_chipset_cpe(blob))
         all_matches.extend(await _match_nvd_freetext(blob))
+
+    # Tier 4 — kernel CPE (pulls grype's kernel-component CVEs onto each kmod blob)
+    all_matches.extend(await _match_kernel_cpe(blobs, firmware_id, db))
 
     # Persist matches
     inserted = 0

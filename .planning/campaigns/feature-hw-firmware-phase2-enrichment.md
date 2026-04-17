@@ -130,8 +130,8 @@ Replace hand-rolled regexes with YAML-sourced patterns.
 
 ## Active Context
 
-Phase: **2 — Kernel-Version CVE Attribution** (Phase 1 complete)
-Sub-step: Pending — delegation to build specialist.
+Phase: **3 — MediaTek Parsers** (Phases 1 and 2 complete, direction aligned)
+Sub-step: Pending — delegation to build specialist. Phase 3 is the largest single phase (~2 sessions work compressed into one delegation if possible).
 
 ## Feature Ledger
 
@@ -162,6 +162,28 @@ Sub-step: Pending — delegation to build specialist.
 - `patterns_loader.py` ended at 254 LOC vs 80-150 target — extra LOC is defensive YAML error handling (graceful on malformed entries) and alias map.
 - `Classification` gained optional `product` field (threaded through but not persisted yet — Phase 2+ can store in `metadata_.product`).
 
+### Phase 2 — Kernel-Version CVE Attribution (complete 2026-04-17)
+
+**Discovery before delegation:** `sbom_service._scan_kernel_from_vermagic` already injects a `linux-kernel` `SbomComponent` with the correct CPE (`cpe:2.3:o:linux:linux_kernel:<semver>:*`), and `grype_service` already scans it. Phase 2 collapsed to two files + tests.
+
+**Files modified:**
+- `backend/app/services/hardware_firmware/parsers/kmod.py` (+23 LOC) — new `_extract_kernel_semver` helper + `metadata["kernel_semver"]` key.
+- `backend/app/services/hardware_firmware/cve_matcher.py` (+74 LOC, -5 docstring) — new Tier 4 `_match_kernel_cpe` + integration.
+- `backend/app/models/sbom.py` (comment-only; added `kernel_cpe` to the match_tier enum comment).
+- `backend/tests/test_hardware_firmware_parsers.py` (+43 LOC) — 2 new tests (android kernel 6.6.102 + missing vermagic) + 1 assertion on existing test.
+- `backend/tests/test_hardware_firmware_cve_matcher.py` (+275 LOC) — 6 new tests covering happy path, no-components, no-kmods, multi-component aggregation, dedup on rerun, case-insensitive matching.
+
+**Test results:**
+- cve_matcher: 22/22 pass (16 existing + 6 new).
+- parsers: 20/20 pass (17 existing + 2 new + 1 assertion extended).
+- Full hw-firmware regression: 125/125 pass.
+- Ruff: clean on all Phase-2 touched files (1 pre-existing S112 in kmod.py untouched).
+
+**End conditions:**
+- ✅ command_passes (cve_matcher tests)
+- ✅ metric_threshold: kernel_semver populated on all .ko rows — verified in unit tests.
+- ⏳ manual (DPCS10 ≥20 CVEs via kernel_cpe) — deferred; wire-up unit-tested, runtime CVE count pending re-detection on the Android image.
+
 ## Decision Log
 
 **2026-04-17** — **Campaign structure.** Intake file was already phase-decomposed with strong OSS research; adopted its 5-phase breakdown verbatim. Deviations from intake documented here as they arise.
@@ -169,6 +191,10 @@ Sub-step: Pending — delegation to build specialist.
 **2026-04-17** — **Metadata storage for kernel_semver and product.** Store in existing `metadata_` JSONB field rather than adding new VARCHAR columns. Reason: avoids migration churn for an optional field; schema stays lean. Intake mentioned `product_name`/`product_source` as optional — deferred unless UI needs bar selection sorting.
 
 **2026-04-17** — **Phase 1 delivered over target LOC but passes quality bar.** `patterns_loader.py` 254 LOC (vs 150 target) and `classifier.py` 316 LOC (vs 200 target). Spot-check confirmed code is purposeful (defensive error handling + graceful YAML degradation). Accepted; no rework.
+
+**2026-04-17** — **Phase 2 scoped down after discovery.** Intake asked for "inject synthetic linux_kernel component into grype pipeline" but that already existed (`sbom_service._scan_kernel_from_vermagic`, line 1216). Phase 2 collapsed to (1) store kernel_semver in kmod metadata, (2) add Tier 4 matcher that mirrors grype-produced kernel-component CVEs onto kmod blobs. No grype_service.py changes needed. Saves ~200 LOC of redundant work.
+
+**2026-04-17** — **Direction alignment check (after Phase 2).** Campaign direction was "fix empty feature on real data: Vendor=None, 0 CVEs, flat table". Phase 1 fixed Vendor=None. Phase 2 fixed 0 CVEs (at least for kernel modules). Both aligned. Phase 3 addresses metadata richness (MediaTek parsers) for blobs that already classified correctly in Phase 1 but show no version/signing info. Also aligned.
 
 ## Continuation State
 

@@ -12,15 +12,15 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from app.models.hardware_firmware import HardwareFirmwareBlob
-from app.models.sbom import SbomVulnerability
+from app.models.sbom import SbomComponent, SbomVulnerability
 from app.services.hardware_firmware.cve_matcher import (
     CveMatch,
     _load_known_firmware,
     _match_curated,
+    _match_kernel_cpe,
     _stringify_metadata,
     match_firmware_cves,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -364,3 +364,278 @@ def test_cve_match_dataclass_importable() -> None:
     )
     assert m.cve_id == "CVE-2017-9417"
     assert m.tier == "curated_yaml"
+
+
+# ---------------------------------------------------------------------------
+# Tier 4 — kernel CPE matcher (projects grype's kernel CVEs onto kmod blobs)
+# ---------------------------------------------------------------------------
+
+
+def _make_kernel_component(
+    *,
+    name: str = "linux-kernel",
+    version: str = "6.6.102",
+    comp_id: uuid.UUID | None = None,
+    type_: str = "operating-system",
+    detection_source: str = "kernel_vermagic",
+) -> MagicMock:
+    """Build an SbomComponent-shaped mock flagged as the Linux kernel."""
+    comp = MagicMock(spec=SbomComponent)
+    comp.id = comp_id or uuid.uuid4()
+    comp.name = name
+    comp.version = version
+    comp.type = type_
+    comp.detection_source = detection_source
+    return comp
+
+
+def _make_kernel_vuln(
+    *,
+    cve_id: str,
+    component_id: uuid.UUID,
+    severity: str = "high",
+    cvss_score: float | None = 7.5,
+    description: str = "kernel CVE from grype",
+) -> MagicMock:
+    """Build an SbomVulnerability-shaped mock attached to a kernel component."""
+    v = MagicMock(spec=SbomVulnerability)
+    v.cve_id = cve_id
+    v.component_id = component_id
+    v.severity = severity
+    v.cvss_score = cvss_score
+    v.description = description
+    return v
+
+
+def _mock_db_kernel_tier(
+    *,
+    components: list,
+    vulns: list,
+) -> AsyncMock:
+    """AsyncSession mock for direct ``_match_kernel_cpe`` invocations.
+
+    First ``execute()`` returns the components query result (scalars.all
+    → components); second returns the vulnerabilities (scalars.all →
+    vulns).  Subsequent calls raise StopIteration — the tier never makes
+    more than two queries.
+    """
+    comp_result = MagicMock()
+    comp_result.scalars.return_value.all.return_value = components
+
+    vuln_result = MagicMock()
+    vuln_result.scalars.return_value.all.return_value = vulns
+
+    db = AsyncMock()
+    db.execute = AsyncMock(side_effect=[comp_result, vuln_result])
+    return db
+
+
+def _mock_db_full_matcher(
+    *,
+    blobs: list,
+    existing: list[tuple[uuid.UUID, str]] | None = None,
+    kernel_components: list | None = None,
+    kernel_vulns: list | None = None,
+) -> AsyncMock:
+    """AsyncSession mock covering all four execute() calls.
+
+    1. blobs query
+    2. existing (blob_id, cve_id) dedup keys
+    3. kernel-component query (Tier 4)
+    4. kernel-vulnerability query (Tier 4, skipped if step 3 empty)
+    """
+    existing = existing or []
+    kernel_components = kernel_components or []
+    kernel_vulns = kernel_vulns or []
+
+    blobs_result = MagicMock()
+    blobs_result.scalars.return_value.all.return_value = blobs
+
+    existing_result = MagicMock()
+    existing_result.all.return_value = existing
+
+    comp_result = MagicMock()
+    comp_result.scalars.return_value.all.return_value = kernel_components
+
+    vuln_result = MagicMock()
+    vuln_result.scalars.return_value.all.return_value = kernel_vulns
+
+    side_effects: list = [blobs_result, existing_result]
+    # Tier 4 only hits the DB when there's at least one kmod blob.
+    has_kmod = any((b.category or "").lower() == "kernel_module" for b in blobs)
+    if has_kmod:
+        side_effects.append(comp_result)
+        # Only the second Tier 4 query fires if the first returned rows.
+        if kernel_components:
+            side_effects.append(vuln_result)
+
+    db = AsyncMock()
+    db.add = MagicMock()
+    db.flush = AsyncMock()
+    db.execute = AsyncMock(side_effect=side_effects)
+    return db
+
+
+@pytest.mark.asyncio
+async def test_kernel_cpe_matcher_populates_kmod_blobs() -> None:
+    """Two kmod blobs x three kernel CVEs = 6 ``CveMatch`` rows with
+    ``kernel_cpe`` provenance."""
+    firmware_id = uuid.uuid4()
+    blob_a = _make_blob(vendor="qualcomm", category="kernel_module")
+    blob_b = _make_blob(vendor="mediatek", category="kernel_module")
+
+    comp = _make_kernel_component()
+    vulns = [
+        _make_kernel_vuln(cve_id="CVE-2024-1111", component_id=comp.id),
+        _make_kernel_vuln(cve_id="CVE-2024-2222", component_id=comp.id, severity="critical"),
+        _make_kernel_vuln(cve_id="CVE-2024-3333", component_id=comp.id, cvss_score=None),
+    ]
+    db = _mock_db_kernel_tier(components=[comp], vulns=vulns)
+
+    matches = await _match_kernel_cpe([blob_a, blob_b], firmware_id, db)
+
+    assert len(matches) == 6
+    for m in matches:
+        assert m.tier == "kernel_cpe"
+        assert m.confidence == "medium"
+        assert m.blob_id in {blob_a.id, blob_b.id}
+        assert m.cve_id in {"CVE-2024-1111", "CVE-2024-2222", "CVE-2024-3333"}
+
+    # One CVE had cvss_score=None; ensure coercion preserved that.
+    none_score = [m for m in matches if m.cve_id == "CVE-2024-3333"]
+    assert all(m.cvss_score is None for m in none_score)
+
+
+@pytest.mark.asyncio
+async def test_kernel_cpe_matcher_no_kernel_component() -> None:
+    """Kmod blobs but no linux-kernel SbomComponent → empty result, no vuln query."""
+    firmware_id = uuid.uuid4()
+    blob = _make_blob(vendor="qualcomm", category="kernel_module")
+
+    # Only the component query should fire when components is empty.
+    comp_result = MagicMock()
+    comp_result.scalars.return_value.all.return_value = []
+    db = AsyncMock()
+    db.execute = AsyncMock(return_value=comp_result)
+
+    matches = await _match_kernel_cpe([blob], firmware_id, db)
+
+    assert matches == []
+    # Component query fires; vuln query must not.
+    assert db.execute.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_kernel_cpe_matcher_no_kmod_blobs() -> None:
+    """Linux-kernel component with CVEs but no kmod blobs → no matches,
+    no DB queries at all."""
+    firmware_id = uuid.uuid4()
+    # Only non-kmod blobs (wifi, modem, etc.)
+    blobs = [
+        _make_blob(vendor="broadcom", category="wifi"),
+        _make_blob(vendor="qualcomm", category="modem"),
+    ]
+
+    db = AsyncMock()
+    db.execute = AsyncMock()
+
+    matches = await _match_kernel_cpe(blobs, firmware_id, db)
+
+    assert matches == []
+    # Short-circuit: no DB round-trips when there are no kmod blobs.
+    db.execute.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_kernel_cpe_matcher_aggregates_across_multiple_components() -> None:
+    """Multiple linux-kernel SbomComponents (e.g., system + vendor partitions)
+    contribute all their CVEs to each kmod blob."""
+    firmware_id = uuid.uuid4()
+    blob = _make_blob(vendor="qualcomm", category="kernel_module")
+    comp_sys = _make_kernel_component(name="linux-kernel", version="6.6.102")
+    comp_vendor = _make_kernel_component(
+        name="linux_kernel", version="5.15.0", detection_source="kernel_build_id"
+    )
+    vulns = [
+        _make_kernel_vuln(cve_id="CVE-2024-AAAA", component_id=comp_sys.id),
+        _make_kernel_vuln(cve_id="CVE-2024-BBBB", component_id=comp_vendor.id),
+    ]
+    db = _mock_db_kernel_tier(components=[comp_sys, comp_vendor], vulns=vulns)
+
+    matches = await _match_kernel_cpe([blob], firmware_id, db)
+
+    cve_ids = {m.cve_id for m in matches}
+    assert cve_ids == {"CVE-2024-AAAA", "CVE-2024-BBBB"}
+    for m in matches:
+        assert m.tier == "kernel_cpe"
+        assert m.confidence == "medium"
+
+
+@pytest.mark.asyncio
+async def test_kernel_cpe_persists_and_dedups_on_rerun() -> None:
+    """Full matcher integration: first run persists 2 new kernel_cpe rows,
+    second run (with those pairs already recorded) persists none."""
+    firmware_id = uuid.uuid4()
+    blob_id = uuid.uuid4()
+    kmod_blob = _make_blob(
+        vendor="qualcomm", category="kernel_module", blob_id=blob_id
+    )
+
+    comp = _make_kernel_component()
+    vulns = [
+        _make_kernel_vuln(cve_id="CVE-2024-K1", component_id=comp.id),
+        _make_kernel_vuln(cve_id="CVE-2024-K2", component_id=comp.id),
+    ]
+
+    # First run: no existing pairs → both CVEs inserted as SbomVulnerability rows.
+    db1 = _mock_db_full_matcher(
+        blobs=[kmod_blob],
+        existing=[],
+        kernel_components=[comp],
+        kernel_vulns=vulns,
+    )
+    run1 = await match_firmware_cves(firmware_id, db1)
+    added1 = [call.args[0] for call in db1.add.call_args_list]
+    kernel_rows = [r for r in added1 if r.match_tier == "kernel_cpe"]
+    assert len(kernel_rows) == 2
+    for row in kernel_rows:
+        assert isinstance(row, SbomVulnerability)
+        assert row.blob_id == blob_id
+        assert row.firmware_id == firmware_id
+        assert row.component_id is None
+        assert row.match_confidence == "medium"
+        assert row.cve_id in {"CVE-2024-K1", "CVE-2024-K2"}
+
+    # Second run: feed back the pairs the first run produced → no inserts.
+    existing_pairs = [(m.blob_id, m.cve_id) for m in run1]
+    db2 = _mock_db_full_matcher(
+        blobs=[kmod_blob],
+        existing=existing_pairs,
+        kernel_components=[comp],
+        kernel_vulns=vulns,
+    )
+    run2 = await match_firmware_cves(firmware_id, db2)
+    # Returns the same CveMatch objects, but nothing new persisted.
+    assert len(run2) == len(run1)
+    db2.add.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_kernel_cpe_matcher_case_insensitive_component_name() -> None:
+    """Component named ``Linux-Kernel`` still matches — the SQL predicate
+    uses ``func.lower()``.  This test validates the Python side treats the
+    matcher query params as case-insensitive too (smoke-level; the real
+    case folding happens in Postgres)."""
+    firmware_id = uuid.uuid4()
+    blob = _make_blob(vendor="qualcomm", category="kernel_module")
+
+    comp = _make_kernel_component(name="Linux-Kernel")
+    vulns = [_make_kernel_vuln(cve_id="CVE-2024-CASE", component_id=comp.id)]
+    # Simulate Postgres having already applied lower() → the mock just
+    # returns the component; the tier must accept it unchanged.
+    db = _mock_db_kernel_tier(components=[comp], vulns=vulns)
+
+    matches = await _match_kernel_cpe([blob], firmware_id, db)
+    assert len(matches) == 1
+    assert matches[0].cve_id == "CVE-2024-CASE"
+    assert matches[0].tier == "kernel_cpe"

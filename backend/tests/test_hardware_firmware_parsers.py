@@ -150,6 +150,49 @@ def test_kmod_parser_extracts_modinfo(tmp_path: Path) -> None:
     assert meta.get("firmware_deps") == ["wcn6750.bin", "athwlan.bin"]
     assert "cfg80211" in (meta.get("depends") or [])
     assert "mac80211" in (meta.get("depends") or [])
+    # Phase 2: leading semver is exposed for the Tier 4 kernel_cpe matcher.
+    assert meta.get("kernel_semver") == "5.10.0"
+
+
+def test_kmod_parser_extracts_android_kernel_semver(tmp_path: Path) -> None:
+    """An Android vermagic string like ``6.6.102-android15-8-g...`` yields
+    a clean ``6.6.102`` in ``metadata.kernel_semver``."""
+    pytest.importorskip("elftools")
+    blob = build_minimal_ko(
+        [
+            ("license", "GPL v2"),
+            ("vermagic", "6.6.102-android15-8-g123456789abc SMP preempt mod_unload aarch64"),
+        ]
+    )
+    ko_path = tmp_path / "bluetooth.ko"
+    write_fixture(ko_path, blob)
+
+    parser = get_parser("ko")
+    assert parser is not None
+    result = parser.parse(str(ko_path), _read_magic(ko_path), len(blob))
+
+    meta = result.metadata
+    assert meta.get("kernel_semver") == "6.6.102"
+
+
+def test_kmod_parser_omits_kernel_semver_when_vermagic_missing(tmp_path: Path) -> None:
+    """No vermagic → no ``kernel_semver`` key (not just a None value)."""
+    pytest.importorskip("elftools")
+    blob = build_minimal_ko(
+        [
+            ("license", "GPL"),
+            ("srcversion", "1234567890ABCDEF"),
+        ]
+    )
+    ko_path = tmp_path / "nomagic.ko"
+    write_fixture(ko_path, blob)
+
+    parser = get_parser("ko")
+    assert parser is not None
+    result = parser.parse(str(ko_path), _read_magic(ko_path), len(blob))
+
+    # vermagic is None so kernel_semver should NOT be set.
+    assert "kernel_semver" not in result.metadata
 
 
 def test_kmod_parser_detects_appended_signature(tmp_path: Path) -> None:
