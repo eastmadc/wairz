@@ -225,14 +225,22 @@ async def detect_hardware_firmware(
             "signature_algorithm": sig_algo[:64] if sig_algo else None,
             "cert_subject": row.get("cert_subject"),
             "chipset_target": chipset[:64] if chipset else None,
-            # Model column is named "metadata" in DB; ORM attribute is metadata_.
-            "metadata": row.get("metadata") or {},
+            # ORM attribute is metadata_; DB column is "metadata".
+            # postgresql.insert(<MappedClass>).values() resolves attribute
+            # names, not column names — use "metadata_" or it collides with
+            # Base.metadata (MetaData object) and raises AttributeError.
+            "metadata_": row.get("metadata") or {},
         })
 
-    stmt = insert(HardwareFirmwareBlob).values(values)
-    # Unique per (firmware_id, blob_sha256) — idempotent upsert.
-    stmt = stmt.on_conflict_do_nothing(constraint="uq_hwfw_firmware_sha256")
-    await db.execute(stmt)
+    # Chunk bulk insert — asyncpg caps bind parameters at 32767 per statement.
+    # Keep comfortably under the limit (16 columns × 1000 rows = 16K params).
+    _CHUNK_ROWS = 1000
+    for i in range(0, len(values), _CHUNK_ROWS):
+        chunk = values[i:i + _CHUNK_ROWS]
+        stmt = insert(HardwareFirmwareBlob).values(chunk)
+        # Unique per (firmware_id, blob_sha256) — idempotent upsert.
+        stmt = stmt.on_conflict_do_nothing(constraint="uq_hwfw_firmware_sha256")
+        await db.execute(stmt)
     await db.flush()
 
     logger.info(
