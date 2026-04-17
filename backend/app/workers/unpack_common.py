@@ -1,11 +1,270 @@
 """Common utilities for firmware unpacking — shared by Linux and Android paths."""
 
 import asyncio
+import logging
 import os
 import re as _re
+import shutil as _shutil
+import subprocess as _subprocess
+import tarfile as _tarfile
+import zipfile as _zipfile
 from dataclasses import dataclass
 
 from elftools.elf.elffile import ELFFile
+
+logger = logging.getLogger(__name__)
+
+
+# File extensions that indicate a nested archive worth recursively expanding.
+# Matched case-insensitively against the full filename (so we can detect
+# double-suffixes like .tar.gz / .tar.lz4 without relying on os.path.splitext).
+_NESTED_ARCHIVE_SUFFIXES: tuple[str, ...] = (
+    ".tar.md5",
+    ".tar.gz",
+    ".tar.xz",
+    ".tar.bz2",
+    ".tar.lz4",
+    ".tar",
+    ".zip",
+    ".lz4",
+)
+
+
+def _recursive_extract_nested(root: str, max_depth: int = 3) -> list[str]:
+    """Walk ``root`` and expand nested archives into sibling ``_extracted/``
+    directories, recursively up to ``max_depth`` levels.
+
+    Motivation: Samsung Odin packages wrap a ``.tar.md5`` that wraps a
+    ``.tar.lz4`` that wraps the partitions.  Android OTA zips occasionally
+    contain their own nested archives.  Before this helper we processed only
+    the top-level zip and left the inner archives as opaque blobs.
+
+    Args:
+        root: Directory to walk.
+        max_depth: Maximum recursion depth (default 3 covers
+            ``.tar.md5 → tar → .tar.lz4``).
+
+    Returns:
+        Paths of new extraction directories, ordered parent-before-child.
+        Callers may append these to their walk set.
+
+    Safety:
+        - Never follows symlinks.
+        - Zip and tar extraction use member sanitisation that rejects
+          absolute paths, parent traversal (..), and links that escape the
+          destination.  Uses ``tarfile.data_filter`` (Python 3.12+) where
+          available for extra defence-in-depth.
+    """
+    new_dirs: list[str] = []
+    _recursive_extract_nested_inner(root, max_depth, new_dirs, depth=0)
+    return new_dirs
+
+
+def _recursive_extract_nested_inner(
+    current: str,
+    max_depth: int,
+    new_dirs: list[str],
+    depth: int,
+) -> None:
+    if depth >= max_depth:
+        return
+    try:
+        entries = list(os.scandir(current))
+    except OSError:
+        return
+
+    to_recurse: list[str] = []
+
+    for entry in entries:
+        # Never follow symlinks when walking or when identifying targets
+        if entry.is_symlink():
+            continue
+        if entry.is_dir(follow_symlinks=False):
+            # Recurse into subdirs AFTER processing archives at this level
+            to_recurse.append(entry.path)
+            continue
+        if not entry.is_file(follow_symlinks=False):
+            continue
+
+        lname = entry.name.lower()
+        matched_suffix: str | None = None
+        for suffix in _NESTED_ARCHIVE_SUFFIXES:
+            if lname.endswith(suffix):
+                matched_suffix = suffix
+                break
+        if matched_suffix is None:
+            continue
+
+        archive_path = entry.path
+        out_dir = archive_path + "_extracted"
+        if os.path.exists(out_dir):
+            # Already extracted on a previous run
+            continue
+
+        try:
+            extracted = _extract_single_archive(archive_path, out_dir, matched_suffix)
+        except Exception as e:
+            logger.info("Nested archive extract failed for %s: %s", archive_path, e)
+            # Clean up partial output to avoid polluting future walks
+            if os.path.isdir(out_dir):
+                _shutil.rmtree(out_dir, ignore_errors=True)
+            continue
+
+        if extracted:
+            new_dirs.append(out_dir)
+            to_recurse.append(out_dir)
+
+    for child in to_recurse:
+        _recursive_extract_nested_inner(child, max_depth, new_dirs, depth + 1)
+
+
+def _extract_single_archive(
+    archive_path: str, out_dir: str, matched_suffix: str,
+) -> bool:
+    """Extract one nested archive. Returns True on success."""
+    os.makedirs(out_dir, exist_ok=True)
+
+    # .lz4 (plain, non-tar) → decompress to a single file
+    if matched_suffix == ".lz4":
+        # Fast path: if the upstream named it foo.tar.lz4 we want the tar.
+        # For bare foo.bin.lz4, just write foo.bin.
+        base = os.path.basename(archive_path)
+        if base.lower().endswith(".tar.lz4"):
+            inner_name = base[: -len(".lz4")]
+        else:
+            inner_name = base[: -len(".lz4")] or "payload.bin"
+        inner_path = os.path.join(out_dir, inner_name)
+        _decompress_lz4(archive_path, inner_path)
+        # If the decompressed file is itself a tar, expand it in place.
+        if inner_name.lower().endswith(".tar") and _tarfile.is_tarfile(inner_path):
+            _extract_tar_safe(inner_path, out_dir)
+            try:
+                os.remove(inner_path)
+            except OSError:
+                pass
+        return True
+
+    # .tar.lz4 → decompress to tar, then extract
+    if matched_suffix == ".tar.lz4":
+        tar_path = os.path.join(out_dir, "inner.tar")
+        _decompress_lz4(archive_path, tar_path)
+        if _tarfile.is_tarfile(tar_path):
+            _extract_tar_safe(tar_path, out_dir)
+        try:
+            os.remove(tar_path)
+        except OSError:
+            pass
+        return True
+
+    # .zip
+    if matched_suffix == ".zip":
+        if not _zipfile.is_zipfile(archive_path):
+            return False
+        _extract_zip_safe(archive_path, out_dir)
+        return True
+
+    # All remaining: tar family (.tar / .tar.gz / .tar.xz / .tar.bz2 / .tar.md5)
+    # .tar.md5 is just a regular tar with an MD5 checksum appended at EOF;
+    # tarfile silently ignores the trailing junk when `ignore_zeros=True`.
+    if _tarfile.is_tarfile(archive_path):
+        _extract_tar_safe(archive_path, out_dir)
+        return True
+
+    return False
+
+
+def _decompress_lz4(src: str, dst: str) -> None:
+    """Decompress an LZ4 file to dst using the system `lz4` CLI.
+
+    We don't depend on a Python lz4 binding because it's not currently in
+    the backend's pyproject.toml.  The `lz4` CLI ships with the container
+    image (see Dockerfile).  If it's missing we raise a RuntimeError so
+    the caller logs and skips — we never silently fail.
+    """
+    if not _shutil.which("lz4"):
+        raise RuntimeError("lz4 CLI not available; cannot decompress .lz4 archive")
+
+    # lz4 -dc src > dst (stdin/stdout avoids a weird -f behaviour on some
+    # distros where an existing dst triggers a prompt).
+    with open(dst, "wb") as out:
+        proc = _subprocess.run(
+            ["lz4", "-dc", src],
+            stdout=out,
+            stderr=_subprocess.PIPE,
+            check=False,
+            timeout=600,
+        )
+    if proc.returncode != 0:
+        raise RuntimeError(
+            f"lz4 decompression failed (rc={proc.returncode}): "
+            f"{proc.stderr.decode(errors='replace')[:500]}"
+        )
+
+
+def _extract_tar_safe(tar_path: str, out_dir: str) -> None:
+    """Extract a tar archive, rejecting symlink-escape and absolute paths.
+
+    Uses tarfile.data_filter where available (Python 3.12+), else a
+    hand-rolled filter matching the _firmware_tar_filter in unpack_linux.
+    """
+    with _tarfile.open(tar_path, mode="r:*", ignore_zeros=True) as tf:
+        filter_fn = getattr(_tarfile, "data_filter", None)
+        if filter_fn is not None:
+            try:
+                tf.extractall(out_dir, filter=filter_fn)
+                return
+            except Exception:
+                pass
+        # Fallback: manual per-member sanitisation
+        real_dest = os.path.realpath(out_dir)
+        for member in tf.getmembers():
+            name = member.name.lstrip("/")
+            if name != member.name:
+                member = member.replace(name=name, deep=False)
+            dest_resolved = os.path.realpath(os.path.join(out_dir, name))
+            if not (
+                dest_resolved == real_dest
+                or dest_resolved.startswith(real_dest + os.sep)
+            ):
+                continue
+            if not (member.isreg() or member.isdir() or member.issym() or member.islnk()):
+                continue
+            if member.islnk():
+                link_target = member.linkname.lstrip("/")
+                link_resolved = os.path.realpath(os.path.join(out_dir, link_target))
+                if not (
+                    link_resolved == real_dest
+                    or link_resolved.startswith(real_dest + os.sep)
+                ):
+                    continue
+            if member.issym():
+                # Skip symlinks entirely — can escape even with relative targets
+                continue
+            try:
+                tf.extract(member, out_dir, set_attrs=False)
+            except Exception:
+                continue
+
+
+def _extract_zip_safe(zip_path: str, out_dir: str) -> None:
+    """Extract a zip archive, rejecting absolute paths and parent traversal."""
+    real_dest = os.path.realpath(out_dir)
+    with _zipfile.ZipFile(zip_path, "r") as zf:
+        for name in zf.namelist():
+            # Reject absolute paths and drive letters
+            clean = name.lstrip("/")
+            if os.path.isabs(clean):
+                continue
+            dest_resolved = os.path.realpath(os.path.join(out_dir, clean))
+            if not (
+                dest_resolved == real_dest
+                or dest_resolved.startswith(real_dest + os.sep)
+            ):
+                continue
+            try:
+                zf.extract(name, out_dir)
+            except Exception:
+                continue
 
 
 @dataclass
@@ -63,13 +322,22 @@ _EXTRACT_DIR_SUFFIXES = ("_extract",)
 
 
 def cleanup_unblob_artifacts(extraction_dir: str) -> int:
-    """Remove unblob's .unknown chunk files and empty extraction dirs.
+    """Remove only truly-junk artifacts left by unblob/binwalk.
 
-    Unblob splits firmware images into named chunks. Successfully identified
-    chunks get an ``_extract`` sibling directory with their contents.
-    ``.unknown`` chunks are segments unblob couldn't identify — typically
-    partition table headers, bootloader padding, or raw data.  These add
-    noise to the file explorer without analytical value.
+    Unblob splits firmware images into named chunks.  Successfully
+    identified chunks get an ``_extract`` sibling directory with their
+    contents.  We keep:
+
+    - ``.unknown`` chunks: unblob didn't recognise them, but hw-firmware
+      parsers (GFH / HMBN / Qualcomm MBN, etc.) commonly do.  Previously
+      we deleted these, silently dropping vendor bootloader tails.
+
+    We remove:
+
+    - Zero-byte files (e.g. ``empty.unknown``) — no parser will ever help.
+    - ``.test`` and ``.backup`` files — unblob's intermediate test scratch.
+    - Raw chunk files that already have a corresponding ``_extract`` dir
+      (the content survives in the extracted dir).
 
     Returns the number of files removed.
     """
@@ -82,14 +350,31 @@ def cleanup_unblob_artifacts(extraction_dir: str) -> int:
     for entry in entries:
         if not entry.is_file(follow_symlinks=False):
             continue
-        # Remove .unknown files (unidentified chunks)
-        if entry.name.endswith(".unknown"):
+
+        name_lower = entry.name.lower()
+
+        # Always drop zero-byte files — truly empty.
+        try:
+            if entry.stat(follow_symlinks=False).st_size == 0:
+                os.unlink(entry.path)
+                removed += 1
+                continue
+        except OSError:
+            continue
+
+        # Drop clear test/backup scratch files.
+        if name_lower.endswith(".test") or name_lower.endswith(".backup"):
             try:
                 os.unlink(entry.path)
                 removed += 1
             except OSError:
                 pass
             continue
+
+        # Keep non-empty .unknown chunks — hw-firmware parsers use them.
+        if name_lower.endswith(".unknown"):
+            continue
+
         # Remove raw chunk files that have a corresponding _extract dir
         # e.g. "53742118-282966566.squashfs_v4_le" when
         #      "53742118-282966566.squashfs_v4_le_extract/" exists

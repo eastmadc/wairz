@@ -639,6 +639,18 @@ async def _unpack_firmware_inner(
             with _tarfile.open(firmware_path) as tf:
                 tf.extractall(extraction_dir, filter=_firmware_tar_filter)
             result.unpack_log += f"Extracted tar rootfs: {os.path.basename(firmware_path)}\n"
+            # Recursively expand any nested archives (Samsung tar.md5 →
+            # inner tar.lz4 pattern is common for full rootfs tars).
+            try:
+                from app.workers.unpack_common import _recursive_extract_nested
+                nested = _recursive_extract_nested(extraction_dir, max_depth=3)
+                if nested:
+                    result.unpack_log += (
+                        f"Recursive nested extraction: expanded "
+                        f"{len(nested)} archive(s).\n"
+                    )
+            except Exception as e:
+                result.unpack_log += f"Nested extraction skipped: {e}\n"
             bomb_error = check_extraction_limits(extraction_dir, fw_size)
             if bomb_error:
                 result.error = bomb_error
