@@ -267,6 +267,139 @@ def _extract_zip_safe(zip_path: str, out_dir: str) -> None:
                 continue
 
 
+# Known vendor-encrypted container magics — first 16 bytes.
+# When an archive-named file starts with one of these, it's NOT a real
+# tar.xz/zip; it's a signed/encrypted vendor container. Wairz records the
+# fact in device_metadata so the UI can surface "partial extraction".
+_VENDOR_CONTAINER_MAGICS: dict[bytes, dict[str, str]] = {
+    # EDAN Instruments — Multi-Parameter Monitor (AM43xx Sitara) signed
+    # firmware container. Observed on RespArray/CX/iV/iX/uX/Vista300
+    # update packages. 16 bytes of magic+schema+key-id, body is
+    # AES-encrypted, paired with a 256-byte RSA-2048 `.signature` sidecar.
+    bytes.fromhex("a3dfbbbf4e947c6649859f5e45d273ed"): {
+        "format": "edan_mpm_signed",
+        "vendor": "edan",
+        "note": (
+            "EDAN MPM signed firmware container (AM43xx platform). "
+            "Payload is vendor-encrypted; decryption key must be "
+            "recovered from nxapp/nxcore via Ghidra."
+        ),
+    },
+}
+
+
+def _identify_vendor_container(path: str) -> dict[str, str] | None:
+    """Return vendor-container metadata when ``path``'s first 16 bytes match a
+    known vendor-encrypted container signature, else ``None``.
+    """
+    try:
+        with open(path, "rb") as fh:
+            head = fh.read(16)
+    except OSError:
+        return None
+    return _VENDOR_CONTAINER_MAGICS.get(head)
+
+
+def _read_magic_hex(path: str, n: int = 16) -> str:
+    try:
+        with open(path, "rb") as fh:
+            return fh.read(n).hex()
+    except OSError:
+        return ""
+
+
+def diagnose_failed_archives(scan_dirs: list[str], max_depth: int = 6) -> dict:
+    """Walk ``scan_dirs`` for archive-named files that are NOT valid archives.
+
+    An archive-named file (``.tar.xz``, ``.zip``, ``.lz4``, etc.) that fails
+    ``tarfile.is_tarfile`` / ``zipfile.is_zipfile`` is either a
+    vendor-encrypted container (matched via ``_VENDOR_CONTAINER_MAGICS``)
+    or an unrecognised format. Either way, Wairz's recursive extractor
+    silently dropped it — the diagnostic surfaces that fact.
+
+    Returns a dict suitable for merging into
+    ``Firmware.device_metadata["extraction_diagnostics"]`` or an empty dict
+    when every archive in scope extracted cleanly.
+    """
+    encrypted: list[dict] = []
+    unrecognised: list[dict] = []
+    seen_paths: set[str] = set()
+    for scan_dir in scan_dirs:
+        if not scan_dir or not os.path.isdir(scan_dir):
+            continue
+        for root, dirs, files in os.walk(scan_dir, followlinks=False):
+            try:
+                rel_depth = os.path.relpath(root, scan_dir).count(os.sep)
+            except ValueError:
+                rel_depth = 0
+            if rel_depth >= max_depth:
+                dirs[:] = []
+                continue
+            dirs[:] = [d for d in dirs if not d.startswith(".")]
+            for name in files:
+                lname = name.lower()
+                matched_suffix: str | None = None
+                for suffix in _NESTED_ARCHIVE_SUFFIXES:
+                    if lname.endswith(suffix):
+                        matched_suffix = suffix
+                        break
+                if matched_suffix is None:
+                    continue
+                full = os.path.join(root, name)
+                if full in seen_paths or os.path.islink(full):
+                    continue
+                seen_paths.add(full)
+                # Skip if the archive did extract successfully (content
+                # present in the sibling _extracted/ dir).
+                sibling = full + "_extracted"
+                if os.path.isdir(sibling):
+                    try:
+                        if any(os.scandir(sibling)):
+                            continue
+                    except OSError:
+                        pass
+                # Verify NOT a real archive before flagging.
+                try:
+                    if matched_suffix == ".zip":
+                        if _zipfile.is_zipfile(full):
+                            continue
+                    elif _tarfile.is_tarfile(full):
+                        continue
+                except (OSError, _tarfile.ReadError):
+                    pass
+                try:
+                    size = os.path.getsize(full)
+                except OSError:
+                    size = 0
+                entry: dict = {
+                    "path": os.path.relpath(full, scan_dir),
+                    "size_bytes": size,
+                    "suffix": matched_suffix,
+                    "magic_hex": _read_magic_hex(full, 16),
+                }
+                ident = _identify_vendor_container(full)
+                if ident:
+                    entry.update(ident)
+                    encrypted.append(entry)
+                else:
+                    unrecognised.append(entry)
+    total = len(encrypted) + len(unrecognised)
+    if not total:
+        return {}
+    parts: list[str] = []
+    if encrypted:
+        vendors = sorted({e.get("vendor", "?") for e in encrypted})
+        parts.append(f"{len(encrypted)} vendor-encrypted ({'/'.join(vendors)})")
+    if unrecognised:
+        parts.append(f"{len(unrecognised)} unrecognised")
+    return {
+        "partial_extraction": True,
+        "encrypted_archives": encrypted,
+        "unrecognised_archives": unrecognised,
+        "summary": f"{total} archive(s) not extracted: " + ", ".join(parts),
+    }
+
+
 @dataclass
 class UnpackResult:
     extracted_path: str | None = None
