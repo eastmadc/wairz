@@ -72,7 +72,13 @@ class ComponentNode:
 class ComponentEdge:
     source: str    # source node id
     target: str    # target node id
-    type: str      # links_library, imports_functions, sources_script, executes, starts_service, configures
+    # type: links_library, imports_functions, sources_script, executes,
+    #       starts_service, configures
+    # Phase-3 overlay adds loads_firmware edges (driver -> firmware blob) via
+    # a separate endpoint — intentionally NOT baked into the cached
+    # component_map graph; the hardware_firmware router computes them on
+    # demand from HardwareFirmwareBlob metadata.
+    type: str
     details: dict = field(default_factory=dict)
 
 

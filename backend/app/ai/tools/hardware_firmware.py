@@ -113,6 +113,73 @@ async def _handle_analyze_hardware_firmware(input: dict, context: ToolContext) -
     return "\n".join(lines)
 
 
+async def _handle_list_firmware_drivers(input: dict, context: ToolContext) -> str:
+    """Return the driver <-> firmware graph for the current firmware."""
+    from app.services.hardware_firmware.graph import build_driver_firmware_graph
+
+    pattern = input.get("module_pattern")
+    result = await build_driver_firmware_graph(context.firmware_id, context.db)
+
+    by_driver: dict[str, dict] = {}
+    for e in result.edges:
+        rec = by_driver.setdefault(
+            e.driver_path,
+            {
+                "driver_path": e.driver_path,
+                "fw_deps": [],
+                "resolved": [],
+                "unresolved": [],
+            },
+        )
+        if e.firmware_blob_path:
+            if e.firmware_name not in rec["fw_deps"]:
+                rec["fw_deps"].append(e.firmware_name)
+            if e.firmware_blob_path not in rec["resolved"]:
+                rec["resolved"].append(e.firmware_blob_path)
+        else:
+            if e.firmware_name not in rec["unresolved"]:
+                rec["unresolved"].append(e.firmware_name)
+
+    if pattern:
+        pat = pattern.lower()
+        by_driver = {k: v for k, v in by_driver.items() if pat in k.lower()}
+
+    if not by_driver:
+        return (
+            "No driver-firmware relationships detected. Either hardware "
+            "firmware detection hasn't run, no kmod/DTB blobs were parsed, "
+            "or no firmware_deps entries were found in .modinfo sections."
+        )
+
+    lines = [
+        "# Driver -> Firmware Graph",
+        "",
+        f"- **Drivers:** {len(by_driver)}",
+        f"- **Kmod drivers:** {result.kmod_drivers}",
+        f"- **DTB sources:** {result.dtb_sources}",
+        f"- **Unresolved firmware refs:** {result.unresolved_count}",
+        "",
+    ]
+    for driver, rec in sorted(by_driver.items()):
+        lines.append(f"## `{driver}`")
+        if rec["resolved"]:
+            lines.append("")
+            lines.append("**Resolved:**")
+            for r in rec["resolved"][:20]:
+                lines.append(f"- `{r}`")
+            if len(rec["resolved"]) > 20:
+                lines.append(f"- _(+{len(rec['resolved']) - 20} more)_")
+        if rec["unresolved"]:
+            lines.append("")
+            lines.append("**Unresolved (missing in image):**")
+            for r in rec["unresolved"][:20]:
+                lines.append(f"- {r}")
+            if len(rec["unresolved"]) > 20:
+                lines.append(f"- _(+{len(rec['unresolved']) - 20} more)_")
+        lines.append("")
+    return "\n".join(lines)
+
+
 def register_hardware_firmware_tools(registry: ToolRegistry) -> None:
     """Register hardware firmware MCP tools with the given registry."""
     registry.register(
@@ -166,4 +233,29 @@ def register_hardware_firmware_tools(registry: ToolRegistry) -> None:
             "required": ["blob_path"],
         },
         handler=_handle_analyze_hardware_firmware,
+    )
+
+    registry.register(
+        name="list_firmware_drivers",
+        description=(
+            "Return the driver-firmware graph: kernel modules and device-tree "
+            "sources with the firmware blobs they request via request_firmware(). "
+            "Driver metadata comes from the .modinfo section (firmware= entries), "
+            "DTB firmware-name properties, and vmlinux string scans. Unresolved "
+            "references indicate missing firmware or incomplete extraction "
+            "(also surface as 'Missing firmware' findings)."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "module_pattern": {
+                    "type": "string",
+                    "description": (
+                        "Optional substring filter on the driver path "
+                        "(case-insensitive)."
+                    ),
+                },
+            },
+        },
+        handler=_handle_list_firmware_drivers,
     )
