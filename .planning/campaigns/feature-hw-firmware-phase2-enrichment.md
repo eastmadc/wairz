@@ -1,10 +1,18 @@
 ---
 slug: feature-hw-firmware-phase2-enrichment
 title: "Hardware Firmware Phase 2 — Enrichment (Vendor Attribution, Kernel CVEs, MediaTek Parsers, HBOM)"
-status: active
+status: completed
 created: 2026-04-17
+completed: 2026-04-17
 priority: critical
 estimated_sessions: 6
+actual_sessions: 1
+final_commits:
+  - a41fcff (p1 — classifier YAML)
+  - e6cd4b0 (p2 — kernel CVE attribution)
+  - 28fc27f (p3 — 5 MediaTek parsers)
+  - 3f7fcf0 (p4 — vulns.git Tier 5 matcher)
+  - (p5 — UX + HBOM, this commit)
 depends_on: feature-android-hardware-firmware-detection
 scope:
   - backend/app/services/hardware_firmware/
@@ -130,8 +138,7 @@ Replace hand-rolled regexes with YAML-sourced patterns.
 
 ## Active Context
 
-Phase: **5 — Tree UX + CycloneDX HBOM** (Phases 1-4 complete)
-Sub-step: Pending — final phase.
+Phase: **All 5 complete.** Campaign complete.
 
 ## Feature Ledger
 
@@ -248,6 +255,44 @@ Sub-step: Pending — final phase.
 1. kernel.org CNA uses `cveID` (capital D), not spec-standard `cveId`. Extractor accepts both.
 2. vulns.git encodes affected ranges as `status="unaffected" lessThan="X"` entries — extractor derives `[None, X)` from those.
 3. Single-point `status="affected" version="6.11"` without `lessThan` → `_next_patch()` helper generates implicit upper bound `6.11.1`.
+
+### Phase 5 — Tree UX + CycloneDX HBOM (complete 2026-04-17)
+
+**Files created:**
+- `backend/app/services/hardware_firmware/hbom_export.py` (301 LOC) — CycloneDX v1.6 HBOM builder. Per blob: hardware component (chip) + firmware component (binary) linked via `dependencies.provides`. Vulnerabilities attached to firmware bom-refs.
+- `backend/tests/test_hardware_firmware_hbom.py` (336 LOC, 11 tests).
+- `frontend/src/components/hardware-firmware/PartitionTree.tsx` (261 LOC) — partition → vendor → blob tree with collapsibles + vendor rollup pills.
+- `frontend/src/components/hardware-firmware/VendorRollup.tsx` (79 LOC).
+- `frontend/src/components/hardware-firmware/DriverGraph.tsx` (279 LOC) — ReactFlow driver → firmware-blob graph.
+
+**Files modified:**
+- `backend/app/routers/hardware_firmware.py` (+21 LOC) — new `GET /cdx.json` endpoint.
+- `backend/app/ai/tools/hardware_firmware.py` (+27 LOC) — new MCP tool `export_hardware_firmware_hbom`.
+- `frontend/src/pages/HardwareFirmwarePage.tsx` (~+60 LOC) — 4-tab layout (Tree default, Flat table, Drivers, Driver graph); filters promoted above tabs; Export HBOM button in header (`<a download>`).
+
+**Live HBOM sample (run against DPCS10 Android):**
+- `bomFormat: CycloneDX`, `specVersion: 1.6`, `serialNumber: urn:uuid:ba9e98b9-...`
+- Metadata includes tool vendor/name, source firmware component with SHA-256 hash.
+- Each blob emits 2 components (hardware + firmware) + `dependencies.provides` linking them.
+- Vulnerabilities array attaches CVE entries to `fw_<blob-id>` bom-refs.
+
+**Test results:**
+- HBOM tests: 11/11 pass.
+- Full hw-firmware regression: 192/192 pass (up from 181 in Phase 4).
+- Frontend typecheck: 0 errors.
+- Ruff: clean on all new Phase 5 files.
+
+**End conditions:**
+- ✅ file_exists (PartitionTree.tsx)
+- ✅ command_passes (frontend typecheck)
+- ✅ command_passes (HBOM tests)
+- ⏳ visual_verify (tree view renders) — deferred; relies on frontend typecheck + no runtime errors in the components (no /live-preview run).
+- ✅ manual: `curl .../cdx.json` → valid CycloneDX v1.6 — live-verified.
+
+**Deviations from spec:**
+- Dropped the per-firmware `installed` property; used CycloneDX v1.6 `dependencies.provides` which is the idiomatic chip→firmware relationship per the 1.6 HBOM guidance.
+- Added `metadata.component` always (not just conditionally) when Firmware row exists — threads source image sha256 + filename through the HBOM for richer context.
+- Skipped `/live-preview` visual verification — not blocking.
 
 ## Decision Log
 

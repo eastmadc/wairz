@@ -1,0 +1,261 @@
+import { useMemo, useState } from 'react'
+import { ChevronDown, ChevronRight, Cpu } from 'lucide-react'
+import { Badge } from '@/components/ui/badge'
+import type { HardwareFirmwareBlob } from '@/api/hardwareFirmware'
+import VendorRollup from './VendorRollup'
+import { displayPath } from './BlobTable'
+
+interface PartitionTreeProps {
+  blobs: HardwareFirmwareBlob[]
+  selectedId: string | null
+  onSelect: (id: string) => void
+}
+
+// Exhaustive signed-badge style map (CLAUDE.md rule 9).  The `?? fallback`
+// at the call site covers any future signed status not in this map.
+const SIGNED_STYLE: Record<string, string> = {
+  signed: 'border-green-500/50 text-green-600 dark:text-green-400',
+  unsigned: 'border-red-500/50 text-red-600 dark:text-red-400',
+  unknown: 'border-gray-500/50 text-gray-500',
+  weakly_signed: 'border-orange-500/50 text-orange-600 dark:text-orange-400',
+}
+
+const UNKNOWN_PARTITION = '(unknown partition)'
+const UNKNOWN_VENDOR = 'unknown'
+
+// Derive the partition name for a blob.  Prefers `blob.partition`; falls
+// back to the top-level dir of the extracted path (vendor, system, odm,
+// system_ext, product, ...).
+function partitionOf(blob: HardwareFirmwareBlob): string {
+  if (blob.partition) return blob.partition
+  const rel = displayPath(blob.blob_path)
+  const top = rel.split('/').filter(Boolean)[0]
+  return top ?? UNKNOWN_PARTITION
+}
+
+function vendorOf(blob: HardwareFirmwareBlob): string {
+  return blob.vendor ?? UNKNOWN_VENDOR
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+}
+
+interface Grouped {
+  partitions: {
+    key: string
+    blobs: HardwareFirmwareBlob[]
+    vendors: { key: string; blobs: HardwareFirmwareBlob[] }[]
+  }[]
+}
+
+function groupBlobs(blobs: HardwareFirmwareBlob[]): Grouped {
+  const byPartition = new Map<string, HardwareFirmwareBlob[]>()
+  for (const b of blobs) {
+    const p = partitionOf(b)
+    const list = byPartition.get(p)
+    if (list) list.push(b)
+    else byPartition.set(p, [b])
+  }
+
+  const partitions = [...byPartition.entries()]
+    .sort((a, b) => b[1].length - a[1].length)
+    .map(([key, items]) => {
+      const byVendor = new Map<string, HardwareFirmwareBlob[]>()
+      for (const b of items) {
+        const v = vendorOf(b)
+        const list = byVendor.get(v)
+        if (list) list.push(b)
+        else byVendor.set(v, [b])
+      }
+      const vendors = [...byVendor.entries()]
+        .sort((a, b) => b[1].length - a[1].length)
+        .map(([vKey, vItems]) => ({
+          key: vKey,
+          blobs: vItems.sort((a, b) =>
+            displayPath(a.blob_path).localeCompare(displayPath(b.blob_path)),
+          ),
+        }))
+      return { key, blobs: items, vendors }
+    })
+
+  return { partitions }
+}
+
+/**
+ * Hierarchical tree view of hardware firmware blobs: partition → vendor
+ * → blob.  Reuses `onSelect`/`selectedId` so `BlobDetail` continues to
+ * work unchanged.
+ *
+ * Keyboard accessible: partition / vendor / blob rows are <button>
+ * elements, so Enter and Space toggle or select them natively.
+ */
+export default function PartitionTree({
+  blobs,
+  selectedId,
+  onSelect,
+}: PartitionTreeProps) {
+  const grouped = useMemo(() => groupBlobs(blobs), [blobs])
+
+  // Default: expand the largest partition, collapse the rest.
+  const defaultOpenPartitions = useMemo(() => {
+    const s = new Set<string>()
+    if (grouped.partitions.length > 0) {
+      s.add(grouped.partitions[0].key)
+    }
+    return s
+  }, [grouped.partitions])
+
+  const [openPartitions, setOpenPartitions] = useState<Set<string>>(
+    defaultOpenPartitions,
+  )
+  const [openVendors, setOpenVendors] = useState<Set<string>>(new Set())
+
+  const togglePartition = (key: string) => {
+    setOpenPartitions((prev) => {
+      const next = new Set(prev)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
+  }
+
+  const toggleVendor = (key: string) => {
+    setOpenVendors((prev) => {
+      const next = new Set(prev)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
+  }
+
+  if (blobs.length === 0) {
+    return (
+      <div className="py-6 text-center text-xs text-muted-foreground">
+        No hardware firmware blobs match the current filters.
+      </div>
+    )
+  }
+
+  return (
+    <div className="space-y-2">
+      {grouped.partitions.map((partition) => {
+        const isOpen = openPartitions.has(partition.key)
+        return (
+          <div
+            key={partition.key}
+            className="overflow-hidden rounded-md border border-border"
+          >
+            <button
+              type="button"
+              onClick={() => togglePartition(partition.key)}
+              aria-expanded={isOpen}
+              className="flex w-full items-center gap-2 bg-muted/30 px-3 py-2 text-left text-xs transition-colors hover:bg-muted/50"
+            >
+              {isOpen ? (
+                <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
+              ) : (
+                <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />
+              )}
+              <Cpu className="h-3.5 w-3.5 text-muted-foreground" />
+              <span className="font-mono font-medium">{partition.key}</span>
+              <Badge variant="outline" className="text-[10px]">
+                {partition.blobs.length} blob
+                {partition.blobs.length === 1 ? '' : 's'}
+              </Badge>
+              <div className="ml-auto">
+                <VendorRollup blobs={partition.blobs} max={6} />
+              </div>
+            </button>
+
+            {isOpen && (
+              <div className="border-t border-border bg-background">
+                {partition.vendors.map((vendor) => {
+                  const vendorKey = `${partition.key}::${vendor.key}`
+                  const vendorOpen = openVendors.has(vendorKey)
+                  return (
+                    <div
+                      key={vendorKey}
+                      className="border-b border-border/50 last:border-b-0"
+                    >
+                      <button
+                        type="button"
+                        onClick={() => toggleVendor(vendorKey)}
+                        aria-expanded={vendorOpen}
+                        className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs transition-colors hover:bg-accent/30"
+                      >
+                        {vendorOpen ? (
+                          <ChevronDown className="h-3 w-3 text-muted-foreground" />
+                        ) : (
+                          <ChevronRight className="h-3 w-3 text-muted-foreground" />
+                        )}
+                        <span className="font-medium">{vendor.key}</span>
+                        <Badge
+                          variant="outline"
+                          className={`text-[10px] ${
+                            vendor.key === UNKNOWN_VENDOR
+                              ? 'border-gray-500/40 text-muted-foreground'
+                              : ''
+                          }`}
+                        >
+                          {vendor.blobs.length}
+                        </Badge>
+                      </button>
+
+                      {vendorOpen && (
+                        <ul className="divide-y divide-border/50">
+                          {vendor.blobs.map((b) => {
+                            const isSelected = selectedId === b.id
+                            const signedStyle =
+                              SIGNED_STYLE[b.signed] ??
+                              'border-border text-muted-foreground'
+                            return (
+                              <li key={b.id}>
+                                <button
+                                  type="button"
+                                  onClick={() => onSelect(b.id)}
+                                  aria-pressed={isSelected}
+                                  className={`flex w-full items-center gap-2 px-6 py-1 text-left text-[11px] transition-colors ${
+                                    isSelected
+                                      ? 'bg-accent/60'
+                                      : 'hover:bg-accent/30'
+                                  }`}
+                                  title={b.blob_path}
+                                >
+                                  <span className="flex-1 truncate font-mono">
+                                    {displayPath(b.blob_path)}
+                                  </span>
+                                  <span className="font-mono text-[10px] text-muted-foreground">
+                                    {b.category}
+                                  </span>
+                                  <span className="font-mono text-[10px] text-muted-foreground">
+                                    {b.format}
+                                  </span>
+                                  <span className="w-16 text-right font-mono tabular-nums text-[10px] text-muted-foreground">
+                                    {formatBytes(b.file_size)}
+                                  </span>
+                                  <Badge
+                                    variant="outline"
+                                    className={`w-24 justify-center text-[10px] ${signedStyle}`}
+                                  >
+                                    {b.signed}
+                                  </Badge>
+                                </button>
+                              </li>
+                            )
+                          })}
+                        </ul>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+          </div>
+        )
+      })}
+    </div>
+  )
+}

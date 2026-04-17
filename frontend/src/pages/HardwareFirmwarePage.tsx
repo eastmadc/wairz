@@ -1,6 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useParams } from 'react-router-dom'
-import { AlertTriangle, Cpu, Loader2, RefreshCw, ShieldAlert } from 'lucide-react'
+import {
+  AlertTriangle,
+  Cpu,
+  Download,
+  Loader2,
+  RefreshCw,
+  ShieldAlert,
+} from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import {
@@ -22,6 +29,8 @@ import BlobFilters from '@/components/hardware-firmware/BlobFilters'
 import BlobTable from '@/components/hardware-firmware/BlobTable'
 import BlobDetail from '@/components/hardware-firmware/BlobDetail'
 import DriversTable from '@/components/hardware-firmware/DriversTable'
+import PartitionTree from '@/components/hardware-firmware/PartitionTree'
+import DriverGraph from '@/components/hardware-firmware/DriverGraph'
 import type { FirmwareDetail } from '@/types'
 
 export default function HardwareFirmwarePage() {
@@ -202,6 +211,17 @@ export default function HardwareFirmwarePage() {
     return [...set].sort()
   }, [blobs])
 
+  // Build the HBOM download URL.  The endpoint streams JSON directly, so
+  // an anchor tag with `download` lets the browser save it without a
+  // blob-URL round-trip through axios.
+  const hbomUrl = useMemo(() => {
+    if (!projectId) return '#'
+    const base = `/api/v1/projects/${projectId}/hardware-firmware/cdx.json`
+    return selectedFirmwareId
+      ? `${base}?firmware_id=${encodeURIComponent(selectedFirmwareId)}`
+      : base
+  }, [projectId, selectedFirmwareId])
+
   if (!projectId) {
     return null
   }
@@ -248,6 +268,21 @@ export default function HardwareFirmwarePage() {
           <Button
             variant="outline"
             size="sm"
+            disabled={!hasData}
+            asChild
+            title="Download CycloneDX v1.6 HBOM"
+          >
+            <a
+              href={hbomUrl}
+              download={`hbom-${selectedFirmwareId ?? projectId}.cdx.json`}
+            >
+              <Download className="mr-1.5 h-3.5 w-3.5" />
+              Export HBOM
+            </a>
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
             onClick={loadAll}
             disabled={loading}
             title="Reload blobs and drivers"
@@ -288,67 +323,85 @@ export default function HardwareFirmwarePage() {
             cveCount={cveCount}
           />
 
-          <Tabs defaultValue="blobs" className="w-full">
+          <div className="space-y-3">
+            <BlobFilters
+              categories={categories}
+              vendors={vendors}
+              category={category}
+              vendor={vendor}
+              signedOnly={signedOnly}
+              onCategory={setCategory}
+              onVendor={setVendor}
+              onSignedOnly={setSignedOnly}
+            />
+            <div className="flex flex-wrap items-center gap-4 text-xs text-muted-foreground">
+              <label className="inline-flex cursor-pointer items-center gap-1.5">
+                <input
+                  type="checkbox"
+                  checked={hideKernelModules}
+                  onChange={(e) => setHideKernelModules(e.target.checked)}
+                  className="h-3.5 w-3.5"
+                />
+                <span>
+                  Hide kernel modules
+                  {kernelModuleCount > 0 && (
+                    <span className="ml-1 opacity-70">({kernelModuleCount})</span>
+                  )}
+                </span>
+              </label>
+              <label className="inline-flex cursor-pointer items-center gap-1.5">
+                <input
+                  type="checkbox"
+                  checked={dedupeBySha}
+                  onChange={(e) => setDedupeBySha(e.target.checked)}
+                  className="h-3.5 w-3.5"
+                />
+                <span>
+                  Dedupe by SHA-256
+                  {hiddenDupCount > 0 && (
+                    <span className="ml-1 opacity-70">({hiddenDupCount} hidden)</span>
+                  )}
+                </span>
+              </label>
+            </div>
+          </div>
+
+          <Tabs defaultValue="tree" className="w-full">
             <TabsList>
-              <TabsTrigger value="blobs">Blobs ({totalBlobs})</TabsTrigger>
+              <TabsTrigger value="tree">Tree ({totalBlobs})</TabsTrigger>
+              <TabsTrigger value="blobs">Flat table ({totalBlobs})</TabsTrigger>
               <TabsTrigger value="drivers">Drivers ({drivers.length})</TabsTrigger>
+              <TabsTrigger value="graph">Driver graph</TabsTrigger>
             </TabsList>
+
+            <TabsContent value="tree" className="pt-3">
+              <div className="grid grid-cols-1 gap-4 lg:grid-cols-[1fr_minmax(360px,440px)]">
+                <PartitionTree
+                  blobs={visibleBlobs}
+                  selectedId={selectedBlobId}
+                  onSelect={setSelectedBlobId}
+                />
+                <BlobDetail blob={blobDetail} cves={blobCves} loading={cveLoading} />
+              </div>
+            </TabsContent>
 
             <TabsContent value="blobs" className="pt-3">
               <div className="grid grid-cols-1 gap-4 lg:grid-cols-[1fr_minmax(360px,440px)]">
-                <div className="space-y-3">
-                  <BlobFilters
-                    categories={categories}
-                    vendors={vendors}
-                    category={category}
-                    vendor={vendor}
-                    signedOnly={signedOnly}
-                    onCategory={setCategory}
-                    onVendor={setVendor}
-                    onSignedOnly={setSignedOnly}
-                  />
-                  <div className="flex flex-wrap items-center gap-4 text-xs text-muted-foreground">
-                    <label className="inline-flex cursor-pointer items-center gap-1.5">
-                      <input
-                        type="checkbox"
-                        checked={hideKernelModules}
-                        onChange={(e) => setHideKernelModules(e.target.checked)}
-                        className="h-3.5 w-3.5"
-                      />
-                      <span>
-                        Hide kernel modules
-                        {kernelModuleCount > 0 && (
-                          <span className="ml-1 opacity-70">({kernelModuleCount})</span>
-                        )}
-                      </span>
-                    </label>
-                    <label className="inline-flex cursor-pointer items-center gap-1.5">
-                      <input
-                        type="checkbox"
-                        checked={dedupeBySha}
-                        onChange={(e) => setDedupeBySha(e.target.checked)}
-                        className="h-3.5 w-3.5"
-                      />
-                      <span>
-                        Dedupe by SHA-256
-                        {hiddenDupCount > 0 && (
-                          <span className="ml-1 opacity-70">({hiddenDupCount} hidden)</span>
-                        )}
-                      </span>
-                    </label>
-                  </div>
-                  <BlobTable
-                    blobs={visibleBlobs}
-                    selectedId={selectedBlobId}
-                    onSelect={setSelectedBlobId}
-                  />
-                </div>
+                <BlobTable
+                  blobs={visibleBlobs}
+                  selectedId={selectedBlobId}
+                  onSelect={setSelectedBlobId}
+                />
                 <BlobDetail blob={blobDetail} cves={blobCves} loading={cveLoading} />
               </div>
             </TabsContent>
 
             <TabsContent value="drivers" className="pt-3">
               <DriversTable drivers={drivers} />
+            </TabsContent>
+
+            <TabsContent value="graph" className="pt-3">
+              <DriverGraph projectId={projectId} firmwareId={selectedFirmwareId} />
             </TabsContent>
           </Tabs>
         </>
