@@ -14,6 +14,7 @@ import pytest
 from app.services.hardware_firmware.parsers import PARSER_REGISTRY, ParsedBlob, get_parser
 from app.services.hardware_firmware.parsers.base import Parser  # noqa: F401 - Protocol import
 from tests.fixtures.hardware_firmware._build_fixtures import (
+    build_awinic_acf,
     build_broadcom_firmware,
     build_high_entropy_blob,
     build_mbn_v3,
@@ -21,6 +22,10 @@ from tests.fixtures.hardware_firmware._build_fixtures import (
     build_minimal_dtbo,
     build_minimal_ko,
     build_minimal_optee_ta,
+    build_mtk_lk_partition,
+    build_mtk_md1img,
+    build_mtk_preloader,
+    build_mtk_wifi_hdr,
     build_raw_bin_with_version,
     build_self_signed_cert_der,
     write_fixture,
@@ -42,6 +47,12 @@ _EXPECTED_FORMATS = {
     "optee_ta",
     "fw_bcm",
     "raw_bin",
+    # Phase 3 — MediaTek + Awinic
+    "mtk_lk",
+    "mtk_preloader",
+    "mtk_modem",
+    "mtk_wifi_hdr",
+    "awinic_acf",
 }
 
 
@@ -359,6 +370,187 @@ def test_raw_bin_parser_flags_high_entropy(tmp_path: Path) -> None:
     # Pseudo-random SHA-256 stream should trigger the high-entropy note.
     if result.metadata["entropy"] > 7.5:
         assert "high entropy" in (result.metadata.get("note") or "").lower()
+
+
+# -----------------------------------------------------------------------------
+# MediaTek LK parser (Phase 3).
+# -----------------------------------------------------------------------------
+
+
+def test_mtk_lk_parser_extracts_partition_name_and_size(tmp_path: Path) -> None:
+    blob = build_mtk_lk_partition(partition_name="lk", partition_size=0x100000)
+    lk_path = tmp_path / "lk.img"
+    write_fixture(lk_path, blob)
+
+    parser = get_parser("mtk_lk")
+    assert parser is not None
+    result = parser.parse(str(lk_path), _read_magic(lk_path), len(blob))
+
+    assert isinstance(result, ParsedBlob)
+    meta = result.metadata
+    assert meta.get("partition_name") == "lk"
+    assert meta.get("partition_size") == 0x100000
+    assert meta.get("magic") == "0x58881688"
+
+
+def test_mtk_lk_parser_reports_bad_magic(tmp_path: Path) -> None:
+    # Valid file size but wrong magic bytes.
+    blob = b"\x00" * 512
+    lk_path = tmp_path / "not_lk.img"
+    write_fixture(lk_path, blob)
+
+    parser = get_parser("mtk_lk")
+    assert parser is not None
+    result = parser.parse(str(lk_path), _read_magic(lk_path), len(blob))
+    assert result.metadata.get("error") is not None
+
+
+# -----------------------------------------------------------------------------
+# MediaTek preloader parser (Phase 3).
+# -----------------------------------------------------------------------------
+
+
+def test_mtk_preloader_parser_extracts_version_and_sig(tmp_path: Path) -> None:
+    blob = build_mtk_preloader(file_ver="V1.2", sig_type=1, file_len=0x8000, file_id="pm")
+    pre_path = tmp_path / "preloader.bin"
+    write_fixture(pre_path, blob)
+
+    parser = get_parser("mtk_preloader")
+    assert parser is not None
+    result = parser.parse(str(pre_path), _read_magic(pre_path), len(blob))
+
+    assert result.version == "V1.2"
+    assert result.signed == "signed"
+    meta = result.metadata
+    assert meta.get("file_type") == "pm"
+    assert meta.get("file_len") == 0x8000
+    assert meta.get("sig_type") == 1
+
+
+def test_mtk_preloader_parser_unsigned_when_no_signature(tmp_path: Path) -> None:
+    blob = build_mtk_preloader(file_ver="V2.0", sig_type=0, file_len=0x2000)
+    pre_path = tmp_path / "preloader_unsigned.bin"
+    write_fixture(pre_path, blob)
+
+    parser = get_parser("mtk_preloader")
+    assert parser is not None
+    result = parser.parse(str(pre_path), _read_magic(pre_path), len(blob))
+
+    assert result.version == "V2.0"
+    assert result.signed == "unsigned"
+
+
+# -----------------------------------------------------------------------------
+# MediaTek modem (md1img) parser (Phase 3).
+# -----------------------------------------------------------------------------
+
+
+def test_mtk_modem_parser_extracts_sections(tmp_path: Path) -> None:
+    blob = build_mtk_md1img(
+        sections=[("md1rom", 0x400, 0x800), ("cert_md", 0xC00, 0x200)],
+        chipset="MT6771",
+        version="v1.2.3",
+    )
+    mod_path = tmp_path / "md1img.img"
+    write_fixture(mod_path, blob)
+
+    parser = get_parser("mtk_modem")
+    assert parser is not None
+    result = parser.parse(str(mod_path), _read_magic(mod_path), len(blob))
+
+    assert isinstance(result, ParsedBlob)
+    meta = result.metadata
+    section_names = meta.get("section_names") or []
+    assert "md1rom" in section_names
+    assert "cert_md" in section_names
+    # cert_md presence → signed
+    assert result.signed == "signed"
+    # Chipset pulled from banner.
+    assert result.chipset_target == "MT6771"
+    # Version scraped from "md1rom_version:v1.2.3" banner.
+    assert result.version is not None and "1.2.3" in result.version
+
+
+def test_mtk_modem_parser_missing_magic_is_graceful(tmp_path: Path) -> None:
+    blob = b"\x00" * 1024
+    mod_path = tmp_path / "not_md1img.img"
+    write_fixture(mod_path, blob)
+
+    parser = get_parser("mtk_modem")
+    assert parser is not None
+    result = parser.parse(str(mod_path), _read_magic(mod_path), len(blob))
+    assert "MD1IMG magic not found" in (result.metadata.get("note") or "")
+
+
+# -----------------------------------------------------------------------------
+# MediaTek Wi-Fi header parser (Phase 3).
+# -----------------------------------------------------------------------------
+
+
+def test_mtk_wifi_parser_extracts_timestamp_and_chipset(tmp_path: Path) -> None:
+    blob = build_mtk_wifi_hdr(timestamp="20230401120000", at_offset=0x20)
+    wifi_path = tmp_path / "mt7921_patch_mcu_hdr.bin"
+    write_fixture(wifi_path, blob)
+
+    parser = get_parser("mtk_wifi_hdr")
+    assert parser is not None
+    result = parser.parse(str(wifi_path), _read_magic(wifi_path), len(blob))
+
+    assert result.version == "20230401120000"
+    meta = result.metadata
+    assert meta.get("build_timestamp") == "20230401120000"
+    assert meta.get("timestamp_origin") == "header"
+    assert result.chipset_target == "MT7921"
+    assert meta.get("chipset_match_origin") == "filename"
+    assert meta.get("variant") == "mt76_hdr"
+
+
+def test_mtk_wifi_parser_connsys_pairing(tmp_path: Path) -> None:
+    """WIFI_RAM_CODE_MT6759 gets the connsys-pairing enrichment."""
+    blob = build_mtk_wifi_hdr(timestamp="20210115093000", at_offset=0x10)
+    wifi_path = tmp_path / "WIFI_RAM_CODE_MT6759.bin"
+    write_fixture(wifi_path, blob)
+
+    parser = get_parser("mtk_wifi_hdr")
+    assert parser is not None
+    result = parser.parse(str(wifi_path), _read_magic(wifi_path), len(blob))
+
+    assert result.chipset_target == "MT6759"
+    meta = result.metadata
+    assert "connectivity" in (meta.get("chipset_role") or "").lower()
+
+
+# -----------------------------------------------------------------------------
+# Awinic ACF parser (Phase 3).
+# -----------------------------------------------------------------------------
+
+
+def test_awinic_acf_parser_extracts_chip_id_and_version(tmp_path: Path) -> None:
+    blob = build_awinic_acf(acf_version=2, chip_id="aw88266", profile_count=4)
+    acf_path = tmp_path / "aw88266_acf.bin"
+    write_fixture(acf_path, blob)
+
+    parser = get_parser("awinic_acf")
+    assert parser is not None
+    result = parser.parse(str(acf_path), _read_magic(acf_path), len(blob))
+
+    assert result.chipset_target == "aw88266"
+    assert result.version == "2"
+    meta = result.metadata
+    assert meta.get("magic") == "AWINIC"
+    assert meta.get("acf_version") == 2
+    assert meta.get("profile_count") == 4
+
+
+def test_awinic_acf_parser_magic_mismatch_is_graceful(tmp_path: Path) -> None:
+    blob = b"\x00" * 128
+    acf_path = tmp_path / "notacf.bin"
+    write_fixture(acf_path, blob)
+
+    parser = get_parser("awinic_acf")
+    assert parser is not None
+    result = parser.parse(str(acf_path), _read_magic(acf_path), len(blob))
+    assert "magic_mismatch" in result.metadata
 
 
 # -----------------------------------------------------------------------------

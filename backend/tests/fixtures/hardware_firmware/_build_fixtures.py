@@ -400,6 +400,185 @@ def build_high_entropy_blob(size: int = 2048) -> bytes:
 
 
 # -----------------------------------------------------------------------------
+# MediaTek LK partition record (Phase 3).
+# -----------------------------------------------------------------------------
+
+
+def build_mtk_lk_partition(
+    *,
+    partition_name: str = "lk",
+    partition_size: int = 0x100000,
+    magic_version: int = 0xFFFFFFFF,
+    file_info_offset: int = 0x200,
+    payload: bytes | None = None,
+) -> bytes:
+    """Build a 1024-byte buffer starting with a MediaTek LK partition record.
+
+    Layout: 4-byte magic + 4 u32 fields, then a 32-byte name at offset 32.
+    """
+    magic = 0x58881688
+    header = bytearray(512)
+    struct.pack_into(
+        "<IIII",
+        header,
+        0,
+        magic,
+        file_info_offset,
+        partition_size,
+        magic_version,
+    )
+    name_bytes = partition_name.encode("ascii")[:31]
+    header[32 : 32 + len(name_bytes)] = name_bytes
+    # zero pad rest of name
+    payload_bytes = payload if payload is not None else b"\x00" * 512
+    return bytes(header) + payload_bytes
+
+
+# -----------------------------------------------------------------------------
+# MediaTek preloader (Phase 3).
+# -----------------------------------------------------------------------------
+
+
+def build_mtk_preloader(
+    *,
+    file_ver: str = "V1.0",
+    sig_type: int = 1,
+    file_len: int = 0x10000,
+    load_addr: int = 0x201000,
+    file_id: str = "pm",
+    total_size: int = 512,
+) -> bytes:
+    """Build a fake MediaTek preloader with GFH_FILE_INFO at offset 8."""
+    out = bytearray(total_size)
+    out[0:4] = b"MMM\x01"
+    gfh_off = 8
+    # GFH_FILE_INFO fields (see parser for layout).
+    gfh_magic = b"MMM"
+    gfh_version = 1
+    gfh_size = 50
+    gfh_type = 0x0000
+    id_bytes = file_id.encode("ascii")[:4].ljust(4, b"\x00")
+    flash_dev = 0
+    sig_len = 256 if sig_type else 0
+    max_size = file_len
+    content_offset = 0
+    jump_offset = 0
+    attr = 0
+    ver_bytes = file_ver.encode("ascii")[:8].ljust(8, b"\x00")
+    struct.pack_into(
+        "<3sBHH4sBBIIIIIII8s",
+        out,
+        gfh_off,
+        gfh_magic,
+        gfh_version,
+        gfh_size,
+        gfh_type,
+        id_bytes,
+        flash_dev,
+        sig_type,
+        load_addr,
+        file_len,
+        max_size,
+        content_offset,
+        sig_len,
+        jump_offset,
+        attr,
+        ver_bytes,
+    )
+    return bytes(out)
+
+
+# -----------------------------------------------------------------------------
+# MediaTek MD1IMG (modem image) (Phase 3).
+# -----------------------------------------------------------------------------
+
+
+def build_mtk_md1img(
+    *,
+    sections: list[tuple[str, int, int]] | None = None,
+    magic_offset: int = 0x48,
+    total_size: int = 8 * 1024,
+    chipset: str = "MT6771",
+    version: str = "v1.2.3",
+) -> bytes:
+    """Build a fake MD1IMG modem image with a section table.
+
+    ``sections`` is a list of ``(name, offset, size)`` tuples.  Default set
+    is ``[("md1rom", 0x400, 0x800), ("cert_md", 0xc00, 0x200)]``.
+    """
+    if sections is None:
+        sections = [("md1rom", 0x400, 0x800), ("cert_md", 0xC00, 0x200)]
+
+    buf = bytearray(total_size)
+    # Place the MD1IMG magic
+    buf[magic_offset : magic_offset + 6] = b"MD1IMG"
+    # Section table directly after the magic, 20-byte stride.
+    table_off = magic_offset + len(b"MD1IMG")
+    for i, (name, off, sz) in enumerate(sections):
+        record_off = table_off + i * 20
+        if record_off + 20 > len(buf):
+            break
+        name_bytes = name.encode("ascii")[:7].ljust(8, b"\x00")
+        buf[record_off : record_off + 8] = name_bytes
+        struct.pack_into("<II", buf, record_off + 8, off, sz)
+        # Zero the reserved tail (indices 16..20 within the record).
+    # Insert a chipset + version banner after the table so the parser can
+    # pick them up.
+    banner = f"{chipset} md1rom_version:{version}\x00".encode("ascii")
+    banner_off = table_off + len(sections) * 20 + 32
+    if banner_off + len(banner) <= len(buf):
+        buf[banner_off : banner_off + len(banner)] = banner
+    return bytes(buf)
+
+
+# -----------------------------------------------------------------------------
+# MediaTek Wi-Fi header (Phase 3).
+# -----------------------------------------------------------------------------
+
+
+def build_mtk_wifi_hdr(
+    *,
+    timestamp: str = "20230401120000",
+    at_offset: int = 0x20,
+    total_size: int = 4 * 1024,
+    build_id: str | None = "20230401120000-1.2.3",
+) -> bytes:
+    """Build a fake mt76 Wi-Fi firmware with an ASCII build timestamp."""
+    buf = bytearray(total_size)
+    ts_bytes = timestamp.encode("ascii")
+    if at_offset + len(ts_bytes) <= len(buf):
+        buf[at_offset : at_offset + len(ts_bytes)] = ts_bytes
+    if build_id:
+        bid = f"BUILD_ID:{build_id}\x00".encode("ascii")
+        off = at_offset + 32
+        if off + len(bid) <= len(buf):
+            buf[off : off + len(bid)] = bid
+    return bytes(buf)
+
+
+# -----------------------------------------------------------------------------
+# Awinic ACF (Phase 3).
+# -----------------------------------------------------------------------------
+
+
+def build_awinic_acf(
+    *,
+    acf_version: int = 1,
+    chip_id: str = "aw88266",
+    profile_count: int = 4,
+    total_size: int = 1024,
+) -> bytes:
+    """Build a minimal Awinic ACF file: AWINIC magic + version + chip id + profile count."""
+    buf = bytearray(total_size)
+    buf[0:6] = b"AWINIC"
+    struct.pack_into("<I", buf, 6, acf_version)
+    chip_bytes = chip_id.encode("ascii")[:7].ljust(8, b"\x00")
+    buf[10:18] = chip_bytes
+    struct.pack_into("<I", buf, 18, profile_count)
+    return bytes(buf)
+
+
+# -----------------------------------------------------------------------------
 # Generic helpers.
 # -----------------------------------------------------------------------------
 

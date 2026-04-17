@@ -18,10 +18,15 @@ from app.services.hardware_firmware.parsers.base import (
 
 # Self-registration fires on import.
 from app.services.hardware_firmware.parsers import (  # noqa: F401,E402
+    awinic_acf,
     broadcom_wl,
     dtb,
     elf_tee,
     kmod,
+    mediatek_lk,
+    mediatek_modem,
+    mediatek_preloader,
+    mediatek_wifi,
     qualcomm_mbn,
     raw_bin,
 )

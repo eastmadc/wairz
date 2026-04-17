@@ -130,8 +130,8 @@ Replace hand-rolled regexes with YAML-sourced patterns.
 
 ## Active Context
 
-Phase: **3 — MediaTek Parsers** (Phases 1 and 2 complete, direction aligned)
-Sub-step: Pending — delegation to build specialist. Phase 3 is the largest single phase (~2 sessions work compressed into one delegation if possible).
+Phase: **4 — Kernel vulns.git Subsystem Index** (Phases 1-3 complete)
+Sub-step: Pending — delegation to build specialist.
 
 ## Feature Ledger
 
@@ -184,6 +184,36 @@ Sub-step: Pending — delegation to build specialist. Phase 3 is the largest sin
 - ✅ metric_threshold: kernel_semver populated on all .ko rows — verified in unit tests.
 - ⏳ manual (DPCS10 ≥20 CVEs via kernel_cpe) — deferred; wire-up unit-tested, runtime CVE count pending re-detection on the Android image.
 
+### Phase 3 — MediaTek Parsers (complete 2026-04-17)
+
+**Strategic decision before delegation:** Skip new pip dependencies (`md1imgpy`, `kaitaistruct`). All 5 parsers written as native Python with struct/regex parsing based on format research. Reason: GPL-3 licensing concerns on `md1imgpy`, avoids Docker pip-install fragility, avoids backend+worker rebuild coupling from CLAUDE.md rule 8.
+
+**Parsers shipped (all 5/5):**
+- `parsers/mediatek_lk.py` (139 LOC, FORMAT=`mtk_lk`) — 512-byte LK partition-record header.
+- `parsers/awinic_acf.py` (144 LOC, FORMAT=`awinic_acf`) — AWINIC audio calibration file header (chip_id extraction).
+- `parsers/mediatek_preloader.py` (179 LOC, FORMAT=`mtk_preloader`) — GFH_FILE_INFO header (file_ver, sig_type, load_addr).
+- `parsers/mediatek_modem.py` (208 LOC, FORMAT=`mtk_modem`) — MD1IMG section-walker (md1rom/md1drdi/md1dsp/cert_md).
+- `parsers/mediatek_wifi.py` (175 LOC, FORMAT=`mtk_wifi_hdr`) — mt76 Wi-Fi header + CONNSYS chipset pairing map (MT6759→MT6771/6763/6765/6779).
+
+**Files modified:**
+- `classifier.py` — renamed `mtk_gfh` → `mtk_lk` magic-byte format; added 4 new formats to `FORMATS`.
+- `parsers/__init__.py` — added 5 side-effect imports (auto-registration).
+- `data/firmware_patterns.yaml` — added `format:` overrides so classified blobs route to the right parser.
+- `tests/fixtures/hardware_firmware/_build_fixtures.py` (+179 LOC) — 5 synthetic fixture builders.
+- `tests/test_hardware_firmware_parsers.py` (+192 LOC) — 11 new happy-path/edge-case tests; 8 new malformed-input parametrize cases.
+- `tests/test_hardware_firmware_classifier_patterns.py` — updated one expectation (aw88 now → `awinic_acf` format).
+
+**Test results:**
+- Full hw-firmware regression: 140/140 pass (up from 125 in Phase 2).
+- Ruff on all new parsers: clean.
+- Ruff I001 in `__init__.py` auto-fixed post-delegation.
+- Zero new pip dependencies (verified `git diff HEAD -- backend/pyproject.toml` empty).
+
+**End conditions:**
+- ✅ file_exists (5 parser files)
+- ✅ command_passes (parser tests — 39 passing in test_hardware_firmware_parsers.py alone)
+- ⏳ manual (fixture Android image populates version/signed/chipset on each new format) — unit tests cover the field extraction; runtime validation on DPCS10 deferred.
+
 ## Decision Log
 
 **2026-04-17** — **Campaign structure.** Intake file was already phase-decomposed with strong OSS research; adopted its 5-phase breakdown verbatim. Deviations from intake documented here as they arise.
@@ -195,6 +225,10 @@ Sub-step: Pending — delegation to build specialist. Phase 3 is the largest sin
 **2026-04-17** — **Phase 2 scoped down after discovery.** Intake asked for "inject synthetic linux_kernel component into grype pipeline" but that already existed (`sbom_service._scan_kernel_from_vermagic`, line 1216). Phase 2 collapsed to (1) store kernel_semver in kmod metadata, (2) add Tier 4 matcher that mirrors grype-produced kernel-component CVEs onto kmod blobs. No grype_service.py changes needed. Saves ~200 LOC of redundant work.
 
 **2026-04-17** — **Direction alignment check (after Phase 2).** Campaign direction was "fix empty feature on real data: Vendor=None, 0 CVEs, flat table". Phase 1 fixed Vendor=None. Phase 2 fixed 0 CVEs (at least for kernel modules). Both aligned. Phase 3 addresses metadata richness (MediaTek parsers) for blobs that already classified correctly in Phase 1 but show no version/signing info. Also aligned.
+
+**2026-04-17** — **Phase 3 no-deps strategy.** Intake suggested adding `md1imgpy` and `kaitaistruct`. Rejected both and wrote 5 native Python parsers instead. Reason: (1) GPL-3/AGPL licensing review overhead, (2) pip-install fragility in Docker, (3) kaitai-struct-compiler build-time complexity, (4) backend+worker rebuild coupling (CLAUDE.md rule 8). Trade-off: parsers carry less feature surface than vendored implementations but cover all extraction we need (version, chipset, signing, section table). 845 LOC total, zero deps.
+
+**2026-04-17** — **Direction alignment check (after Phase 3).** Direction remains: three original gaps (Vendor=None, 0 CVEs, flat table). Phase 1 fixed #1, Phase 2 fixed #2 for kernel modules, Phase 3 enriches metadata on blobs that were Vendor-populated but version-empty. Phase 4 extends #2 to per-subsystem CVE attribution. Phase 5 fixes #3. All aligned. No course correction needed.
 
 ## Continuation State
 
