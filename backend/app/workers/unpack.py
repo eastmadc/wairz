@@ -696,6 +696,21 @@ async def _unpack_firmware_inner(
                     removed += cleanup_unblob_artifacts(entry.path)
             if removed:
                 result.unpack_log += f"Cleaned up {removed} intermediate artifact(s).\n"
+            # Recursively expand any nested archives that unblob/binwalk
+            # didn't touch at the top level (common pattern: a firmware
+            # ZIP holds multiple sibling .tar.xz archives — unblob extracts
+            # one, the siblings need to be unrolled too so their rootfs /
+            # kernel contents become visible to downstream detection).
+            try:
+                from app.workers.unpack_common import _recursive_extract_nested
+                nested = _recursive_extract_nested(extraction_dir, max_depth=3)
+                if nested:
+                    result.unpack_log += (
+                        f"Recursive nested extraction: expanded "
+                        f"{len(nested)} archive(s) post-{name}.\n"
+                    )
+            except Exception as e:
+                result.unpack_log += f"Nested extraction skipped: {e}\n"
             await _report("Analyzing filesystem", progress_base + 20)
             _analyze_filesystem(result, extraction_dir)
             if result.success:

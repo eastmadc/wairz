@@ -454,6 +454,51 @@ class FirmwareService:
                 if extracted:
                     os.remove(storage_path)
                     storage_path = extracted
+                    # Extraction-integrity fix: multi-file firmware ZIPs
+                    # (medical device / embedded Linux patterns) pack many
+                    # sibling archives (rootfs_partition.tar.xz,
+                    # zImage-restore.tar.xz, boot_partition.tar.xz, etc.)
+                    # alongside MCU .bin files. Unblob later runs against
+                    # just the largest file (``extracted``), leaving the
+                    # siblings inaccessible to detection. Recursively
+                    # expand any tar/zip/lz4 archive in the zip_contents
+                    # tree in-place so their contents are visible to
+                    # Phase 2's get_detection_roots.
+                    try:
+                        from app.workers.unpack_common import (
+                            _recursive_extract_nested,
+                        )
+                        zip_loop = asyncio.get_running_loop()
+                        # storage_path = firmware-dir/zip_contents/<arbitrary-path>/<file>
+                        # Find the zip_contents dir by walking up until its basename matches.
+                        cursor = os.path.dirname(storage_path)
+                        zip_root: str | None = None
+                        for _ in range(8):
+                            if os.path.basename(cursor) == "zip_contents":
+                                zip_root = cursor
+                                break
+                            parent = os.path.dirname(cursor)
+                            if parent == cursor:
+                                break
+                            cursor = parent
+                        if zip_root and os.path.isdir(zip_root):
+                            nested = await zip_loop.run_in_executor(
+                                None,
+                                _recursive_extract_nested,
+                                zip_root,
+                                3,
+                            )
+                            if nested:
+                                logger.info(
+                                    "Expanded %d nested archive(s) in %s",
+                                    len(nested),
+                                    zip_root,
+                                )
+                    except Exception:
+                        logger.warning(
+                            "Nested extraction of zip_contents failed",
+                            exc_info=True,
+                        )
                     # Recompute hash and size for the actual firmware content
                     sha256_hash = hashlib.sha256()
                     file_size = 0

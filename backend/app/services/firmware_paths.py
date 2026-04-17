@@ -301,6 +301,33 @@ def _compute_roots_sync(extracted_path: str | None) -> list[str]:
     if not roots and os.path.isdir(root):
         roots = [root]
 
+    # Shallow-container rescue: the classifier occasionally chooses an
+    # inner archive (e.g., ``rootfs_partition.tar.xz``) inside a
+    # multi-archive ZIP as the unpack target. That produces an
+    # ``extracted_path`` deep inside ``container/extracted/`` while the
+    # real firmware binaries (.bin MCU firmware, sibling .tar.xz
+    # bundles, boot-partition archives, etc.) sit at the parent level.
+    # When the scan yields at most one root AND the parent of the
+    # container holds raw firmware files at its own file level, include
+    # the parent as an additional detection root so those blobs surface.
+    # Safe because _dir_has_raw_image is strict (specific extensions,
+    # non-recursive) — a parent dir without firmware-shaped files is
+    # not promoted.
+    if len(roots) <= 1 and container and os.path.isdir(container):
+        parent = os.path.dirname(container.rstrip("/"))
+        parent_parent = os.path.dirname(parent.rstrip("/")) if parent else ""
+        if (
+            parent
+            and parent != container
+            and parent != parent_parent  # not at filesystem root
+            and os.path.isdir(parent)
+            and _dir_has_raw_image(parent)
+        ):
+            real_parent = os.path.realpath(parent)
+            existing = {os.path.realpath(r) for r in roots}
+            if real_parent not in existing:
+                roots.append(parent)
+
     # If the extracted_path itself is directly a candidate root (e.g. a
     # bare Linux rootfs with etc/, bin/ children), ensure it leads the
     # ordering rather than getting buried behind a sibling.
