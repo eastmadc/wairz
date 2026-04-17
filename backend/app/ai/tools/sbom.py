@@ -331,8 +331,21 @@ async def _handle_generate_sbom(input: dict, context: ToolContext) -> str:
             await context.db.delete(comp)
         await context.db.flush()
 
+    # Resolve the Firmware row so SbomService scans every detection
+    # root (rootfs + scatter siblings), not just ``context.extracted_path``.
+    from sqlalchemy import select as _pre_select
+    from app.models.firmware import Firmware as _PreFirmware
+    from app.services.firmware_paths import get_detection_roots as _pre_roots
+    pre_fw = (await context.db.execute(
+        _pre_select(_PreFirmware).where(_PreFirmware.id == context.firmware_id)
+    )).scalar_one_or_none()
+    if pre_fw is not None:
+        await _pre_roots(pre_fw, db=context.db)
+        service = SbomService(firmware=pre_fw)
+    else:
+        service = SbomService(context.extracted_path)
+
     # Run generation in executor (CPU-bound filesystem walk)
-    service = SbomService(context.extracted_path)
     loop = asyncio.get_event_loop()
     try:
         component_dicts = await loop.run_in_executor(

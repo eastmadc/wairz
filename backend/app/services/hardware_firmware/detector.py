@@ -9,10 +9,13 @@ import time
 import uuid
 from collections import deque
 
+from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.firmware import Firmware
 from app.models.hardware_firmware import HardwareFirmwareBlob
+from app.services.firmware_paths import get_detection_roots
 from app.services.hardware_firmware.classifier import classify
 from app.services.hardware_firmware.parsers import ParsedBlob, get_parser
 
@@ -192,20 +195,92 @@ def _walk_and_classify(extracted_path: str) -> list[dict]:
 async def detect_hardware_firmware(
     firmware_id: uuid.UUID,
     db: AsyncSession,
-    extracted_path: str,
+    *,
+    walk_roots: list[str] | None = None,
 ) -> int:
-    """Walk extracted firmware, classify candidate blobs, persist rows; return count."""
-    if not extracted_path:
+    """Walk extracted firmware, classify candidate blobs, persist rows; return count.
+
+    Parameters
+    ----------
+    firmware_id:
+        The Firmware row to attribute blobs to.
+    db:
+        Active async session; caller owns the transaction.
+    walk_roots:
+        Optional explicit list of detection-root directories to walk. When
+        ``None``, the firmware row is fetched and
+        ``app.services.firmware_paths.get_detection_roots`` resolves the
+        roots (honoring the JSONB cache and walking scatter siblings /
+        partition containers). Providing ``walk_roots`` is useful for
+        tests and backfill scripts that want explicit control.
+
+    Multi-root walks dedupe across roots via the existing
+    ``uq_hwfw_firmware_sha256`` unique constraint
+    ``(firmware_id, blob_sha256)`` — identical blobs in two partition
+    dirs collapse to one row.
+    """
+    # Resolve walk_roots from the Firmware row when not supplied.
+    if walk_roots is None:
+        result = await db.execute(
+            select(Firmware).where(Firmware.id == firmware_id)
+        )
+        firmware = result.scalar_one_or_none()
+        if firmware is None:
+            logger.warning(
+                "Hardware firmware detector: firmware_id=%s not found",
+                firmware_id,
+            )
+            return 0
+        walk_roots = await get_detection_roots(firmware, db=db)
+
+    # Filter to only existing directories (defensive — cache staleness).
+    # ``os.path.isdir`` is a blocking stat(); offload to a thread so we
+    # don't stall the event loop on network-backed filesystems.
+    def _existing_dirs(paths: list[str]) -> list[str]:
+        return [p for p in paths if p and os.path.isdir(p)]
+
+    walk_roots = await asyncio.to_thread(_existing_dirs, walk_roots or [])
+    if not walk_roots:
+        logger.info(
+            "Hardware firmware detector: no detection roots for firmware_id=%s",
+            firmware_id,
+        )
         return 0
 
+    logger.info(
+        "Hardware firmware detector: walking %d root(s) for firmware_id=%s",
+        len(walk_roots),
+        firmware_id,
+    )
+
     loop = asyncio.get_event_loop()
-    rows = await loop.run_in_executor(None, _walk_and_classify, extracted_path)
+    rows: list[dict] = []
+    # Sequential walk per root — sharing an AsyncSession across gather'd
+    # coroutines is forbidden (CLAUDE.md rule 7). The per-root work itself
+    # is pure sync I/O in a thread executor.
+    for root in walk_roots:
+        root_rows = await loop.run_in_executor(None, _walk_and_classify, root)
+        logger.info(
+            "Hardware firmware detector: root=%s yielded %d candidate(s)",
+            root,
+            len(root_rows),
+        )
+        rows.extend(root_rows)
+
     if not rows:
         logger.info("Hardware firmware detector: no candidates classified")
         return 0
 
-    values = []
+    # In-memory dedupe across roots by SHA-256 (belt-and-braces; the DB
+    # unique constraint would reject dupes anyway, but this keeps the
+    # values list lean for large multi-partition containers).
+    seen_sha: set[str] = set()
+    values: list[dict] = []
     for row in rows:
+        sha = row["blob_sha256"]
+        if sha in seen_sha:
+            continue
+        seen_sha.add(sha)
         version = row.get("version")
         sig_algo = row.get("signature_algorithm")
         chipset = row.get("chipset_target")
@@ -213,7 +288,7 @@ async def detect_hardware_firmware(
             "firmware_id": firmware_id,
             "blob_path": row["blob_path"][:1024],
             "partition": row["partition"][:64] if row["partition"] else None,
-            "blob_sha256": row["blob_sha256"],
+            "blob_sha256": sha,
             "file_size": row["file_size"],
             "category": row["category"],
             "vendor": row["vendor"],

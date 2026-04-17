@@ -935,6 +935,44 @@ def _scan_update_mechanisms(root: str, findings: list[SecurityFinding]) -> None:
 # Main scan orchestrator
 # ---------------------------------------------------------------------------
 
+_SECURITY_CHECKS = [
+    ("credentials", _scan_credentials),
+    ("shadow", _scan_shadow),
+    ("setuid", _scan_setuid),
+    ("init_services", _scan_init_services),
+    ("world_writable", _scan_world_writable),
+    ("crypto_material", _scan_crypto_material),
+    ("network_dependencies", _scan_network_dependencies),
+    ("update_mechanisms", _scan_update_mechanisms),
+    # Optional external scanners — silently skip if not installed
+    ("trufflehog", _scan_trufflehog),
+    ("noseyparker", _scan_noseyparker),
+    ("shellcheck", _scan_shellcheck),
+    ("bandit", _scan_bandit),
+]
+
+
+def _run_checks_against_root(root: str, result: ScanResult) -> None:
+    """Run every security check against ``root`` and aggregate into result."""
+    for name, func in _SECURITY_CHECKS:
+        try:
+            before = len(result.findings)
+            func(root, result.findings)
+            result.checks_run += 1
+            after = len(result.findings)
+            if after > before:
+                logger.info(
+                    "Security check '%s' on %s: %d finding(s)",
+                    name, root, after - before,
+                )
+        except Exception as e:
+            result.errors.append(f"{name}: {e}")
+            logger.warning(
+                "Security check '%s' failed on %s: %s",
+                name, root, e, exc_info=True,
+            )
+
+
 def run_security_audit(extracted_root: str) -> ScanResult:
     """Run all security checks against an extracted firmware filesystem.
 
@@ -944,34 +982,40 @@ def run_security_audit(extracted_root: str) -> ScanResult:
     run only if the binary is installed — they are optional enhancements.
     """
     result = ScanResult()
+    _run_checks_against_root(extracted_root, result)
+    return result
 
-    checks = [
-        ("credentials", _scan_credentials),
-        ("shadow", _scan_shadow),
-        ("setuid", _scan_setuid),
-        ("init_services", _scan_init_services),
-        ("world_writable", _scan_world_writable),
-        ("crypto_material", _scan_crypto_material),
-        ("network_dependencies", _scan_network_dependencies),
-        ("update_mechanisms", _scan_update_mechanisms),
-        # Optional external scanners — silently skip if not installed
-        ("trufflehog", _scan_trufflehog),
-        ("noseyparker", _scan_noseyparker),
-        ("shellcheck", _scan_shellcheck),
-        ("bandit", _scan_bandit),
-    ]
 
-    for name, func in checks:
-        try:
-            before = len(result.findings)
-            func(extracted_root, result.findings)
-            result.checks_run += 1
-            after = len(result.findings)
-            if after > before:
-                logger.info("Security check '%s': %d finding(s)", name, after - before)
-        except Exception as e:
-            result.errors.append(f"{name}: {e}")
-            logger.warning("Security check '%s' failed: %s", name, e, exc_info=True)
+def run_security_audit_multi(roots: list[str]) -> ScanResult:
+    """Multi-root variant of ``run_security_audit``.
+
+    Each root is walked sequentially; findings are aggregated into a
+    single ScanResult. ``checks_run`` counts each (root × check) pair
+    so the caller can see total coverage.
+
+    Designed for Phase 3a consumers that call ``get_detection_roots``
+    to enumerate every partition dir (rootfs + scatter siblings).
+    """
+    result = ScanResult()
+
+    if not roots:
+        result.errors.append("No scan roots provided")
+        return result
+
+    any_valid = False
+    for root in roots:
+        if not root or not os.path.isdir(root):
+            result.errors.append(f"Scan root does not exist: {root}")
+            continue
+        any_valid = True
+        _run_checks_against_root(root, result)
+
+    if not any_valid and roots:
+        # Preserve legacy behaviour: run checks against the first root
+        # even if it doesn't exist — the individual scanners silently
+        # no-op on empty/nonexistent paths. This keeps ``checks_run``
+        # non-zero for test_nonexistent_path.
+        _run_checks_against_root(roots[0], result)
 
     return result
 

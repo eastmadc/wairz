@@ -5,14 +5,20 @@ and binaries for version information, and returns a deduplicated list of
 identified components with CPE and PURL identifiers.
 """
 
+from __future__ import annotations
+
 import logging
 import os
 import re
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 from elftools.elf.elffile import ELFFile
 
 from app.utils.sandbox import safe_walk, validate_path
+
+if TYPE_CHECKING:
+    from app.models.firmware import Firmware
 
 logger = logging.getLogger(__name__)
 
@@ -385,10 +391,69 @@ class IdentifiedComponent:
 
 
 class SbomService:
-    """Identifies software components from an unpacked firmware filesystem."""
+    """Identifies software components from an unpacked firmware filesystem.
 
-    def __init__(self, extracted_root: str):
-        self.extracted_root = os.path.realpath(extracted_root)
+    Two construction modes:
+
+    1. ``SbomService(extracted_root="/path/to/rootfs")`` — legacy single-root
+       mode. Retained for direct callers (tests, MCP tools) that don't have
+       a Firmware row handy. The single root is used as the sole scan root.
+    2. ``SbomService(firmware=fw)`` — Phase 3a mode. Resolves all detection
+       roots via ``app.services.firmware_paths.get_detection_roots`` so
+       sibling partition dirs (scatter zips, raw images) are scanned too.
+       The primary root becomes ``self.extracted_root``; additional roots
+       surface through ``_get_all_scan_roots``.
+    """
+
+    def __init__(
+        self,
+        extracted_root: str | None = None,
+        *,
+        firmware: Firmware | None = None,
+        detection_roots: list[str] | None = None,
+    ):
+        # Resolve the list of scan roots once at construction time.
+        # Priority: explicit detection_roots → firmware row → extracted_root.
+        if detection_roots is None:
+            if firmware is not None:
+                # Read from JSONB cache synchronously (mirrors the async
+                # helper's cache path — the constructor runs in an executor
+                # so we can't await here). Stale cache falls back below.
+                meta = getattr(firmware, "device_metadata", None) or {}
+                cached = meta.get("detection_roots")
+                if isinstance(cached, list) and all(
+                    isinstance(p, str) and os.path.isdir(p) for p in cached
+                ):
+                    detection_roots = list(cached)
+                else:
+                    # No valid cache — caller should have populated via
+                    # get_detection_roots before constructing us, but we
+                    # fall back to firmware.extracted_path so we don't
+                    # crash on a fresh row.
+                    fp = getattr(firmware, "extracted_path", None)
+                    detection_roots = [fp] if fp else []
+            elif extracted_root:
+                detection_roots = [extracted_root]
+            else:
+                detection_roots = []
+
+        # Normalise — realpath every root, drop missing/empty entries.
+        self._detection_roots: list[str] = [
+            os.path.realpath(r) for r in detection_roots if r and os.path.isdir(r)
+        ]
+
+        # Pick the primary root (first entry) so legacy code that reads
+        # ``self.extracted_root`` directly keeps working.
+        if self._detection_roots:
+            self.extracted_root = self._detection_roots[0]
+        elif extracted_root:
+            # Degraded fallback: single root even if it doesn't exist on disk
+            # (e.g. tests that point at a tmp_path that has no content).
+            self.extracted_root = os.path.realpath(extracted_root)
+            self._detection_roots = [self.extracted_root]
+        else:
+            self.extracted_root = ""
+
         self._components: dict[tuple[str, str | None], IdentifiedComponent] = {}
         self._current_partition: str | None = None
 
@@ -402,41 +467,51 @@ class SbomService:
         """Return all directories to scan: (path, partition_name | None).
 
         The primary extracted root is always first (partition_name=None).
-        For multi-partition firmware (Android), sibling directories under
-        a shared parent (e.g. rootfs/) are included with their directory
-        name as partition label.
+        Additional roots come from ``get_detection_roots`` when the service
+        was constructed with a ``Firmware`` row, or from the legacy sibling
+        heuristic when given a bare ``extracted_root``.
         """
-        roots: list[tuple[str, str | None]] = [(self.extracted_root, None)]
+        roots: list[tuple[str, str | None]] = []
+        seen_real: set[str] = set()
 
-        parent = os.path.dirname(self.extracted_root)
-        primary_name = os.path.basename(self.extracted_root)
+        primary_real = self.extracted_root
+        roots.append((primary_real, None))
+        seen_real.add(primary_real)
 
-        # Heuristic: if the parent directory name suggests a multi-partition
-        # layout, include sibling partitions.
-        if os.path.basename(parent) in ("rootfs", "partitions", "images"):
-            try:
-                for entry in sorted(os.listdir(parent)):
-                    sibling_path = os.path.join(parent, entry)
-                    if (
-                        entry != primary_name
-                        and os.path.isdir(sibling_path)
-                        and not entry.startswith(".")
-                    ):
-                        roots.append((sibling_path, entry))
-            except OSError:
-                pass
+        # Phase 3a: additional roots from the helper (via ``__init__``).
+        # Each becomes a named partition scan — partition_name is the
+        # directory basename so component rows stamp a sensible label.
+        for root in self._detection_roots[1:]:
+            if root in seen_real:
+                continue
+            seen_real.add(root)
+            partition_name = os.path.basename(root.rstrip("/")) or None
+            roots.append((root, partition_name))
 
-        # Also check for Android-style partitions nested inside the primary
-        # root (e.g. <root>/vendor, <root>/product, <root>/system_ext).
-        android_partitions = ("vendor", "product", "system_ext", "odm")
-        for part_name in android_partitions:
-            part_path = os.path.join(self.extracted_root, part_name)
-            if os.path.isdir(part_path):
-                # These are sub-dirs inside the primary root — mark the
-                # partition name but don't add a new scan root (the primary
-                # root walk already covers them).  We record them so custom
-                # strategies that only scan specific sub-paths can iterate.
-                pass  # Covered by primary root walk
+        # Legacy sibling heuristic (single-root construction, no Firmware
+        # row). Retained so bare ``SbomService("/rootfs/system")``
+        # continues to discover sibling /rootfs/vendor, /rootfs/product.
+        # When ``_detection_roots`` already has >1 entry we assume the
+        # helper already found the siblings.
+        if len(self._detection_roots) <= 1 and self.extracted_root:
+            parent = os.path.dirname(self.extracted_root)
+            primary_name = os.path.basename(self.extracted_root)
+            if os.path.basename(parent) in ("rootfs", "partitions", "images"):
+                try:
+                    for entry in sorted(os.listdir(parent)):
+                        sibling_path = os.path.join(parent, entry)
+                        if (
+                            entry != primary_name
+                            and os.path.isdir(sibling_path)
+                            and not entry.startswith(".")
+                        ):
+                            real = os.path.realpath(sibling_path)
+                            if real in seen_real:
+                                continue
+                            seen_real.add(real)
+                            roots.append((sibling_path, entry))
+                except OSError:
+                    pass
 
         return roots
 
@@ -926,9 +1001,16 @@ class SbomService:
         # 1. Parse build.prop for system metadata
         self._parse_build_prop(build_prop)
 
-        # 2. Scan APKs in standard Android app directories
-        for app_dir in ("system/app", "system/priv-app", "product/app",
-                        "product/priv-app", "vendor/app"):
+        # 2. Scan APKs in standard Android app directories. Covers all 8
+        # partition × (app|priv-app) pairs across the AOSP layout (per
+        # Android Partitions reference + CLAUDE.md rule 14).
+        for app_dir in (
+            "system/app", "system/priv-app",
+            "product/app", "product/priv-app",
+            "vendor/app", "vendor/priv-app",
+            "system_ext/app", "system_ext/priv-app",
+            "odm/app", "odm/priv-app",
+        ):
             abs_dir = os.path.join(self.extracted_root, app_dir)
             if not os.path.isdir(abs_dir):
                 continue

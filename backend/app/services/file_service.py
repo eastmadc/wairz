@@ -19,6 +19,14 @@ MAX_SEARCH_RESULTS = 100
 # e.g. squashfs-root, jffs2-root, jffs2-root-0, ext-root-3
 _ROOT_DIR_PATTERN = re.compile(r"^[a-z0-9]+-root(-\d+)?$")
 
+# Broadened pattern catches scatter-zip directories (``DPCS10_260414-1134``),
+# partition dumps (``partition_2_erofs``), and any alphanumeric dir that holds
+# raw firmware images. Used by the virtual-root listing alongside
+# ``_ROOT_DIR_PATTERN`` so MediaTek-style partition dirs surface in the UI.
+_PARTITION_DIR_PATTERN = re.compile(
+    r"^(?:[A-Za-z0-9][A-Za-z0-9._\-]*|partition_\d+[A-Za-z0-9_\-]*)$"
+)
+
 # File extensions for raw filesystem images (not useful to browse directly)
 _RAW_FS_EXTENSIONS = frozenset({
     ".jffs2", ".squashfs", ".sqfs", ".cramfs", ".ubifs", ".ubi",
@@ -127,15 +135,74 @@ class FileService:
 
     ROOTFS_VNAME = "rootfs"
 
-    def __init__(self, extracted_root: str, extraction_dir: str | None = None):
+    def __init__(
+        self,
+        extracted_root: str,
+        extraction_dir: str | None = None,
+        *,
+        extra_roots: list[str] | None = None,
+    ):
+        """Construct a FileService.
+
+        Parameters
+        ----------
+        extracted_root:
+            The primary rootfs directory (legacy single-root).
+        extraction_dir:
+            The binwalk/unblob output directory containing nested partitions.
+            When set (and distinct from ``extracted_root``), the service
+            exposes a virtual top-level that includes nested partition dirs.
+        extra_roots:
+            Phase 3a addition — additional detection roots returned by
+            ``app.services.firmware_paths.get_detection_roots``. Each root
+            surfaces as its own virtual top-level entry (scatter-zip
+            directories, raw-image dirs, etc.). Ignored when equal to
+            ``extracted_root`` after realpath.
+        """
         self.extracted_root = extracted_root
         # Only enable virtual top-level when extraction_dir differs from rootfs
+        # OR when extra detection roots exist (multi-root mode forces a
+        # virtual listing so siblings are browsable).
         if extraction_dir and os.path.realpath(extraction_dir) != os.path.realpath(extracted_root):
             self.extraction_dir = extraction_dir
         else:
             self.extraction_dir = None
         # Lazily built mapping from virtual name → real path for nested roots
         self._virtual_map: dict[str, str] | None = None
+
+        # Extra detection roots (Phase 3a). Realpath-deduplicated against the
+        # primary root. Stored as {name: real_path}.
+        self._extra_roots: dict[str, str] = {}
+        if extra_roots:
+            rootfs_real = os.path.realpath(extracted_root)
+            seen_real: set[str] = {rootfs_real}
+            # If extraction_dir is active, its realpath is also already
+            # represented (we walk it in _build_virtual_map).
+            if self.extraction_dir:
+                seen_real.add(os.path.realpath(self.extraction_dir))
+            for root in extra_roots:
+                if not root:
+                    continue
+                real = os.path.realpath(root)
+                if real in seen_real:
+                    continue
+                if not os.path.isdir(real):
+                    continue
+                seen_real.add(real)
+                name = os.path.basename(real.rstrip("/")) or real
+                # Ensure name uniqueness — append a tail-component when we
+                # collide.
+                if name in self._extra_roots or name == self.ROOTFS_VNAME:
+                    parent = os.path.basename(os.path.dirname(real)) or ""
+                    name = f"{parent}_{name}" if parent else f"root_{len(self._extra_roots)}"
+                self._extra_roots[name] = real
+
+        # Flip on virtual top-level when we have extra roots, so the UI
+        # actually shows them even if extraction_dir was None.
+        if self._extra_roots and self.extraction_dir is None:
+            self.extraction_dir = os.path.dirname(
+                os.path.realpath(extracted_root)
+            ) or self.extracted_root
 
     # ── path resolution ──────────────────────────────────────────────
 
@@ -145,30 +212,44 @@ class FileService:
         For nested binwalk -Me extractions, *-root directories can be inside
         subdirectories of extraction_dir. This map resolves virtual names like
         "ext-root" to their real paths regardless of nesting depth.
+
+        Phase 3a: extra detection roots (scatter-zip dirs, partition dumps,
+        raw-image dirs) are merged in so the UI surfaces them alongside the
+        rootfs. ``_ROOT_DIR_PATTERN`` still gates binwalk-style roots;
+        ``_extra_roots`` short-circuits that gate for helper-provided dirs.
         """
         if self._virtual_map is not None:
             return self._virtual_map
 
         vmap: dict[str, str] = {}
-        assert self.extraction_dir is not None
         rootfs_real = os.path.realpath(self.extracted_root)
 
-        # Scan extraction_dir and one level of subdirectories for *-root dirs
-        try:
-            top_entries = list(os.scandir(self.extraction_dir))
-        except OSError:
-            self._virtual_map = vmap
-            return vmap
+        # 1. Extra detection roots from the Phase 2 helper — highest
+        #    priority, no pattern gate.
+        for name, real_path in self._extra_roots.items():
+            vmap[name] = real_path
 
-        for entry in top_entries:
-            if not entry.is_dir(follow_symlinks=False):
-                continue
-            real = os.path.realpath(entry.path)
-            if real == rootfs_real:
-                continue
-            if _ROOT_DIR_PATTERN.match(entry.name):
-                vmap[entry.name] = entry.path
-            else:
+        # 2. Binwalk-style *-root directories under extraction_dir.
+        if self.extraction_dir is not None:
+            try:
+                top_entries = list(os.scandir(self.extraction_dir))
+            except OSError:
+                top_entries = []
+
+            for entry in top_entries:
+                if not entry.is_dir(follow_symlinks=False):
+                    continue
+                real = os.path.realpath(entry.path)
+                if real == rootfs_real:
+                    continue
+                # Don't double-list extra_roots that happened to live under
+                # extraction_dir — they're already in vmap.
+                if real in {os.path.realpath(v) for v in vmap.values()}:
+                    continue
+                if _ROOT_DIR_PATTERN.match(entry.name):
+                    vmap[entry.name] = entry.path
+                    continue
+
                 # Look one level deeper (for _*.extracted/ subdirs)
                 try:
                     for child in os.scandir(entry.path):
@@ -260,6 +341,7 @@ class FileService:
         # Group by base name for deduplication
         # candidates[base] = [(name, real_path, file_count, is_numbered), ...]
         root_candidates: dict[str, list[tuple[str, str, int, bool]]] = {}
+        unmatched: list[tuple[str, str]] = []  # (vname, real_path)
         for vname, real_path in vmap.items():
             try:
                 file_count = sum(1 for _ in os.scandir(real_path))
@@ -270,6 +352,10 @@ class FileService:
 
             base_m = re.match(r"^(.+-root)(-\d+)?$", vname)
             if not base_m:
+                # Phase 3a: extra detection roots (scatter-zip dirs,
+                # partition dumps) aren't ``*-root`` — surface them as-is
+                # so the UI doesn't hide them.
+                unmatched.append((vname, real_path))
                 continue
             base = base_m.group(1)
             is_numbered = base_m.group(2) is not None
@@ -292,6 +378,19 @@ class FileService:
                 continue
             entries.append(FileEntry(
                 name=best_name,
+                type="directory",
+                size=st.st_size,
+                permissions=_format_permissions(st.st_mode),
+            ))
+
+        # Append extra roots that don't match the ``*-root`` pattern.
+        for vname, real_path in unmatched:
+            try:
+                st = os.lstat(real_path)
+            except OSError:
+                continue
+            entries.append(FileEntry(
+                name=vname,
                 type="directory",
                 size=st.st_size,
                 permissions=_format_permissions(st.st_mode),

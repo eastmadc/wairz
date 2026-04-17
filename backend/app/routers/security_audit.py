@@ -17,12 +17,16 @@ from app.services.finding_service import FindingService
 from app.services.security_audit_service import (
     SecurityFinding,
     run_security_audit,
+    run_security_audit_multi,
     run_clamav_scan,
     run_virustotal_scan,
     run_abusech_scan,
     run_known_good_scan,
 )
-from app.services.yara_service import scan_firmware as yara_scan_firmware
+from app.services.yara_service import (
+    scan_firmware as yara_scan_firmware,
+    scan_firmware_multi as yara_scan_firmware_multi,
+)
 
 router = APIRouter(
     prefix="/api/v1/projects/{project_id}/security",
@@ -120,10 +124,20 @@ async def run_audit(
     all_findings: list[tuple[SecurityFinding, uuid.UUID]] = []
     all_errors: list[str] = []
 
+    # Populate detection_roots cache so multi-root walks see every
+    # sibling partition (Phase 3a).
+    from app.services.firmware_paths import get_detection_roots
+
     for firmware in firmware_list:
-        scan_result = await loop.run_in_executor(
-            None, run_security_audit, firmware.extracted_path
-        )
+        roots = await get_detection_roots(firmware, db=db)
+        if roots:
+            scan_result = await loop.run_in_executor(
+                None, run_security_audit_multi, roots
+            )
+        else:
+            scan_result = await loop.run_in_executor(
+                None, run_security_audit, firmware.extracted_path
+            )
         total_checks += scan_result.checks_run
         all_findings.extend((sf, firmware.id) for sf in scan_result.findings)
         all_errors.extend(scan_result.errors)
@@ -489,10 +503,20 @@ async def run_yara_scan(
     all_yara_findings: list[tuple[SecurityFinding, uuid.UUID]] = []
     all_errors: list[str] = []
 
+    from app.services.firmware_paths import get_detection_roots
+
     for firmware in firmware_list:
-        scan_result = await loop.run_in_executor(
-            None, yara_scan_firmware, firmware.extracted_path
-        )
+        roots = await get_detection_roots(firmware, db=db)
+        if roots:
+            scan_result = await loop.run_in_executor(
+                None, yara_scan_firmware_multi, roots
+            )
+        else:
+            # Nothing extracted yet — fall back to the legacy single-root
+            # path so the endpoint still returns a sensible response.
+            scan_result = await loop.run_in_executor(
+                None, yara_scan_firmware, firmware.extracted_path
+            )
         total_rules = max(total_rules, scan_result.rules_loaded)
         total_scanned += scan_result.files_scanned
         total_matched += scan_result.files_matched

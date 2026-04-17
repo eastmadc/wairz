@@ -29,8 +29,19 @@ def _resolve_path(firmware, path: str) -> str:
 
     Handles virtual prefixes like /rootfs/ that the file explorer adds,
     so analysis endpoints work consistently with the file browser.
+    Includes Phase 3a extra detection roots so paths prefixed with a
+    scatter-dir name resolve correctly.
     """
-    svc = FileService(firmware.extracted_path, extraction_dir=firmware.extraction_dir)
+    extra_roots: list[str] = []
+    meta = getattr(firmware, "device_metadata", None) or {}
+    cached = meta.get("detection_roots")
+    if isinstance(cached, list):
+        extra_roots = [p for p in cached if isinstance(p, str)]
+    svc = FileService(
+        firmware.extracted_path,
+        extraction_dir=firmware.extraction_dir,
+        extra_roots=extra_roots,
+    )
     return svc._resolve(path)
 
 
