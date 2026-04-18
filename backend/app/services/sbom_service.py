@@ -649,8 +649,15 @@ class SbomService:
             from packageurl import PackageURL
             purl = PackageURL(type=pkg_type, name=name, version=version)
             return str(purl)
-        except Exception:
-            # Fallback: construct manually
+        except Exception as exc:
+            # Fallback: construct manually. Log so recurring failures on
+            # malformed version strings or unsupported pkg_types surface
+            # in logs instead of silently producing a malformed purl.
+            logger.debug(
+                "PackageURL construction failed for %s@%s (type=%s): %s; "
+                "using manual fallback",
+                name, version, pkg_type, exc,
+            )
             return f"pkg:{pkg_type}/{name}@{version}"
 
     # ------------------------------------------------------------------
@@ -717,7 +724,7 @@ class SbomService:
                     continue
                 cdx = json.loads(proc.stdout)
                 cdx_components.extend(cdx.get("components", []))
-            except (subprocess.TimeoutExpired, json.JSONDecodeError, Exception):
+            except (subprocess.TimeoutExpired, json.JSONDecodeError, OSError):
                 continue
 
         for cdx_comp in cdx_components:
@@ -1862,7 +1869,12 @@ class SbomService:
                             if tag.entry.d_tag == "DT_SONAME":
                                 soname = tag.soname
                         break
-        except Exception:
+        except Exception as exc:
+            # Malformed ELF, truncated file, pyelftools bug, etc. We still
+            # fall back to filename parsing at the call site, so a quiet
+            # failure here is expected — but unusual libraries trip this
+            # often enough that a debug log helps diagnose false negatives.
+            logger.debug("SONAME ELF parse failed for %s: %s", abs_path, exc)
             return None
 
         # Parse version from filename: libfoo.so.1.2.3 -> name=libfoo, version=1.2.3
