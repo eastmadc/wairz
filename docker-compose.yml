@@ -254,8 +254,14 @@ services:
     restart: unless-stopped
     ports:
       - "${FRONTEND_HOST_BIND:-127.0.0.1}:${FRONTEND_HOST_PORT:-3000}:3000"
-    env_file:
-      - .env
+    # Frontend is static nginx — does NOT need the full env_file.
+    # Vite baked VITE_* values at build time; only MAX_UPLOAD_SIZE_MB
+    # is interpolated into nginx.conf.template at runtime.  Passing
+    # just that one value prevents backend secrets (NVD_API_KEY,
+    # POSTGRES_PASSWORD, VirusTotal / abuse.ch keys, etc.) from
+    # leaking into the nginx container's /proc/<pid>/environ.
+    environment:
+      MAX_UPLOAD_SIZE_MB: "${MAX_UPLOAD_SIZE_MB:-2048}"
     depends_on:
       - backend
     healthcheck:
