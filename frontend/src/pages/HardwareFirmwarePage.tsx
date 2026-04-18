@@ -145,7 +145,7 @@ export default function HardwareFirmwarePage() {
         const kmodRows = res.kernel_module_rows ?? 0
         const parts: string[] = []
         if (hwfw > 0) parts.push(`${hwfw} hw-firmware`)
-        if (kernel > 0) parts.push(`${kernel} kernel (across ${kmodRows} modules)`)
+        if (kernel > 0) parts.push(`${kernel} kernel (${kmodRows} projection rows across kmod blobs)`)
         const breakdown = parts.length ? ` — ${parts.join(', ')}` : ''
         setRunResult(`Found ${distinct} distinct CVE(s)${breakdown}.`)
       }

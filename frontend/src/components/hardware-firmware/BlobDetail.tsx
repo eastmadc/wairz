@@ -113,6 +113,70 @@ export default function BlobDetail({ blob, cves, loading }: BlobDetailProps) {
         </div>
       )}
 
+      {(() => {
+        const kv = (blob.metadata as { known_vulnerabilities?: Array<{
+          cve_id: string
+          severity: string
+          subcomponent?: string
+          confidence?: string
+          rationale?: string
+          reference?: string
+          cwe?: string
+          source?: string
+        }> } | null)?.known_vulnerabilities
+        if (!kv || kv.length === 0) return null
+        return (
+          <div className="border-t border-border/50 pt-3">
+            <p className="mb-1 text-xs font-medium text-red-600 dark:text-red-400">
+              Known vulnerabilities ({kv.length}) — parser-detected
+            </p>
+            <ul className="space-y-2">
+              {kv.map((v) => (
+                <li
+                  key={v.cve_id}
+                  className="rounded-md border border-red-500/40 bg-red-500/5 p-2 text-[11px]"
+                >
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <span className="font-mono font-semibold">{v.cve_id}</span>
+                    <Badge
+                      className={`text-[10px] ${
+                        SEVERITY_STYLE[v.severity] ?? 'bg-gray-500 text-white'
+                      }`}
+                    >
+                      {v.severity}
+                    </Badge>
+                    {v.cwe && (
+                      <Badge variant="outline" className="text-[10px]">{v.cwe}</Badge>
+                    )}
+                    {v.subcomponent && (
+                      <Badge variant="outline" className="text-[10px]">{v.subcomponent}</Badge>
+                    )}
+                    {v.confidence && (
+                      <Badge variant="outline" className="text-[10px]">
+                        confidence: {v.confidence}
+                      </Badge>
+                    )}
+                  </div>
+                  {v.rationale && (
+                    <p className="mt-1 text-muted-foreground">{v.rationale}</p>
+                  )}
+                  {v.reference && (
+                    <a
+                      href={v.reference}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="mt-1 inline-block break-all text-[10px] text-blue-500 hover:underline"
+                    >
+                      {v.reference}
+                    </a>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )
+      })()}
+
       {blob.metadata && Object.keys(blob.metadata).length > 0 && (
         <div className="border-t border-border/50 pt-3">
           <p className="mb-1 text-xs font-medium text-muted-foreground">Parser metadata</p>
