@@ -37,7 +37,11 @@ import re
 from typing import Any
 
 from app.services.hardware_firmware.parsers.base import ParsedBlob, register_parser
-from app.services.hardware_firmware.parsers.mediatek_gfh import derive_chipset, walk_sub_images
+from app.services.hardware_firmware.parsers.mediatek_gfh import (
+    derive_chipset,
+    signed_from_subimages,
+    walk_sub_images,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -186,6 +190,7 @@ class MediatekGenieZoneParser:
 
         return ParsedBlob(
             version=version,
+            signed=signed_from_subimages(subimages),
             metadata=meta,
             chipset_target=derive_chipset(meta),
         )

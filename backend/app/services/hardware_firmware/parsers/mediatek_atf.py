@@ -30,6 +30,7 @@ from app.services.hardware_firmware.parsers.base import ParsedBlob, register_par
 from app.services.hardware_firmware.parsers.mediatek_gfh import (
     LK_CONTAINER_HEADER_SIZE,
     derive_chipset,
+    signed_from_subimages,
     walk_sub_images,
 )
 
@@ -132,6 +133,7 @@ class MediatekAtfParser:
 
         return ParsedBlob(
             version=version,
+            signed=signed_from_subimages(subimages),
             metadata=meta,
             chipset_target=derive_chipset(meta),
         )

@@ -20,6 +20,24 @@ const SIGNED_STYLE: Record<string, string> = {
   weakly_signed: 'border-orange-500/50 text-orange-600 dark:text-orange-400',
 }
 
+// Severity → CVE badge background color.  Critical/high stand out (red),
+// medium gets warning amber, low/unknown stay neutral so the eye is
+// drawn to the worst risk first.
+function cveBadgeClass(severity: string | null | undefined): string {
+  switch (severity) {
+    case 'critical':
+      return 'bg-red-700'
+    case 'high':
+      return 'bg-red-600'
+    case 'medium':
+      return 'bg-amber-600'
+    case 'low':
+      return 'bg-yellow-600'
+    default:
+      return 'bg-red-600'  // CVEs without severity rank still flag red
+  }
+}
+
 const UNKNOWN_PARTITION = '(unknown partition)'
 const UNKNOWN_VENDOR = 'unknown'
 
@@ -242,15 +260,22 @@ export default function PartitionTree({
                                       v{b.version}
                                     </Badge>
                                   )}
-                                  {(b.metadata as { known_vulnerabilities?: unknown[] } | null)
-                                    ?.known_vulnerabilities?.length ? (
+                                  {b.cve_count > 0 && (
                                     <Badge
-                                      className="text-[10px] bg-red-600 text-white"
-                                      title="Parser-detected CVE(s)"
+                                      className={`text-[10px] text-white ${cveBadgeClass(b.max_severity)}`}
+                                      title={`${b.cve_count} CVE${b.cve_count === 1 ? '' : 's'} matched (max severity: ${b.max_severity ?? 'unknown'})`}
                                     >
-                                      CVE
+                                      {b.cve_count} CVE
                                     </Badge>
-                                  ) : null}
+                                  )}
+                                  {b.advisory_count > 0 && (
+                                    <Badge
+                                      className="text-[10px] bg-amber-600 text-white"
+                                      title={`${b.advisory_count} advisory presence flag(s)`}
+                                    >
+                                      ADV
+                                    </Badge>
+                                  )}
                                   <span className="w-16 text-right font-mono tabular-nums text-[10px] text-muted-foreground">
                                     {formatBytes(b.file_size)}
                                   </span>

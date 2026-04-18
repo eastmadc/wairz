@@ -18,7 +18,7 @@ from __future__ import annotations
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
+from sqlalchemy import case, func, literal, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
@@ -31,8 +31,31 @@ from app.schemas.hardware_firmware import (
     FirmwareEdgeResponse,
     FirmwareEdgesResponse,
     HardwareFirmwareBlobResponse,
+    HardwareFirmwareCveAggregate,
     HardwareFirmwareListResponse,
 )
+
+
+# Severity ordering for the per-blob max_severity rollup. Postgres
+# numeric MAX() works on the rank, then we map back to the label.
+_SEVERITY_RANK = {"critical": 4, "high": 3, "medium": 2, "low": 1}
+_RANK_TO_SEVERITY = {v: k for k, v in _SEVERITY_RANK.items()}
+
+
+def _severity_case():
+    """SQL CASE that ranks SbomVulnerability.severity for MAX() aggregation."""
+    return case(
+        (SbomVulnerability.severity == "critical", 4),
+        (SbomVulnerability.severity == "high", 3),
+        (SbomVulnerability.severity == "medium", 2),
+        (SbomVulnerability.severity == "low", 1),
+        else_=0,
+    )
+
+
+# Kernel-tier set must stay in sync with the matcher (cve_matcher.py)
+# and with the run_cve_match aggregate split below.
+_KERNEL_TIERS = {"kernel_cpe", "kernel_subsystem"}
 from app.services.hardware_firmware.cve_matcher import match_firmware_cves
 from app.services.hardware_firmware.graph import build_driver_firmware_graph
 from app.services.hardware_firmware.hbom_export import build_hbom
@@ -43,12 +66,22 @@ router = APIRouter(
 )
 
 
-def _blob_to_response(blob: HardwareFirmwareBlob) -> HardwareFirmwareBlobResponse:
+def _blob_to_response(
+    blob: HardwareFirmwareBlob,
+    cve_count: int = 0,
+    advisory_count: int = 0,
+    max_severity: str | None = None,
+) -> HardwareFirmwareBlobResponse:
     """Build a response model from an ORM row.
 
     Falls back to explicit dict construction because the
     ``metadata``/``metadata_`` alias via ``validation_alias`` is sensitive
     to ORM attribute name vs column name and has surprised us before.
+
+    ``cve_count`` / ``advisory_count`` / ``max_severity`` are sourced from
+    the list endpoint's GROUP BY join against ``sbom_vulnerabilities`` --
+    they default to 0/None for callers (single-blob fetch) that don't
+    pre-compute them.
     """
     return HardwareFirmwareBlobResponse(
         id=blob.id,
@@ -71,6 +104,9 @@ def _blob_to_response(blob: HardwareFirmwareBlob) -> HardwareFirmwareBlobRespons
         detection_source=blob.detection_source,
         detection_confidence=blob.detection_confidence,
         created_at=blob.created_at,
+        cve_count=cve_count,
+        advisory_count=advisory_count,
+        max_severity=max_severity,
     )
 
 
@@ -82,7 +118,12 @@ async def list_blobs(
     firmware=Depends(_resolve_firmware),
     db: AsyncSession = Depends(get_db),
 ) -> HardwareFirmwareListResponse:
-    """List detected hardware firmware blobs for the resolved firmware."""
+    """List detected hardware firmware blobs for the resolved firmware.
+
+    Each row is decorated with cve_count / advisory_count / max_severity
+    rolled up from sbom_vulnerabilities via a single GROUP BY (no N+1).
+    The UI uses these to badge the tree without an extra fetch per blob.
+    """
     stmt = select(HardwareFirmwareBlob).where(
         HardwareFirmwareBlob.firmware_id == firmware.id,
     )
@@ -94,9 +135,83 @@ async def list_blobs(
         stmt = stmt.where(HardwareFirmwareBlob.signed == "signed")
     stmt = stmt.order_by(HardwareFirmwareBlob.category, HardwareFirmwareBlob.blob_path)
     blobs = (await db.execute(stmt)).scalars().all()
-    return HardwareFirmwareListResponse(
-        blobs=[_blob_to_response(b) for b in blobs],
-        total=len(blobs),
+
+    # Single GROUP BY across all sbom_vulnerabilities for this firmware,
+    # split into actual-CVE vs ADVISORY-* presence flags.  We project
+    # max_severity via a CASE-rank so the badge color reflects the
+    # highest severity across either category.
+    rollup_stmt = select(
+        SbomVulnerability.blob_id,
+        func.sum(
+            case((SbomVulnerability.cve_id.like("ADVISORY-%"), 0), else_=1)
+        ).label("cve_count"),
+        func.sum(
+            case((SbomVulnerability.cve_id.like("ADVISORY-%"), 1), else_=0)
+        ).label("advisory_count"),
+        func.max(_severity_case()).label("max_severity_rank"),
+    ).where(
+        SbomVulnerability.firmware_id == firmware.id,
+        SbomVulnerability.blob_id.is_not(None),
+    ).group_by(SbomVulnerability.blob_id)
+    rollup = {
+        r.blob_id: (
+            int(r.cve_count or 0),
+            int(r.advisory_count or 0),
+            _RANK_TO_SEVERITY.get(int(r.max_severity_rank or 0)),
+        )
+        for r in (await db.execute(rollup_stmt)).all()
+    }
+
+    blob_rows: list[HardwareFirmwareBlobResponse] = []
+    for b in blobs:
+        cve_n, adv_n, max_sev = rollup.get(b.id, (0, 0, None))
+        blob_rows.append(_blob_to_response(b, cve_n, adv_n, max_sev))
+    return HardwareFirmwareListResponse(blobs=blob_rows, total=len(blob_rows))
+
+
+@router.get("/cve-aggregate", response_model=HardwareFirmwareCveAggregate)
+async def get_cve_aggregate(
+    firmware=Depends(_resolve_firmware),
+    db: AsyncSession = Depends(get_db),
+) -> HardwareFirmwareCveAggregate:
+    """Read-only summary of persisted hw-firmware CVEs for this firmware.
+
+    Distinct from POST /cve-match (which RUNS the matcher); this just
+    counts what already lives in sbom_vulnerabilities so the UI header
+    badge can render on page load without re-running the matcher every
+    time the user navigates back to the page.
+
+    Splits kernel-tier CVEs out from hw-firmware CVEs to mirror the
+    aggregate semantics of POST /cve-match.
+    """
+    stmt = select(
+        SbomVulnerability.cve_id,
+        SbomVulnerability.match_tier,
+        func.max(SbomVulnerability.created_at).label("seen_at"),
+    ).where(
+        SbomVulnerability.firmware_id == firmware.id,
+        SbomVulnerability.blob_id.is_not(None),
+    ).group_by(SbomVulnerability.cve_id, SbomVulnerability.match_tier)
+    rows = (await db.execute(stmt)).all()
+
+    hwfw_cves: set[str] = set()
+    kernel_cves: set[str] = set()
+    advisories: set[str] = set()
+    last_seen = None
+    for cve_id, tier, seen in rows:
+        if seen is not None and (last_seen is None or seen > last_seen):
+            last_seen = seen
+        if cve_id.startswith("ADVISORY-"):
+            advisories.add(cve_id)
+        elif tier in _KERNEL_TIERS:
+            kernel_cves.add(cve_id)
+        else:
+            hwfw_cves.add(cve_id)
+    return HardwareFirmwareCveAggregate(
+        hw_firmware_cves=len(hwfw_cves),
+        kernel_cves=len(kernel_cves),
+        advisory_count=len(advisories),
+        last_match_at=last_seen,
     )
 
 
@@ -170,7 +285,6 @@ async def run_cve_match(
     # CVE onto every kernel_module blob (by design — so per-blob CVE
     # queries reflect kernel findings) which inflates the row count by
     # ~O(CVEs × modules). Aggregate UI needs distinct-CVE semantics.
-    _KERNEL_TIERS = {"kernel_cpe", "kernel_subsystem"}
     kernel_matches = [m for m in matches if m.tier in _KERNEL_TIERS]
     hwfw_matches = [m for m in matches if m.tier not in _KERNEL_TIERS]
     return {

@@ -31,6 +31,15 @@ class HardwareFirmwareBlobResponse(BaseModel):
     detection_source: str
     detection_confidence: str = "medium"
     created_at: datetime
+    # CVE rollup populated by the list endpoint via a single GROUP BY
+    # over sbom_vulnerabilities.  ``cve_count`` excludes ADVISORY-* rows
+    # (they're presence flags, not actual CVEs); ``advisory_count``
+    # tracks them separately so the UI can badge with the right severity
+    # signal.  ``max_severity`` is the highest severity across both CVEs
+    # AND advisories so the badge color reflects worst-case risk.
+    cve_count: int = 0
+    advisory_count: int = 0
+    max_severity: str | None = None  # critical | high | medium | low
 
 
 class HardwareFirmwareListResponse(BaseModel):
@@ -38,6 +47,21 @@ class HardwareFirmwareListResponse(BaseModel):
 
     blobs: list[HardwareFirmwareBlobResponse]
     total: int
+
+
+class HardwareFirmwareCveAggregate(BaseModel):
+    """Firmware-wide CVE count summary used by the page header.
+
+    Distinct from ``POST /cve-match`` which RUNS the matcher; this is a
+    cheap read-only count of what's already persisted in
+    ``sbom_vulnerabilities`` so the header badge can render on page load
+    without re-running matching every time.
+    """
+
+    hw_firmware_cves: int  # distinct CVEs across hw-firmware tiers
+    kernel_cves: int        # distinct CVEs from kernel_cpe + kernel_subsystem
+    advisory_count: int     # distinct ADVISORY-* presence flags
+    last_match_at: datetime | None = None
 
 
 class HardwareFirmwareFilter(BaseModel):
