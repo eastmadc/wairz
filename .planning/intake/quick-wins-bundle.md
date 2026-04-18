@@ -1,6 +1,10 @@
 ---
 title: "Quick Wins Bundle (30 min each, high payoff)"
-status: pending
+status: partial
+partial_at: 2026-04-18
+partial_in: session 59045370 autopilot wave-2
+shipped: Q1, Q2, Q3, Q5, Q6, Q7, Q8, Q9, Q10, Q11, Q12, Q13, Q14, Q15, Q16, Q17
+remaining: Q4 (deferred — depends on backend-cache-module-extraction-and-ttl)
 priority: medium
 target: multiple
 ---

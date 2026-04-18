@@ -1,6 +1,9 @@
 ---
 title: "Frontend: Extract useFirmwareList Hook, Eliminate 9 Duplicate Fetches"
-status: pending
+status: completed
+completed_at: 2026-04-18
+completed_in: session 59045370 autopilot wave-2 (commit 97c7c7a)
+note: Migrated 10 pages (intake said 9 — HardwareFirmwarePage also had the pattern).
 priority: high
 target: frontend/src/hooks/, frontend/src/pages/
 ---
