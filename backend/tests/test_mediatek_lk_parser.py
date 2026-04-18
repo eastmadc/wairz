@@ -22,6 +22,7 @@ from app.services.hardware_firmware.classifier import classify
 from app.services.hardware_firmware.cve_matcher import extract_subcomponent
 from app.services.hardware_firmware.parsers.mediatek_gfh import (
     LkHeader,
+    derive_chipset,
     is_stub_descriptor,
     lookup_partition,
     parse_lk_header,
@@ -108,7 +109,7 @@ class TestLookupPartition:
         ("atf",      ("tee", "atf")),
         ("gz",       ("tee", "geniezone")),
         ("tee1",     ("tee", "tee")),
-        ("scp",      ("dsp", "tinysys")),
+        ("scp",      ("mcu", "tinysys")),
         ("sspm",     ("mcu", "tinysys")),
         ("spmfw",    ("mcu", "spmfw")),
         ("cam_vpu1", ("camera", "cam_vpu")),
@@ -129,7 +130,60 @@ class TestLookupPartition:
 
     def test_tinysys_prefix_match(self):
         """Newer bundles use `tinysys-scp`, `tinysys-sspm` as the compact name."""
-        assert lookup_partition("tinysys-scp") == ("dsp", "tinysys")
+        assert lookup_partition("tinysys-scp") == ("mcu", "tinysys")
+
+
+# ─── Chipset derivation ──────────────────────────────────────────────
+
+class TestDeriveChipset:
+    """Chipset extraction from MTK parser metadata.
+
+    Drives the curated_yaml chipset_regex matcher — without a populated
+    chipset_target, every yaml entry with chipset_regex silently skips.
+    """
+
+    def test_mt6771_from_platform_tree(self):
+        # tinysys/SCP path observed on DPCS10 (Genio 700 / MT6771 era)
+        meta = {"platform_tree": "project/CM4_A/mt6771/"}
+        assert derive_chipset(meta) == "mt6771"
+
+    def test_mt8788_from_aiot_board_tag(self):
+        # DPCS10 board_tag — only chipset signal on SPMFW/SSPM blobs
+        meta = {"board_tag": "aiot8788ep1_64_bsp_k66"}
+        assert derive_chipset(meta) == "mt8788"
+
+    def test_explicit_mt_takes_precedence_over_aiot(self):
+        # When both signals are present, the explicit ``mt\d+`` token wins
+        meta = {
+            "platform_tree": "plat/mediatek/mt6989/",
+            "board_tag": "aiot8788ep1",
+        }
+        assert derive_chipset(meta) == "mt6989"
+
+    def test_uppercase_normalised(self):
+        meta = {"platform_tree": "MT8195_PROJ/CM4_A/"}
+        assert derive_chipset(meta) == "mt8195"
+
+    def test_no_hint_returns_none(self):
+        meta = {"runtime": "freertos", "component": "scp"}
+        assert derive_chipset(meta) is None
+
+    def test_empty_metadata_returns_none(self):
+        assert derive_chipset({}) is None
+
+    def test_non_string_values_ignored(self):
+        # Sub-image lists, version numbers etc. shouldn't crash the scan
+        meta = {
+            "sub_images": [{"name": "tinysys-scp", "size": 100}],
+            "vector_msp": 0x000302E8,
+            "platform_tree": "project/CM4_A/mt6771/",
+        }
+        assert derive_chipset(meta) == "mt6771"
+
+    def test_word_boundary_avoids_false_positives(self):
+        # `kmtxxx` or `format=mt` shouldn't match — needs word boundary
+        meta = {"runtime": "tinysys_rtos", "note": "format mtfoo"}
+        assert derive_chipset(meta) is None
 
 
 # ─── Stub detection ───────────────────────────────────────────────────
@@ -179,8 +233,10 @@ class TestClassifierDispatch:
     def test_md1rom_becomes_modem(self):
         assert self._classify("md1rom") == ("modem", "mediatek", "mtk_lk")
 
-    def test_scp_becomes_dsp(self):
-        assert self._classify("scp") == ("dsp", "mediatek", "mtk_tinysys")
+    def test_scp_becomes_mcu(self):
+        # SCP is a Cortex-M4 system controller, not a DSP.  Categorized
+        # as ``mcu`` so it buckets with sspm/spmfw/mcupm/dpm.
+        assert self._classify("scp") == ("mcu", "mediatek", "mtk_tinysys")
 
     def test_spmfw_becomes_mcu(self):
         assert self._classify("spmfw") == ("mcu", "mediatek", "mtk_tinysys")

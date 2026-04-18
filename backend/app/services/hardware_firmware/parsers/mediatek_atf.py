@@ -29,6 +29,7 @@ from typing import Any
 from app.services.hardware_firmware.parsers.base import ParsedBlob, register_parser
 from app.services.hardware_firmware.parsers.mediatek_gfh import (
     LK_CONTAINER_HEADER_SIZE,
+    derive_chipset,
     walk_sub_images,
 )
 
@@ -129,7 +130,11 @@ class MediatekAtfParser:
             "notes": "BL31_BASE default for MT6771/MT8788; verify via GFH maddr",
         }
 
-        return ParsedBlob(version=version, metadata=meta)
+        return ParsedBlob(
+            version=version,
+            metadata=meta,
+            chipset_target=derive_chipset(meta),
+        )
 
 
 register_parser(MediatekAtfParser())

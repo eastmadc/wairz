@@ -208,14 +208,20 @@ _MTK_PARTITIONS: dict[str, tuple[str, str]] = {
     "tee2": ("tee", "tee"),
     "gz": ("tee", "geniezone"),
 
-    # Power / coprocessors
+    # Power / coprocessors.  All tinysys-family blobs are Cortex-M
+    # microcontrollers (SCP=Cortex-M4 system controller, SSPM/MCUPM/DPM=
+    # power managers, SPMFW=PCM microcode).  Categorize as ``mcu`` so
+    # they bucket together in the hardware listing and so curated_yaml
+    # entries keyed on category=mcu fire across the whole tinysys family.
+    # (Audio DSP and APU/MDLA stay under ``dsp`` below — those really
+    # are signal-processor cores, not microcontrollers.)
     "spmfw": ("mcu", "spmfw"),
     "sspm": ("mcu", "tinysys"),
     "mcupm": ("mcu", "mcupm"),
     "dpm": ("mcu", "dpm"),
-    "scp": ("dsp", "tinysys"),
-    "scp1": ("dsp", "tinysys"),
-    "scp2": ("dsp", "tinysys"),
+    "scp": ("mcu", "tinysys"),
+    "scp1": ("mcu", "tinysys"),
+    "scp2": ("mcu", "tinysys"),
 
     # Camera
     "cam_vpu1": ("camera", "cam_vpu"),
@@ -279,9 +285,11 @@ def lookup_partition(name: str) -> tuple[str, str] | None:
     hit = _MTK_PARTITIONS.get(key)
     if hit is not None:
         return hit
-    # Newer bundles name scp/sspm/mcupm as "tinysys-scp" etc.
+    # Newer bundles name scp/sspm/mcupm as "tinysys-scp" etc.  All
+    # tinysys cores are Cortex-M microcontrollers (see _MTK_PARTITIONS
+    # comment above).
     if key.startswith("tinysys"):
-        return ("dsp", "tinysys")
+        return ("mcu", "tinysys")
     return None
 
 
@@ -296,3 +304,40 @@ def is_stub_descriptor(name: str, file_size: int) -> bool:
     if not name:
         return False
     return name.lower() in _STUB_CANDIDATES and file_size < _STUB_SIZE_THRESHOLD
+
+
+# MTK SoC IDs: 4-5 digit numbers prefixed by ``mt`` (kernel/TF-A source
+# convention) or by ``aiot`` on Genio AIoT SKUs (board name embeds the
+# underlying SoC, e.g. ``aiot8788ep1`` → MT8788).
+#
+# Leading lookbehind rejects a preceding letter/digit so we don't
+# match ``kmt6771`` or ``ymt8788``; trailing negative lookahead rejects
+# a following digit so we don't truncate ``mt67711`` to ``mt6771``.
+# Compound identifiers like ``mt8195_proj`` or ``mt6771-bsp-k66``
+# still match cleanly because ``_`` and ``-`` are not digits.
+_MTK_CHIPSET_RE = re.compile(r"(?<![A-Za-z0-9])mt(\d{4,5})(?!\d)", re.IGNORECASE)
+_AIOT_CHIPSET_RE = re.compile(r"(?<![A-Za-z0-9])aiot(\d{4,5})(?!\d)", re.IGNORECASE)
+
+
+def derive_chipset(metadata: dict) -> str | None:
+    """Derive the canonical MTK SoC chipset (e.g. ``mt6771``) from a
+    parser's metadata dict, or None when no hint is present.
+
+    Scans string-typed values for an explicit ``mt\\d{4,5}`` token first
+    (kernel/TF-A platform paths, GZ banner sources). Falls back to the
+    AIoT board-name encoding (``aiot8788…`` → ``mt8788``) used on Genio
+    boards where the only visible identifier is the board tag.
+
+    Returned in lowercase to match the chipset_regex patterns shipped in
+    ``known_firmware.yaml`` (case-insensitive but normalised).
+    """
+    for value in metadata.values():
+        if not isinstance(value, str) or not value:
+            continue
+        m = _MTK_CHIPSET_RE.search(value)
+        if m:
+            return f"mt{m.group(1).lower()}"
+        m = _AIOT_CHIPSET_RE.search(value)
+        if m:
+            return f"mt{m.group(1).lower()}"
+    return None

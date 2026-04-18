@@ -234,7 +234,7 @@ def _classify_by_magic(magic: bytes) -> Classification | None:
             dispatch = lookup_partition(hdr.name)
             # Category comes from the authoritative name→category table;
             # format comes from whether a role-specific parser exists.
-            # scp → ("dsp", "tinysys") → format=mtk_tinysys
+            # scp → ("mcu", "tinysys") → format=mtk_tinysys
             # sspm → ("mcu", "tinysys") → format=mtk_tinysys
             # atf → ("tee", "atf") → format=mtk_atf
             # gz → ("tee", "geniezone") → format=mtk_geniezone
@@ -248,7 +248,7 @@ def _classify_by_magic(magic: bytes) -> Classification | None:
                 name_lower in ("scp", "sspm", "mcupm", "dpm", "spmfw")
                 or name_lower.startswith("tinysys")
             ):
-                cat = dispatch[0] if dispatch else "dsp"
+                cat = dispatch[0] if dispatch else "mcu"
                 return Classification(cat, "mediatek", "mtk_tinysys", "high")
             # Everything else — logo, cam_vpu, md1rom, lk — routes
             # through the generic mtk_lk parser with category from the
