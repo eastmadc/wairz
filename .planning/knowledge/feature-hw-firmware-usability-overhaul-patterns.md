@@ -110,3 +110,29 @@
 | 200 ms debounce on search input | Felt instant during typing; avoided re-render thrash on tree filter | Adopted |
 | Kernel CVEs as separate stat card (not merged) | 439 kernel CVEs would visually drown the 26 hw-firmware ones | Adopted — product-PM persona served |
 | Skip low-confidence quality rules this campaign | Most lessons were judgment calls, not specific-regex-detectable | No new harness rules added; captured as patterns instead |
+
+---
+
+## Follow-up pattern — 2026-04-18 22:55 (post-ship user feedback)
+
+### 8. Multi-tier auto-expansion must propagate down every level
+
+- **Description:** When an auto-expansion feature decides that a
+  container should open based on a condition ("this partition has
+  CVEs → open it"), the same condition must be applied recursively
+  to every child level that contains the target items.  Otherwise
+  the user opens level 1 and hits a second layer of collapsed
+  "click to expand" buttons, which is worse than a single "expand
+  all" click to begin with.
+- **Evidence:** Initial autopilot pass added
+  `pickDefaultOpenPartitions` but left `openVendors` as `new Set()`.
+  User reported "the tree doesn't fully expand" within an hour of
+  deploy.  Fix added `pickDefaultOpenVendors` (same shape, one level
+  down) + an explicit "Expand all" toolbar button as escape hatch.
+  Commit `f5dc449`.
+- **Applies when:** Any multi-level UI tree with auto-open logic.
+  Ask: "if the user's intent (e.g. 'show me the CVEs') is matched at
+  level N, does level N+1 also need to respond?"  For depth-3+ trees,
+  also consider: is "Expand all" cheaper to ship than per-level
+  auto-expand logic?  It covers edge cases (filtered searches, odd
+  tiers) that per-level rules miss.
