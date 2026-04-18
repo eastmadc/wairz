@@ -52,7 +52,10 @@ services:
         DOCKER_GID: "${DOCKER_GID:-999}"
     restart: unless-stopped
     ports:
-      - "0.0.0.0:8000:8000"
+      # Default binds to 127.0.0.1 to prevent LAN exposure of the
+      # unauthenticated /ws WebSocket endpoint. Override via
+      # BACKEND_HOST_BIND=0.0.0.0 only after auth is hardened.
+      - "${BACKEND_HOST_BIND:-127.0.0.1}:${BACKEND_HOST_PORT:-8000}:8000"
     env_file:
       - .env
     environment:
@@ -250,7 +253,7 @@ services:
       dockerfile: Dockerfile
     restart: unless-stopped
     ports:
-      - "0.0.0.0:3000:3000"
+      - "${FRONTEND_HOST_BIND:-127.0.0.1}:${FRONTEND_HOST_PORT:-3000}:3000"
     env_file:
       - .env
     depends_on:
