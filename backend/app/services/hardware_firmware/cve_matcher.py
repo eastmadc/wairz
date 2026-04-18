@@ -1,5 +1,11 @@
 """Multi-tier CVE matcher for hardware firmware blobs.
 
+Tier 0 — Parser-detected version-pin (high): parsers that can pin a CVE
+  from a banner + bulletin (e.g. ``mediatek_geniezone`` flags
+  CVE-2025-20707 when the GenieZone banner predates the February 2026
+  PSB fix) populate ``blob.metadata_["known_vulnerabilities"]``.  This
+  tier projects those records into CveMatch rows so the same persistence,
+  UI read, and HBOM export paths apply.  Zero DB cost; per-blob iterable.
 Tier 1 — Chipset CPE lookup (high confidence): if blob.chipset_target
   matches a CPE in the NVD dictionary, query by CPE.
 Tier 2 — NVD free-text (medium): keyword search on "{vendor} {category}
@@ -52,7 +58,7 @@ class CveMatch:
     cvss_score: float | None
     description: str
     confidence: str  # high | medium | low
-    tier: str  # chipset_cpe | nvd_freetext | curated_yaml | kernel_cpe | kernel_subsystem
+    tier: str  # parser_version_pin | chipset_cpe | nvd_freetext | curated_yaml | kernel_cpe | kernel_subsystem
 
 
 def _load_known_firmware() -> list[dict]:
@@ -104,6 +110,52 @@ def _stringify_metadata(md: dict) -> list[str]:
         elif isinstance(v, list):
             out.extend(x for x in v if isinstance(x, str))
     return out
+
+
+def _match_parser_detected(
+    blobs: Sequence[HardwareFirmwareBlob],
+) -> list[CveMatch]:
+    """Tier 0 — CVEs fingerprinted inline by parsers (version-pin).
+
+    Some parsers embed known-vulnerability records directly in
+    ``blob.metadata_["known_vulnerabilities"]`` when the banner carries
+    enough information to pin a CVE against a vendor bulletin's fixed
+    version (e.g. ``mediatek_geniezone`` flags CVE-2025-20707 when the
+    GZ banner predates the February 2026 PSB fix).  Each record is
+    projected into a :class:`CveMatch` so the same dedup, persistence,
+    UI-read, and HBOM export paths apply as the other tiers.
+
+    Record shape (columnar mapping):
+        cve_id      → CveMatch.cve_id        (required; skipped if absent)
+        severity    → CveMatch.severity      (default "medium")
+        confidence  → CveMatch.confidence    (default "high")
+        rationale   → CveMatch.description   (default "")
+    Unknown keys (``cwe``, ``subcomponent``, ``source``, ``reference``)
+    stay in ``blob.metadata_`` and are not columnar.
+    """
+    matches: list[CveMatch] = []
+    for blob in blobs:
+        known = (blob.metadata_ or {}).get("known_vulnerabilities") or []
+        if not isinstance(known, list):
+            continue
+        for v in known:
+            if not isinstance(v, dict):
+                continue
+            cve_id = v.get("cve_id")
+            if not cve_id:
+                continue
+            matches.append(
+                CveMatch(
+                    blob_id=blob.id,
+                    cve_id=cve_id,
+                    severity=v.get("severity") or "medium",
+                    cvss_score=None,
+                    description=v.get("rationale") or "",
+                    confidence=v.get("confidence") or "high",
+                    tier="parser_version_pin",
+                )
+            )
+    return matches
 
 
 def _match_curated(
@@ -509,6 +561,11 @@ async def match_firmware_cves(
     existing = {(r[0], r[1]) for r in (await db.execute(existing_stmt)).all()}
 
     all_matches: list[CveMatch] = []
+    # Tier 0 — parser-embedded version-pin fingerprints (per-blob metadata;
+    # zero DB cost).  Runs before the per-blob Tier 1/2/3 loop so any CVE
+    # a parser flagged during detection surfaces even when the curated
+    # YAML, NVD keyword search, and CPE dictionary all miss.
+    all_matches.extend(_match_parser_detected(blobs))
     for blob in blobs:
         # Tier 3 (always)
         all_matches.extend(_match_curated(blob, families))
