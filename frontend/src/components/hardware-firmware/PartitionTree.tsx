@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { ChevronDown, ChevronRight, Cpu } from 'lucide-react'
+import { ChevronDown, ChevronRight, ChevronsDownUp, ChevronsUpDown, Cpu } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import type { HardwareFirmwareBlob } from '@/api/hardwareFirmware'
 import VendorRollup from './VendorRollup'
@@ -122,6 +122,49 @@ export function pickDefaultOpenPartitions(
   return s
 }
 
+/**
+ * Mirror of ``pickDefaultOpenPartitions`` for the vendor tier.  Opens
+ * any vendor group that holds a CVE-bearing blob, so after the
+ * CVE-auto-expansion the user sees the actual blob rows rather than a
+ * second layer of "click to expand" buttons.  Keys are
+ * ``${partitionKey}::${vendorKey}`` to match the tree's open-state
+ * convention.
+ *
+ * Exported for unit testing.
+ */
+export function pickDefaultOpenVendors(
+  partitions: Grouped['partitions'],
+): Set<string> {
+  const s = new Set<string>()
+  for (const p of partitions) {
+    for (const v of p.vendors) {
+      if (v.blobs.some((b) => b.cve_count > 0)) {
+        s.add(`${p.key}::${v.key}`)
+      }
+    }
+  }
+  return s
+}
+
+/**
+ * Build "every partition" and "every vendor" key sets for the
+ * Expand-all affordance.  Works on the already-grouped tree so the
+ * keys match the tree's open-state convention exactly.
+ */
+export function buildAllOpenKeys(
+  partitions: Grouped['partitions'],
+): { partitions: Set<string>; vendors: Set<string> } {
+  const p = new Set<string>()
+  const v = new Set<string>()
+  for (const part of partitions) {
+    p.add(part.key)
+    for (const ven of part.vendors) {
+      v.add(`${part.key}::${ven.key}`)
+    }
+  }
+  return { partitions: p, vendors: v }
+}
+
 function groupBlobs(
   blobs: HardwareFirmwareBlob[],
   sortMode: 'blobs' | 'cves',
@@ -196,18 +239,28 @@ export default function PartitionTree({
     () => pickDefaultOpenPartitions(grouped.partitions),
     [grouped.partitions],
   )
+  // Also expand any vendor groups that hold CVE-bearing blobs so the
+  // auto-expanded partitions show the actual blob rows, not a second
+  // layer of collapsed vendor headers.
+  const defaultOpenVendors = useMemo(
+    () => pickDefaultOpenVendors(grouped.partitions),
+    [grouped.partitions],
+  )
 
   const [openPartitions, setOpenPartitions] = useState<Set<string>>(
     defaultOpenPartitions,
   )
-  const [openVendors, setOpenVendors] = useState<Set<string>>(new Set())
+  const [openVendors, setOpenVendors] = useState<Set<string>>(
+    defaultOpenVendors,
+  )
 
   // If the set of partitions changes (filters toggled, firmware
-  // switched), re-apply the default so CVE-bearing partitions are
-  // visible without an extra click.
+  // switched), re-apply the default so CVE-bearing partitions AND
+  // their vendors are visible without extra clicks.
   useEffect(() => {
     setOpenPartitions(defaultOpenPartitions)
-  }, [defaultOpenPartitions])
+    setOpenVendors(defaultOpenVendors)
+  }, [defaultOpenPartitions, defaultOpenVendors])
 
   // Text-search auto-expansion: when the query is non-empty, open every
   // partition + vendor whose descendant blobs match, so the filtered
@@ -228,8 +281,24 @@ export default function PartitionTree({
       }
     }
     setOpenPartitions(newPartitions.size ? newPartitions : defaultOpenPartitions)
-    setOpenVendors(newVendors)
-  }, [query, grouped.partitions, defaultOpenPartitions])
+    setOpenVendors(newVendors.size ? newVendors : defaultOpenVendors)
+  }, [query, grouped.partitions, defaultOpenPartitions, defaultOpenVendors])
+
+  const allPartitionsOpen = useMemo(() => {
+    if (grouped.partitions.length === 0) return false
+    return grouped.partitions.every((p) => openPartitions.has(p.key))
+  }, [grouped.partitions, openPartitions])
+
+  const expandAll = () => {
+    const all = buildAllOpenKeys(grouped.partitions)
+    setOpenPartitions(all.partitions)
+    setOpenVendors(all.vendors)
+  }
+
+  const collapseAll = () => {
+    setOpenPartitions(new Set())
+    setOpenVendors(new Set())
+  }
 
   const togglePartition = (key: string) => {
     setOpenPartitions((prev) => {
@@ -259,6 +328,35 @@ export default function PartitionTree({
 
   return (
     <div className="space-y-2">
+      <div className="flex items-center justify-between">
+        <span className="text-[11px] text-muted-foreground">
+          {grouped.partitions.length} partition
+          {grouped.partitions.length === 1 ? '' : 's'} ·{' '}
+          {grouped.partitions.reduce((a, p) => a + p.blobs.length, 0)} blobs
+        </span>
+        <button
+          type="button"
+          onClick={allPartitionsOpen ? collapseAll : expandAll}
+          className="inline-flex items-center gap-1 rounded-md border border-border px-2 py-1 text-[11px] transition-colors hover:bg-accent/30"
+          title={
+            allPartitionsOpen
+              ? 'Collapse every partition + vendor group'
+              : 'Expand every partition + vendor group to show all blobs'
+          }
+        >
+          {allPartitionsOpen ? (
+            <>
+              <ChevronsDownUp className="h-3.5 w-3.5" />
+              Collapse all
+            </>
+          ) : (
+            <>
+              <ChevronsUpDown className="h-3.5 w-3.5" />
+              Expand all
+            </>
+          )}
+        </button>
+      </div>
       {grouped.partitions.map((partition) => {
         const isOpen = openPartitions.has(partition.key)
         return (
