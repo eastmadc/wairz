@@ -61,6 +61,16 @@ class Settings(BaseSettings):
     max_extraction_size_mb: int = 10240
     max_extraction_files: int = 500000
     max_compression_ratio: int = 200
+    # Max firmware size for the "standalone binary" fallback path.  When all
+    # extractors (unblob, binwalk3) fail to produce a filesystem root, firmware
+    # at or under this size is COPIED into extraction_dir as a single-file
+    # target so users can analyse it as a raw binary (bootloaders, bare-metal
+    # medical / automotive / IoT images, ROM dumps).  Past this size, the
+    # extraction fails cleanly with a readable error.  Tune up for
+    # deployments that ingest large raw firmware; cost is ~input_size extra
+    # disk per failed-extraction.  Original hardcoded limit was 10 MB, which
+    # excluded most real-world bare-metal firmware.
+    max_standalone_binary_mb: int = 512
     dependency_track_url: str = ""
     dependency_track_api_key: str = ""
     vulhunt_url: str = "http://vulhunt:8080"
