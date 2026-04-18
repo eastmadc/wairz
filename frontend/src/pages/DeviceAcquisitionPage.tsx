@@ -740,10 +740,12 @@ export default function DeviceAcquisitionPage() {
                         <dd className="font-medium">{getprop['ro.hardware.chipname']}</dd>
                       </>
                     )}
-                    {(getprop['ro.bootloader'] || metadata['bootloader']) && (
+                    {(getprop['ro.bootloader'] || !!metadata['bootloader']) && (
                       <>
                         <dt className="text-muted-foreground">Bootloader</dt>
-                        <dd className="font-medium">{getprop['ro.bootloader'] ?? metadata['bootloader']}</dd>
+                        <dd className="font-medium">
+                          {getprop['ro.bootloader'] ?? String(metadata['bootloader'])}
+                        </dd>
                       </>
                     )}
                   </dl>
