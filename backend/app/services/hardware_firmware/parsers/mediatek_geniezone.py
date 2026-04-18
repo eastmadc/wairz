@@ -37,7 +37,7 @@ import re
 from typing import Any
 
 from app.services.hardware_firmware.parsers.base import ParsedBlob, register_parser
-from app.services.hardware_firmware.parsers.mediatek_gfh import walk_sub_images
+from app.services.hardware_firmware.parsers.mediatek_gfh import derive_chipset, walk_sub_images
 
 logger = logging.getLogger(__name__)
 
@@ -184,7 +184,11 @@ class MediatekGenieZoneParser:
             "notes": "GZ_DEFAULT_BASE on Helio P60 / Genio 700; verify via GFH maddr",
         }
 
-        return ParsedBlob(version=version, metadata=meta)
+        return ParsedBlob(
+            version=version,
+            metadata=meta,
+            chipset_target=derive_chipset(meta),
+        )
 
 
 register_parser(MediatekGenieZoneParser())

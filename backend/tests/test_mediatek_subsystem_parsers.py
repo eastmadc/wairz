@@ -319,7 +319,7 @@ class TestClassifierSubsystemDispatch:
     def test_scp_routes_to_mtk_tinysys(self):
         cls = self._classify_by_name("scp")
         assert cls.format == "mtk_tinysys"
-        assert cls.category == "dsp"
+        assert cls.category == "mcu"
 
     def test_sspm_routes_to_mtk_tinysys(self):
         cls = self._classify_by_name("sspm")

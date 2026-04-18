@@ -200,3 +200,287 @@ families:
     notes: |
       Vanhoef 2021.  802.11 fragmentation parsing bugs in Broadcom/
       MediaTek Wi-Fi firmware.
+
+  # ===================================================================
+  # MediaTek subsystem coverage — sourced 2026-04-17 from Android
+  # Security Bulletin (CC-BY 2.5) and NVD (public domain).  See
+  # .planning/knowledge/handoff-2026-04-17-mtk-phase-c.md and the deep-
+  # research report from the same session for per-CVE provenance.
+  #
+  # MediaTek PSB pages (corp.mediatek.com) are NOT scraped per ToS;
+  # ALPS / WCNCR / MOLY patch IDs reproduced as factual cross-reference
+  # only.  Severity / chipset_regex / version_regex driven by ASB+NVD.
+  # ===================================================================
+
+  # SCP (System Control Processor) — Cortex-M4 system controller.
+  # Chipset_target populated by mtk_tinysys parser from platform_tree
+  # (e.g. project/CM4_A/mt6771/) or board_tag (aiot8788ep1 → mt8788).
+  - name: MediaTek SCP OOB write (CVE-2025-20668)
+    vendor: mediatek
+    category: mcu
+    chipset_regex: "(?i)^mt(6897|6878|6989|8796|8775|6991|6899)$"
+    cves:
+      - CVE-2025-20668
+    severity: high
+    cvss_score: 7.8
+    notes: |
+      ASB Sept 2025 / M-ALPS09625562.  OOB write in SCP firmware, LPE
+      from system-uid.  Dimensity 8400/9300/9400-class chipsets.  No
+      clean version threshold disclosed -- treat any matching chipset
+      as advisory; pair with parser_version_pin once banner extraction
+      lands (research notes scp.img carries v\d+\.\d+\.\d+ banners).
+
+  # tinysys IPC layer — umbrella covering SCP/SSPM/MCUPM message dispatch
+  - name: MediaTek tinysys IPI OOB write (CVE-2023-20621)
+    vendor: mediatek
+    category: mcu
+    chipset_regex: "(?i)^mt(6739|6761|6762|6765|6771|6789|6879|6883|6885|6893|6895|6983)$"
+    cves:
+      - CVE-2023-20621
+    severity: medium
+    cvss_score: 6.7
+    notes: |
+      ASB March 2023 / M-ALPS07664755.  OOB write in tinysys IPI handler
+      shared by SCP / SSPM / MCUPM message dispatch.  LPE.  Pre-March-
+      2023 builds vulnerable; no extractable banner — chipset advisory.
+
+  # SSPM / SPMFW / MCUPM / DPM advisory — no standalone CVEs found,
+  # but the tinysys IPC surface above covers their attack path.  This
+  # entry fires on every Cortex-M power-management blob to surface
+  # presence + recommend up-to-date BSP build.  Empty cves[] → emits
+  # an ADVISORY-* row per the matcher convention.  Name kept short
+  # because cve_id is VARCHAR(20) (ADVISORY- prefix + 11 chars max).
+  - name: MTK PM
+    vendor: mediatek
+    category: mcu
+    cves: []
+    severity: medium
+    cvss_score: 5.0
+    notes: |
+      MediaTek power-management coprocessor (sspm.img / spmfw.img /
+      mcupm.img / dpm.img).  Cortex-M blobs sharing the tinysys IPC
+      layer (CVE-2023-20621 surface).  No standalone public CVEs as of
+      2026-04 -- treat as advisory: flag presence, recommend up-to-date
+      BSP build.  Banner format varies; some carry "MTK_SPM v<N>" in
+      the first 4KB.
+
+  # apusys / VPU / MDLA AI-accelerator firmware
+  - name: MediaTek apusys OOB write (CVE-2023-32829)
+    vendor: mediatek
+    category: mcu
+    chipset_regex: "(?i)^mt(6879|6886|6891|6895|6896|6983|6985|8137|8139|8188|8195|8390|8395)$"
+    cves:
+      - CVE-2023-32829
+      - CVE-2021-0897
+    severity: medium
+    cvss_score: 6.7
+    notes: |
+      ASB / M-ALPS07713478.  Integer overflow → OOB write in apusys
+      (AI Processing Unit System).  LPE from system-uid.  Recurring
+      class: ALPS06... in 2021, ALPS07... in 2023, multiple fixes.
+      apusys.img / mdla.img typical filenames; cam_vpu*.img on older
+      SoCs.
+
+  # GenieZone hypervisor — additional CVEs beyond inline CVE-2025-20707.
+  # The version_regex below targets pre-3.2.x and pre-2.5 builds; the
+  # parser populates blob.version with the GZ_hypervisor banner.
+  - name: MediaTek GenieZone double-free (CVE-2023-20664)
+    vendor: mediatek
+    category: tee
+    version_regex: "(?i)geniezone\\s+v?([0-1]\\.|2\\.[0-4])"
+    chipset_regex: "(?i)^mt(6580|6735|6737|6765|6785|6889|8168|8185)$"
+    cves:
+      - CVE-2023-20664
+    severity: medium
+    cvss_score: 6.7
+    notes: |
+      ASB / M-ALPS07505952.  Double-free in gz.  LPE.  Pre-2023
+      GenieZone builds on older Helio-class SoCs.
+
+  - name: MediaTek GenieZone keyinstall info-disclosure (CVE-2024-20088)
+    vendor: mediatek
+    category: tee
+    chipset_regex: "(?i)^mt(6765|6768|6781|6833|6835|6877|6879|6883|6885|6886|6889|6893|6895|6897|6983|6985|6989|8755|8765|8766|8768|8775|8781|8786|8788|8792|8796)$"
+    cves:
+      - CVE-2024-20088
+    severity: medium
+    cvss_score: 4.4
+    notes: |
+      ASB / M-ALPS08932099.  Missing bounds check in keyinstall TA →
+      OOB read, info disclosure.  Local, system-uid required.
+
+  # MediaTek RPMB / TEE secure storage
+  - name: MediaTek RPMB OOB write (CVE-2022-32599)
+    vendor: mediatek
+    category: tee
+    chipset_regex: "(?i)^mt(6580|6731|6735|6737|6739|6753|6757|6761|6763|6765|6768|6769|6771|6779|6781|6785|6789|6833|6853|6855|6873|6875|6877|6879|6883|6885|6889|6891|6893)$"
+    cves:
+      - CVE-2022-32599
+    severity: medium
+    cvss_score: 6.7
+    notes: |
+      ASB / M-ALPS07460390.  RPMB logic error → OOB write.  LPE from
+      system-uid.  Pre-2022 TEE TAs — lives in tee.img / kinibi blobs.
+
+  # MD1 modem firmware — chipset_regex omitted because mtk_lk parser
+  # does not currently populate chipset_target on modem.img / md1*.img.
+  # These entries will fire on every modem blob; acceptable noise vs
+  # missing 20+ CVEs entirely.  Future modem chipset extraction lands
+  # via a dedicated mtk_modem parser.
+  - name: MediaTek modem CDMA PPP RCE (CVE-2023-20819)
+    vendor: mediatek
+    category: modem
+    cves:
+      - CVE-2023-20819
+    severity: critical
+    cvss_score: 9.8
+    notes: |
+      ASB / M-MOLY01068234.  OOB write in CDMA PPP handler, remote PE
+      from malicious base station.  LR11/LR12a/LR13/NR15/NR16/NR17
+      firmware branches affected; no extractable banner without DbgInfo
+      sidecar (cyrozap mediatek-lte-baseband-re notes).
+
+  - name: MediaTek modem 5G NAS RCE cluster (Feb 2024)
+    vendor: mediatek
+    category: modem
+    cves:
+      - CVE-2023-32841
+      - CVE-2023-32842
+      - CVE-2023-32843
+      - CVE-2024-20003
+    severity: high
+    cvss_score: 8.1
+    notes: |
+      ASB Feb 2024.  4× 5G modem bugs (M-MOLY01128524 / 01130256 /
+      01130204 / 01191612).  RCE via NR signalling.  Companion to the
+      curated MediaTek-reaver entry above.
+
+  - name: MediaTek modem remote DoS cluster (2024-2026)
+    vendor: mediatek
+    category: modem
+    cves:
+      - CVE-2024-20094
+      - CVE-2024-20150
+      - CVE-2024-20039
+      - CVE-2023-32890
+      - CVE-2024-20082
+      - CVE-2025-20659
+      - CVE-2025-20704
+      - CVE-2025-20708
+      - CVE-2025-20703
+      - CVE-2025-20634
+    severity: high
+    cvss_score: 7.5
+    notes: |
+      Aggregate of remote-DoS bugs in MediaTek modem stack
+      (M-MOLY00843282, 01412526, 01240012, 01183647, 01182594,
+      01519028, 01516959, 01123853, 01599794).  Adjacent-network
+      RCE/crash.  Catch-all on modem blobs until per-version banner
+      extraction lands.
+
+  # MediaTek WLAN firmware (mt76xx / mt79xx)
+  - name: MediaTek WLAN firmware OOB (CVE-2024-20040)
+    vendor: mediatek
+    category: wifi
+    chipset_regex: "(?i)^mt(6768|6761|6762|6580|6833|6853|6781|6873|6875|6877|6883|6885|6889|6891|6893|6789|6855|6879|6886|6890|6895|6983|6985|7902|7915|7916|8195|8797)$"
+    cves:
+      - CVE-2024-20040
+    severity: high
+    cvss_score: 8.8
+    notes: |
+      ASB April 2024 / M-ALPS08360153 + M-WCNCR00363530.  OOB write in
+      WLAN firmware blob (wifi_ram_code, mt7915_*).  Adjacent-network
+      attacker → RCE on chip.  Genuine firmware-side bug (not driver).
+
+  # MediaTek MT79xx Bluetooth firmware
+  - name: MediaTek MT79xx Bluetooth heap overflow (CVE-2025-20672)
+    vendor: mediatek
+    category: bluetooth
+    chipset_regex: "(?i)^mt(7902|7921|7922|7925|7927)$"
+    version_regex: "^([0-2]\\.|3\\.[0-5])"
+    cves:
+      - CVE-2025-20672
+    severity: critical
+    cvss_score: 9.8
+    notes: |
+      M-WCNCR00412257.  Heap overflow in BT firmware <=3.6 on MT792x/
+      MT79xx family.  Critical, user-exec privileges, adjacent BT
+      attacker.  Wide deployment in laptops + Android tablets.
+
+  # MediaTek audio DSP (audio_dsp.img)
+  - name: MediaTek Audio DSP heap overflow chain (Check Point 2021)
+    vendor: mediatek
+    category: audio
+    chipset_regex: "(?i)^mt(6853|6873|6877|6885|6889|6893)$"
+    cves:
+      - CVE-2021-0661
+      - CVE-2021-0662
+      - CVE-2021-0663
+      - CVE-2021-0673
+    severity: high
+    cvss_score: 7.5
+    notes: |
+      Check Point Slava Makkaveev 2021.  4× heap overflows + audio HAL
+      config bug in audio_dsp.img.  IPI message AUDIO_DSP_TASK_*.  LPE
+      → mic/audio data flow eavesdropping primitive.  Pre-Oct-2021
+      firmware on Helio/Dimensity series.
+
+  # MediaTek video decoder (vdec) firmware
+  - name: MediaTek vdec memory-corruption cluster
+    vendor: mediatek
+    category: dsp
+    chipset_regex: "(?i)^mt(6580|6739|6761|6762|6765|6768|6781|6789|6833|6853|6855|6877|6879|6883|6885|6893|6895|6983|8167|8168|8175|8321|8365|8385|8765|8766|8768|8781|8786|8788|8789|8797|8798)$"
+    cves:
+      - CVE-2023-32850
+      - CVE-2024-20090
+      - CVE-2024-20091
+      - CVE-2024-20092
+      - CVE-2024-20093
+      - CVE-2024-20125
+      - CVE-2025-20657
+      - CVE-2024-20011
+      - CVE-2024-20009
+      - CVE-2024-20007
+    severity: high
+    cvss_score: 7.8
+    notes: |
+      ASB recurring 2023-2025.  vdec / alac / mp3 decoder OOB writes.
+      User opens malicious media → LPE.  Decoder firmware lives partly
+      in vcu/vpu blobs and partly in libmediacodec.
+
+  # MediaTek Download Agent (flashing/recovery)
+  - name: MediaTek Download Agent OOB cluster
+    vendor: mediatek
+    category: bootloader
+    cves:
+      - CVE-2024-20006
+      - CVE-2024-20141
+      - CVE-2024-20142
+      - CVE-2024-20143
+      - CVE-2024-20030
+      - CVE-2025-20635
+      - CVE-2025-20656
+      - CVE-2025-20658
+      - CVE-2025-20696
+      - CVE-2022-20073
+    severity: high
+    cvss_score: 6.6
+    notes: |
+      ASB recurring 2024-2025.  V6/V5 Download Agent OOB writes.
+      Physical-attacker LPE during flashing.  Companion to the
+      kamakiri BROM advisory; DA runs after BROM hands off.
+
+  # MediaTek WLAN driver (kernel module) RCE — distinct from firmware blob
+  - name: MediaTek WLAN driver RCE (CVE-2024-20100 cluster)
+    vendor: mediatek
+    category: kernel_module
+    chipset_regex: "(?i)^mt(8365|8183|6985|8695|6990|6989|3605|7927|8512|8676|8678|8698|8755|8775|8792|8796)$"
+    cves:
+      - CVE-2024-20100
+      - CVE-2024-20101
+      - CVE-2024-20103
+    severity: critical
+    cvss_score: 9.8
+    notes: |
+      ASB Oct 2024.  WLAN *driver* (not firmware) RCE cluster.  Lives
+      in mt76*.ko / wlan_drv_gen4m.ko -- adjacent-network unauth RCE.
