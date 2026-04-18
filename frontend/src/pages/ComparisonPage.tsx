@@ -19,17 +19,19 @@ import {
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { listFirmware } from '@/api/firmware'
+import { useFirmwareList } from '@/hooks/useFirmwareList'
 import { diffFirmware, diffBinary, diffTextFile, diffInstructions, diffDecompilation } from '@/api/comparison'
 import { formatFileSize } from '@/utils/format'
-import type { FirmwareDetail, FirmwareDiff, BinaryDiff, TextDiff, InstructionDiff, DecompilationDiff, FileDiffEntry } from '@/types'
+import type { FirmwareDiff, BinaryDiff, TextDiff, InstructionDiff, DecompilationDiff, FileDiffEntry } from '@/types'
 
 type Tab = 'files' | 'binaries' | 'binary-detail' | 'text-diff'
 
 export default function ComparisonPage() {
   const { projectId } = useParams<{ projectId: string }>()
 
-  const [firmwareList, setFirmwareList] = useState<FirmwareDetail[]>([])
+  const { firmwareList: allFirmware } = useFirmwareList(projectId)
+  // ComparisonPage only makes sense for unpacked firmware.
+  const firmwareList = allFirmware.filter((fw) => fw.extracted_path)
   const [fwAId, setFwAId] = useState('')
   const [fwBId, setFwBId] = useState('')
   const [loading, setLoading] = useState(false)
@@ -50,18 +52,14 @@ export default function ComparisonPage() {
   const [decompLoading, setDecompLoading] = useState(false)
   const [decompFunc, setDecompFunc] = useState<string | null>(null)
 
+  // Auto-select the first two unpacked firmware once the list loads.
+  // Runs on projectId transitions and when invalidation repopulates.
   useEffect(() => {
-    if (projectId) {
-      listFirmware(projectId).then((list) => {
-        const unpacked = list.filter((fw) => fw.extracted_path)
-        setFirmwareList(unpacked)
-        if (unpacked.length >= 2) {
-          setFwAId(unpacked[0].id)
-          setFwBId(unpacked[1].id)
-        }
-      })
+    if (!fwAId && !fwBId && firmwareList.length >= 2) {
+      setFwAId(firmwareList[0].id)
+      setFwBId(firmwareList[1].id)
     }
-  }, [projectId])
+  }, [firmwareList, fwAId, fwBId])
 
   const handleCompare = async () => {
     if (!projectId || !fwAId || !fwBId) return

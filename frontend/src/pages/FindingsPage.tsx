@@ -2,9 +2,9 @@ import { useEffect, useRef, useState, useCallback } from 'react'
 import { useParams, useLocation } from 'react-router-dom'
 import { ShieldAlert, Loader2 } from 'lucide-react'
 import { listFindings, updateFinding, deleteFinding } from '@/api/findings'
-import { listFirmware } from '@/api/firmware'
 import { useProjectStore } from '@/stores/projectStore'
-import type { Finding, FindingUpdate, FirmwareDetail, Severity, FindingStatus, FindingSource } from '@/types'
+import { useFirmwareList } from '@/hooks/useFirmwareList'
+import type { Finding, FindingUpdate, Severity, FindingStatus, FindingSource } from '@/types'
 import FirmwareSelector from '@/components/projects/FirmwareSelector'
 import FindingsList from '@/components/findings/FindingsList'
 import FindingDetail from '@/components/findings/FindingDetail'
@@ -14,7 +14,7 @@ export default function FindingsPage() {
   const { projectId } = useParams<{ projectId: string }>()
   const location = useLocation()
   const selectedFirmwareId = useProjectStore((s) => s.selectedFirmwareId)
-  const [firmwareList, setFirmwareList] = useState<FirmwareDetail[]>([])
+  const { firmwareList } = useFirmwareList(projectId)
 
   const [findings, setFindings] = useState<Finding[]>([])
   const [loading, setLoading] = useState(true)
@@ -24,10 +24,6 @@ export default function FindingsPage() {
   const [severityFilter, setSeverityFilter] = useState<Severity | null>(null)
   const [statusFilter, setStatusFilter] = useState<FindingStatus | null>(null)
   const [sourceFilter, setSourceFilter] = useState<FindingSource | null>(null)
-
-  useEffect(() => {
-    if (projectId) listFirmware(projectId).then(setFirmwareList).catch(() => {})
-  }, [projectId])
 
   const initialLoadDone = useRef(false)
   const fetchFindings = useCallback(async () => {

@@ -26,9 +26,8 @@ import {
   createPreset,
   deletePreset,
 } from '@/api/emulation'
-import { listFirmware } from '@/api/firmware'
+import { useFirmwareList } from '@/hooks/useFirmwareList'
 import { useProjectStore } from '@/stores/projectStore'
-import type { FirmwareDetail } from '@/types'
 import FirmwareSelector from '@/components/projects/FirmwareSelector'
 import KernelManager from '@/components/emulation/KernelManager'
 import { SessionCard } from '@/components/emulation/SessionCard'
@@ -51,7 +50,7 @@ export default function EmulationPage() {
   const { projectId } = useParams<{ projectId: string }>()
   const [searchParams, setSearchParams] = useSearchParams()
   const selectedFirmwareId = useProjectStore((s) => s.selectedFirmwareId)
-  const [firmwareList, setFirmwareList] = useState<FirmwareDetail[]>([])
+  const { firmwareList } = useFirmwareList(projectId)
 
   // Top-level page tab: user-mode emulation vs FirmAE system emulation
   const [pageTab, setPageTab] = useState<PageTab>('user')
@@ -134,27 +133,24 @@ export default function EmulationPage() {
     loadPresets()
   }, [loadSessions, loadPresets])
 
-  // Fetch firmware list for selector and architecture for kernel selection
+  // Derive firmware-specific state from the shared list.  Pre-fills
+  // architecture, kernel path, and binary path based on the currently
+  // selected firmware (or first entry if nothing selected).
   useEffect(() => {
-    if (!projectId) return
-    listFirmware(projectId)
-      .then((fwList) => {
-        setFirmwareList(fwList)
-        const fw = fwList.find((f) => f.id === selectedFirmwareId) ?? fwList[0]
-        if (fw) {
-          setFirmwareArch(fw.architecture ?? null)
-          setFirmwareKernelPath(fw.kernel_path ?? null)
-          // Pre-fill binary path for standalone binaries
-          // Use extracted_filename (sanitized name on disk) rather than
-          // original_filename which may have special chars replaced
-          if (fw.binary_info) {
-            const fname = fw.binary_info.extracted_filename ?? fw.original_filename
-            if (fname) setBinaryPath(fname)
-          }
-        }
-      })
-      .catch(() => {})
-  }, [projectId, selectedFirmwareId])
+    if (!firmwareList.length) return
+    const fw = firmwareList.find((f) => f.id === selectedFirmwareId) ?? firmwareList[0]
+    if (fw) {
+      setFirmwareArch(fw.architecture ?? null)
+      setFirmwareKernelPath(fw.kernel_path ?? null)
+      // Pre-fill binary path for standalone binaries.  Use
+      // extracted_filename (sanitised name on disk) rather than
+      // original_filename which may have special chars replaced.
+      if (fw.binary_info) {
+        const fname = fw.binary_info.extracted_filename ?? fw.original_filename
+        if (fname) setBinaryPath(fname)
+      }
+    }
+  }, [firmwareList, selectedFirmwareId])
 
   // SSE: listen for emulation events and refresh on status changes
   const hasActiveSession = sessions.some((s) => s.status === 'running' || s.status === 'starting')

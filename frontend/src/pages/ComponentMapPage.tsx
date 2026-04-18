@@ -2,24 +2,20 @@ import { useState, useEffect } from 'react'
 import { useParams } from 'react-router-dom'
 import { Loader2, AlertTriangle } from 'lucide-react'
 import { getComponentMap } from '@/api/componentMap'
-import { listFirmware } from '@/api/firmware'
 import { useProjectStore } from '@/stores/projectStore'
+import { useFirmwareList } from '@/hooks/useFirmwareList'
 import { extractErrorMessage } from '@/utils/error'
-import type { ComponentGraph, FirmwareDetail } from '@/types'
+import type { ComponentGraph } from '@/types'
 import FirmwareSelector from '@/components/projects/FirmwareSelector'
 import ComponentMap from '@/components/component-map/ComponentMap'
 
 export default function ComponentMapPage() {
   const { projectId } = useParams<{ projectId: string }>()
   const selectedFirmwareId = useProjectStore((s) => s.selectedFirmwareId)
-  const [firmwareList, setFirmwareList] = useState<FirmwareDetail[]>([])
+  const { firmwareList } = useFirmwareList(projectId)
   const [graph, setGraph] = useState<ComponentGraph | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-
-  useEffect(() => {
-    if (projectId) listFirmware(projectId).then(setFirmwareList).catch(() => {})
-  }, [projectId])
 
   useEffect(() => {
     if (!projectId) return

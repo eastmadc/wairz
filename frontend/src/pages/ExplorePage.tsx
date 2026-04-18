@@ -3,8 +3,7 @@ import { useParams, useSearchParams } from 'react-router-dom'
 import { FolderTree, PanelLeftClose, PanelLeftOpen, TerminalSquare, Cpu } from 'lucide-react'
 import { useExplorerStore } from '@/stores/explorerStore'
 import { useProjectStore } from '@/stores/projectStore'
-import { listFirmware } from '@/api/firmware'
-import type { FirmwareDetail } from '@/types'
+import { useFirmwareList } from '@/hooks/useFirmwareList'
 import FileTree from '@/components/explorer/FileTree'
 import FileViewer from '@/components/explorer/FileViewer'
 import UefiModules from '@/components/explorer/UefiModules'
@@ -19,7 +18,7 @@ export default function ExplorePage() {
   const loadDocuments = useExplorerStore((s) => s.loadDocuments)
   const navigateToPath = useExplorerStore((s) => s.navigateToPath)
   const selectedFirmwareId = useProjectStore((s) => s.selectedFirmwareId)
-  const [firmwareList, setFirmwareList] = useState<FirmwareDetail[]>([])
+  const { firmwareList } = useFirmwareList(projectId)
   const [treeOpen, setTreeOpen] = useState(true)
   const [viewMode, setViewMode] = useState<'files' | 'uefi'>('files')
   const [terminalOpen, setTerminalOpen] = useState(false)
@@ -30,7 +29,6 @@ export default function ExplorePage() {
   useEffect(() => {
     if (projectId) {
       loadDocuments(projectId)
-      listFirmware(projectId).then(setFirmwareList).catch(() => {})
     }
     return () => {
       resetExplorer()

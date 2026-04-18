@@ -26,7 +26,7 @@ import {
   type FirmwareDriver,
   type HardwareFirmwareBlob,
 } from '@/api/hardwareFirmware'
-import { listFirmware } from '@/api/firmware'
+import { useFirmwareList } from '@/hooks/useFirmwareList'
 import { useProjectStore } from '@/stores/projectStore'
 import { extractErrorMessage } from '@/utils/error'
 import FirmwareSelector from '@/components/projects/FirmwareSelector'
@@ -40,13 +40,12 @@ import PartitionTree, {
 } from '@/components/hardware-firmware/PartitionTree'
 import DriverGraph from '@/components/hardware-firmware/DriverGraph'
 import CvesTab from '@/components/hardware-firmware/CvesTab'
-import type { FirmwareDetail } from '@/types'
 
 export default function HardwareFirmwarePage() {
   const { projectId } = useParams<{ projectId: string }>()
   const selectedFirmwareId = useProjectStore((s) => s.selectedFirmwareId)
 
-  const [firmwareList, setFirmwareList] = useState<FirmwareDetail[]>([])
+  const { firmwareList } = useFirmwareList(projectId)
   const [blobs, setBlobs] = useState<HardwareFirmwareBlob[]>([])
   const [drivers, setDrivers] = useState<FirmwareDriver[]>([])
   const [cveRows, setCveRows] = useState<CveRow[]>([])
@@ -98,11 +97,6 @@ export default function HardwareFirmwarePage() {
   }, [searchDraft])
 
   // Load firmware list for selector
-  useEffect(() => {
-    if (projectId) {
-      listFirmware(projectId).then(setFirmwareList).catch(() => {})
-    }
-  }, [projectId])
 
   // Load blobs + drivers + firmware-wide CVE aggregate + CVE-centric rows
   // whenever the project / firmware / filters change.  The aggregate +

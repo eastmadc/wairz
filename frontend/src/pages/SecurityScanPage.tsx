@@ -14,14 +14,14 @@ import {
   type YaraScanResult,
 } from '@/api/findings'
 import { runTool } from '@/api/tools'
-import { listFirmware } from '@/api/firmware'
+import { useFirmwareList } from '@/hooks/useFirmwareList'
 import { useProjectStore } from '@/stores/projectStore'
 import FirmwareSelector from '@/components/projects/FirmwareSelector'
 import AttackSurfaceTab from '@/components/security/AttackSurfaceTab'
 import CraChecklistTab from '@/components/security/CraChecklistTab'
 import ThreatIntelTab from '@/components/security/ThreatIntelTab'
 import { ApkScanTab } from '@/components/apk-scan'
-import type { Finding, FirmwareDetail, Severity } from '@/types'
+import type { Finding, Severity } from '@/types'
 
 type Tab = 'audit' | 'yara' | 'vulhunt' | 'apk-scan' | 'attack-surface' | 'threat-intel' | 'cra'
 
@@ -41,7 +41,7 @@ export default function SecurityScanPage() {
   const initialApk = searchParams.get('apk') || undefined
   const initialFinding = searchParams.get('finding') || undefined
   const [tab, setTab] = useState<Tab>(initialTab)
-  const [firmwareList, setFirmwareList] = useState<FirmwareDetail[]>([])
+  const { firmwareList } = useFirmwareList(projectId)
   const [auditing, setAuditing] = useState(false)
   const [auditResult, setAuditResult] = useState<SecurityAuditResult | null>(null)
   const [yaraScanning, setYaraScanning] = useState(false)
@@ -63,11 +63,6 @@ export default function SecurityScanPage() {
     }
   }, [])
 
-  useEffect(() => {
-    if (projectId) {
-      listFirmware(projectId).then(setFirmwareList).catch(() => {})
-    }
-  }, [projectId])
 
   const source = tab === 'audit' ? 'security_audit' : tab === 'yara' ? 'yara_scan' : tab === 'vulhunt' ? 'vulhunt_scan' : 'attack_surface'
 

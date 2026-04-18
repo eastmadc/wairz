@@ -26,7 +26,7 @@ import {
   runVulnerabilityScan,
   getVulnerabilitySummary,
 } from '@/api/sbom'
-import { listFirmware } from '@/api/firmware'
+import { useFirmwareList } from '@/hooks/useFirmwareList'
 import { useVulnerabilityStore } from '@/stores/vulnerabilityStore'
 import { useShallow } from 'zustand/react/shallow'
 import { useProjectStore } from '@/stores/projectStore'
@@ -73,19 +73,12 @@ export default function SbomPage() {
   const [typeFilter, setTypeFilter] = useState<string | null>(null)
   const [nameSearch, setNameSearch] = useState('')
   const [expandedComp, setExpandedComp] = useState<string | null>(null)
-  const [firmwareList, setFirmwareList] = useState<import('@/types').FirmwareDetail[]>([])
+  const { firmwareList } = useFirmwareList(projectId)
 
   // Individual selectors — avoid re-rendering on every store field change.
   const vulnerabilities = useVulnerabilityStore((s) => s.vulnerabilities)
   const resolutionFilter = useVulnerabilityStore((s) => s.resolutionFilter)
   const sevFilter = useVulnerabilityStore((s) => s.sevFilter)
-
-  // Load firmware list for selector
-  useEffect(() => {
-    if (projectId) {
-      listFirmware(projectId).then(setFirmwareList).catch(() => {})
-    }
-  }, [projectId])
 
   // Load data on mount or firmware change
   const loadData = useCallback(async () => {
