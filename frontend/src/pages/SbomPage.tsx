@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import {
   Package,
@@ -111,7 +111,7 @@ export default function SbomPage() {
   }, [loadData])
 
   // Reload vulns when resolution filter changes
-  const prevFilter = React.useRef(resolutionFilter)
+  const prevFilter = useRef(resolutionFilter)
   useEffect(() => {
     if (prevFilter.current === resolutionFilter) return
     prevFilter.current = resolutionFilter
