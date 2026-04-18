@@ -70,3 +70,53 @@
 - **Before adding any pip dep:** can the format be parsed in ~200 LOC of native code? If yes, it probably should be. If the dep is GPL-3 and you're planning to redistribute, the answer is almost always "native port".
 - **Before declaring a phase done:** re-run the verification commands directly. Don't trust the agent's report — verify.
 - **When emitting CycloneDX/HBOM:** the 1.6 spec has evolved away from ad-hoc "installed" properties; use `dependencies.provides` and `dependencies.dependsOn` as the canonical link types.
+
+---
+
+## Follow-up verifications — 2026-04-18
+
+The postmortem's "Recommendations" #4 ("Schedule Phase 2 kernel_cpe
+verification once SBOM scan runs") is now DONE — confirmed during the
+2026-04-18 /learn re-run.  Live tier distribution across the DPCS10
+lineage (3 firmware: `0ed279d8`, `188c5b24`, `efea8619`):
+
+| Tier | Distinct CVEs | Rows |
+|------|-------------:|------:|
+| `kernel_cpe`         | 785 | 352,465 |
+| `kernel_subsystem`   | 439 |   1,386 |
+| `curated_yaml`       |  26 |     106 |
+| `parser_version_pin` |   1 |       2 |
+| null / empty tier    | 2,918 |   5,836 (legacy, see below) |
+
+**Phase 2 strategy validated.**  785 `kernel_cpe` distinct CVEs is
+roughly 1.8× the `kernel_subsystem` tier — exactly the "broad CPE
+base + tighter subsystem refinement" shape Phase 2 was designed to
+deliver.  The Tier 4 fail-soft design (lazy Redis-backed index)
+survived 3+ days of cold starts + re-detections without breaking.
+
+### Legacy data discovered: pre-tiering null-tier rows
+
+Old firmware (`188c5b24`, `efea8619` — uploaded before Phase 2's
+matcher landed) have **2,918 null-tier rows each** that predate the
+`match_tier` column's population.  New firmware (`0ed279d8`, uploaded
+post-Phase-2) has **zero** null-tier rows — the matcher is correctly
+stamping tier on every new write.
+
+Why it matters: the `/cve-aggregate` endpoint buckets null-tier rows
+into `hw_firmware_cves` (they're not `ADVISORY-*` and not in
+`_KERNEL_TIERS`).  For pre-Phase-2 firmware, that inflates the
+headline CVE count with legacy unclassified CVEs.  Not a regression
+(those firmware never had a post-Phase-2 re-match), but a cleanup
+candidate.
+
+Options on the table:
+1. **Backfill classification** — add a one-shot
+   `scripts/backfill_cve_tiers.py` that re-runs the matcher against
+   legacy rows and updates their tier.
+2. **Drop and re-match** — delete null-tier rows for each legacy
+   firmware and trigger a fresh matcher run.  Atomic but heavyweight.
+3. **Accept** — legacy rows are a snapshot of matching quality at
+   upload time; preserving them is fine for audit purposes.
+
+Not scoped yet; flagging so the next campaign touching
+`sbom_vulnerabilities` has this context.

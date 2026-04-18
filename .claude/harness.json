@@ -99,6 +99,12 @@
         "pattern": "firmware\\.extracted_path",
         "filePattern": "backend/app/services/{hardware_firmware,sbom_service,yara_service,security_audit_service,file_service,assessment_service,update_mechanism_service,clamav_service,virustotal_service,abusech_service}/**/*.py",
         "message": "Learned from feature-extraction-integrity (CLAUDE.md rule 16): Filesystem walks MUST use get_detection_roots(firmware) from app/services/firmware_paths.py - firmware.extracted_path is ONE rootfs and misses scatter-zip siblings, multi-archive containers, and nested unblob output. Per-binary flows (emulation/fuzzing/device/sandbox) may still use extracted_path. Originally uncovered by DPCS10 md1dsp.img bug + RespArray ZIP regression."
+      },
+      {
+        "name": "auto-classifier-magic-offset-beyond-buffer",
+        "pattern": "magic\\[0x[1-9a-f][0-9a-f]{2,}",
+        "filePattern": "backend/app/services/hardware_firmware/classifier.py",
+        "message": "Learned from feature-classifier-patterns-mcu-kernel: The detector reads only detector._MAGIC_READ_BYTES (64) bytes into `magic`. Indexing past 0x40 (64) silently fails to match. If a new format needs a deeper header check (e.g. iMX-RT BOOT_DATA @ 0x1000), widen _MAGIC_READ_BYTES with a rationale OR route through a per-format parser in parsers/, do not add an unreachable index."
       }
     ]
   },
@@ -161,6 +167,9 @@
     "sessions": 0,
     "campaigns": 0,
     "override": null,
-    "sessions_completed": 113
+    "sessions_completed": 119
+  },
+  "consent": {
+    "externalActions": "session-allow"
   }
 }

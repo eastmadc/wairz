@@ -1,54 +1,127 @@
 # Wairz Master Plan
 
 > Created: 2026-04-01
-> Updated: 2026-04-13 (session 35 — production hardening, comparison tests, bugfix, campaign cleanup)
-> Resume with: /do continue
+> Last refresh: 2026-04-18 (session 53c9c5ff — DPCS10 extraction fix + HW firmware usability + /learn re-runs)
+> Resume with: read `.planning/intake/seed-next-session-2026-04-19.md` first
 
 ---
 
-## Session 35 Handoff (2026-04-13)
+## ⚠ For the next session
 
-**What was done:**
-1. Committed S34 upload fix (`92f3dc4`) — MAX_UPLOAD_SIZE_MB 500→2048
-2. Production hardening of docker-compose.yml:
-   - Log rotation (json-file, 50m/5 files) on all 8 long-running containers
-   - Frontend healthcheck (wget against nginx)
-   - Backend healthcheck (curl against /health)
-   - Backend + worker memory limits (4096M each)
-   - Redis sysctl (net.core.somaxconn=511) + host vm.overcommit_memory=1 documented
-3. Comparison service unit tests — 61 tests covering:
-   - diff_filesystems (10 tests: added/removed/modified/permissions/edge cases)
-   - diff_text_file (6 tests: basic diff, identical, added, removed, large, truncation)
-   - is_diffable_text (8 tests: extensions, binary detection, path matching)
-   - _extract_function_hashes (6 tests: extraction, hashing, stripped binary)
-   - _extract_section_hashes (4 tests)
-   - _extract_imports/exports (5 tests: including shared lib exports)
-   - _extract_basic_blocks (4 tests: Capstone block splitting)
-   - diff_binary integration (6 tests: function diff, stripped fallback)
-   - diff_function_instructions (5 tests: Capstone assembly diffs)
-4. **Bugfix found by tests:** LIEF API `is_imported`/`is_exported` renamed to `imported`/`exported` in LIEF 0.15+ — import/export extraction was silently broken
-5. Campaign housekeeping: binary-diff-enhancement + security-hardening moved to completed/
-   - YARA Phase 1 marked done (4990 rules verified S34)
-   - Binary diff phases and feature ledger updated to done
+**Primary pickup file:** `.planning/intake/seed-next-session-2026-04-19.md`
+
+That seed has three scope options (short / medium / large) with verifiable
+end-conditions and Citadel orchestrator hints.  The sections below are
+historical context, not current state.
+
+**Session handoff:** `.planning/knowledge/handoff-2026-04-18-session-end.md`
+captures what just shipped, open threads, and system state as of
+2026-04-18 22:06.
 
 ---
 
-## Blocked
-- Device Acquisition v2 Phase 10 — needs physical MediaTek device in BROM mode
+## Session 53c9c5ff recap (2026-04-18)
 
-## Project Status After S35
-- Campaigns: 15/15 completed (only Device Acquisition v2 Phase 10 hardware-blocked)
-- MCP tools: 160+
-- Stack: deployed and production-hardened on x86_64 Ubuntu 22.04
-- Test suite: 463+ tests (61 new for comparison service)
-- Upload limit: 2GB
-- YARA scanning: verified (4990 rules)
+What shipped:
 
-## Remaining Work (priority order)
-1. ~~CI/CD pipeline improvements (Phase 5.2)~~ — **DONE** (session 25: SARIF 2.1.0, --fail-on thresholds, GitHub Security tab upload)
-   - Polish: integrate ESLint + Bandit/Ruff into CI workflows, wire claude-triage.yml stub
-2. ~~Docker image size optimization~~ — **DONE** (session 37: 1.19 GB aggregate savings)
-   - Backend: 5.39 GB → 4.87 GB (UEFIExtract multi-stage, apt consolidation)
-   - System-emulation: 1.7 GB → 1.03 GB (cross-compiler multi-stage)
-   - .dockerignore coverage for emulation, fuzzing, ghidra, backend, system-emulation
-3. ~~Pre-existing test failures~~ — **FIXED** (session 36: sbom version field, yara monkeypatch isolation)
+1. **DPCS10 extraction bomb fix** — user-data partition skip + super.img raw
+   cleanup + bomb-check reorder.  77/77 tests, 3 CLAUDE.md rule updates.
+2. **Detection-roots container promotion** — latent 24h-old regression from
+   the extraction-integrity campaign fixed; DPCS10 recovered 246 → 260 blobs.
+3. **Hardware Firmware page overhaul via citadel:autopilot** — 13 items across
+   P0/P1/P2 tiers + blob download endpoint with realpath sandbox.
+4. **Knowledge base updates** — CLAUDE.md rules 17 + 18, Monitor preset
+   cheat-sheet, 1 harness quality rule adopted (was pending since 4/17).
+5. **4× `/learn` re-runs** — captured 24h-later deltas including legacy
+   null-tier CVE rows, phase-integration regression discipline, the
+   "pending-rule drift" meta-pattern.
+
+What's uncommitted: 27 files, +3478/-407 lines, all on branch `clean-history`.
+
+---
+
+## Remaining high-level roadmap (session-agnostic)
+
+Categories and representative items, not ranked within each:
+
+### Security (4 items)
+- `security-auth-hardening`
+- `security-fuzzing-shell-injection`  (double-shell-injection in fuzzing service)
+- `security-android-unpack-hardening` (OTA + ZIP extraction paths)
+- `security-docker-socket-proxy`       (narrow host access)
+
+### Data / schema (4 items)
+- `data-analysis-cache-operation-varchar-fix` (rule 15 — VARCHAR 100 → 512)
+- `data-schema-drift-findings-firmware-cra`
+- `data-constraints-and-backpop`
+- `data-pagination-list-endpoints`
+- **Legacy null-tier CVE backfill** (new — surfaced 2026-04-18, not yet queued as its own intake file)
+
+### Backend architecture (3 items)
+- `backend-service-decomposition`          (god-class refactor)
+- `backend-private-api-and-circular-imports`
+- `backend-cwe-checker-session-fix`
+- `backend-cache-module-extraction-and-ttl`
+
+### Frontend (3 items)
+- `frontend-api-client-hardening`      (auth, API_BASE, bulk ops)
+- `frontend-code-splitting-and-virtualization`
+- `frontend-firmware-hook-dedup`       (useFirmwareList — 9 duplicate fetches)
+- `frontend-store-isolation-and-types`
+
+### Feature growth (2 items)
+- `feature-android-hardware-firmware-detection`  (Modem/TEE/Wi-Fi/GPU/DSP/Drivers)
+- `feature-latte-llm-taint-analysis`             (two MCP tools)
+- `apk-scan-deep-linking`
+
+### Infrastructure (3 items)
+- `infra-secrets-and-auth-defaults`
+- `infra-cleanup-migration-and-observability`
+- `infra-volumes-quotas-and-backup`
+
+### Meta / bundle
+- `quick-wins-bundle`  (30 min each, high payoff — overlaps with
+  options A subset above)
+
+---
+
+## Confirmed completed campaigns (do NOT re-queue)
+
+- feature-extraction-integrity (5 phases + post-merge follow-up in this session)
+- feature-hw-firmware-phase2-enrichment
+- feature-hw-firmware-usability-overhaul (this session's autopilot run)
+- feature-classifier-patterns-mcu-kernel
+- feature-android-hardware-firmware-detection (PARTIAL — deeper expansion queued)
+
+## Hardware-blocked
+
+- Device Acquisition v2 Phase 10 — needs physical MediaTek device in BROM mode.
+
+---
+
+## Project health (as of 2026-04-18 22:06)
+
+| Metric | State |
+|---|---|
+| Backend / worker / frontend | all healthy |
+| Uncommitted change set | 27 files, +3478/-407 |
+| Backend affected-suite pytest | 77/77 ✓ |
+| Frontend tsc -b | clean (canaried) |
+| DB: DPCS10 blob count | 260 (26 hw-firmware CVEs surfaced) |
+| Harness quality rules | 15 custom + 2 built-in |
+| CLAUDE.md learned rules | 18 (rules 17 + 18 added this session) |
+| Open intake items | ~24 pending + new seed |
+
+## Resume protocol
+
+```
+1. Read .planning/knowledge/handoff-2026-04-18-session-end.md
+2. Read .planning/intake/seed-next-session-2026-04-19.md
+3. Ask user which scope option (A / B / C)
+4. Route:
+     A → /autopilot  (per-item)
+     B → /archon     (security-hardening campaign)
+     C → /archon     (feature expansion campaign)
+5. Before any builds — canary tsc per CLAUDE.md rule 17
+6. After every edit — rule 8: rebuild backend + worker together
+```

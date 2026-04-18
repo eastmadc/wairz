@@ -84,3 +84,91 @@
 - **For any extraction/parsing campaign:** construct a real-firmware fixture fitting the original user bug. Use it as an integration-test end condition. Then run live verification on actual production data.
 - **Before introducing a new column:** try helper + JSONB first. Columns are forever; helpers evolve.
 - **When adding a regression guard:** ship BOTH a test AND a harness quality rule — belt + suspenders for different enforcement timing.
+
+---
+
+## Follow-up learnings — discovered 2026-04-18 (24 hours post-campaign)
+
+### 10. Container-as-detection-root is a logical extension of Pattern #5
+
+- **Description:** The shallow-container rescue (#5) promotes a PARENT when
+  a scan yields ≤1 qualifying child.  A sibling case surfaced 24h later:
+  when Phase 1's `_relocate_scatter_subdirs` moves `.img`/`.bin` files OUT
+  of the scatter subdir INTO the extraction container root, those files
+  are at the container's top level — not inside a subdir.
+  `_scan_container_for_roots` only examined subdirectories, so the
+  relocated files were invisible to detection.  Fix: promote the
+  container itself when `_dir_has_raw_image(container)` returns True.
+- **Evidence:** DPCS10 firmware `0ed279d8` post-relocation lost 14 MTK
+  blobs (lk / tee / gz / preloader / scp / sspm / spmfw / md1dsp /
+  modem / cam_vpu×3 / dtbo). Fixed in `firmware_paths._compute_roots_sync`
+  with `test_post_relocation_layout_includes_container` +
+  `test_linux_rootfs_only_container_not_included` regression guards.
+- **Applies when:** Any detection-root helper that scans SUBDIRECTORIES
+  of an extraction container.  If the extraction pipeline can produce
+  raw firmware files at the container's top level (relocation,
+  single-binary uploads, certain tar layouts), the container itself
+  must qualify too — gated by the same strict-extension file-level
+  check that prevents over-inclusion for pure Linux rootfs cases.
+
+### 11. User-data partitions are not firmware — skip before sparse→raw
+
+- **Description:** Android factory images ship `userdata.img`
+  (3+ GB of mostly-zero declared sparse), `cache.img`, `metadata.img`,
+  `persist.img`, `misc.img` — none of which are firmware code.
+  Converting them via simg2img inflates the extraction tree into
+  multi-GB empty space that trips the extraction-bomb cap (default
+  10 GB) while adding zero analytic value.  Skip them by base-name
+  (plus A/B slot variants `_a`/`_b`) before any conversion.
+- **Evidence:** DPCS10 (1.1 GB zip) was tripping
+  `Extraction bomb detected: total size (10256MB) exceeds limit (10240MB)`
+  because userdata alone expanded to 3072 MB and super.img.raw was
+  retained at 9216 MB.  After skip + removal: extraction drops to
+  ~5 GB total.  `_is_user_data_partition` helper + 9 tests shipped
+  in `test_unpack_integrity.py`.
+- **Applies when:** Any firmware-analysis pipeline processing Android
+  OEM images.  Generalisable to other ecosystems where the image
+  format carries a "factory-reset" partition alongside firmware code.
+
+### 12. Super.img (LP2 container) is redundant once inner partitions extracted
+
+- **Description:** After `_scan_super_partitions` successfully carves
+  every detected inner partition (system, vendor, etc.) into
+  `rootfs/partition_N_*/`, the original super.img.raw is an LP2
+  container with no downstream parser.  The Phase 3 MediaTek parsers
+  (mtk_preloader, mtk_lk, mediatek_modem) target LEAF partitions, not
+  the super wrapper.  Keeping the raw (~9 GB on typical Android
+  firmware) contributes nothing and double-counts against the bomb
+  cap.  Remove only when extraction is COMPLETE (`extracted == total`);
+  keep on partial extraction so corrupt inner partitions remain
+  recoverable from the raw bytes.
+- **Evidence:** `_scan_super_partitions` signature changed from
+  `-> int` to `-> tuple[int, int]` so callers compare counts.  Caller
+  in `_extract_android_ota` deletes super.img.raw on all-success,
+  logs + retains on partial.  Saves ~9 GB per Android firmware.
+- **Applies when:** Any container-format parser (LP2, DTB FIT, APEX
+  modules, GPT disk images) where the container is purely structural
+  and parsing targets the contents, not the wrapper.  Ask: "is there
+  a downstream tool that reads the raw container bytes?"  If no, the
+  raw is safe to drop once extraction succeeds.
+
+### 13. Post-extraction bomb check shouldn't wipe a successful extraction
+
+- **Description:** `check_extraction_limits` walking extraction_dir
+  after the Android fast path caused `shutil.rmtree(extraction_dir)`
+  on any breach — including 16-MB-over-cap cases where extraction had
+  produced a complete rootfs + 8 super-partitions + all scatter
+  blobs.  User-visible symptom: "Unpacking Failed" for a successful
+  extraction.  Fix: reorder so `_analyze_filesystem` runs first; if
+  it finds a rootfs, keep the extraction with a WARNING.  Only
+  `rmtree` when analysis ALSO fails (true zip-bomb).  Applied to all
+  four call sites in `unpack.py` (android / partition_dump_tar /
+  linux_rootfs_tar / fallback chain).
+- **Evidence:** Pre-fix: DPCS10 extraction wiped at line 588 after
+  10256/10240 MB trip.  Post-fix: bomb-cap trip on successful
+  extraction logs `WARNING: ... — extraction kept because filesystem
+  analysis succeeded.` rather than rmtree'ing.
+- **Applies when:** Any defensive cleanup coupled to a defence-in-depth
+  budget.  The budget catches bombs; don't let it discard legitimate
+  large work.  Separate the "budget tripped" signal from the
+  "nothing usable was produced" signal.
