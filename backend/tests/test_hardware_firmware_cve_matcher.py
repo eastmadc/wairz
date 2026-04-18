@@ -18,6 +18,7 @@ from app.services.hardware_firmware.cve_matcher import (
     _load_known_firmware,
     _match_curated,
     _match_kernel_cpe,
+    _match_parser_detected,
     _stringify_metadata,
     match_firmware_cves,
 )
@@ -111,6 +112,158 @@ def test_stringify_metadata() -> None:
     # Non-strings filtered.
     for v in out:
         assert isinstance(v, str)
+
+
+# ---------------------------------------------------------------------------
+# _match_parser_detected — Tier 0 (parser-embedded version-pin fingerprints)
+# ---------------------------------------------------------------------------
+
+
+class TestMatchParserDetected:
+    """Tier 0 reads ``blob.metadata_["known_vulnerabilities"]`` directly and
+    projects records into CveMatch rows.  No DB access, no YAML load."""
+
+    def test_single_cve_produces_match_with_full_mapping(self) -> None:
+        blob = _make_blob(
+            vendor="mediatek",
+            category="hypervisor",
+            version="3.2.1.004",
+            metadata={
+                "known_vulnerabilities": [
+                    {
+                        "cve_id": "CVE-2025-20707",
+                        "severity": "medium",
+                        "cwe": "CWE-416",
+                        "subcomponent": "geniezone",
+                        "confidence": "high",
+                        "source": "parser_version_pin",
+                        "rationale": (
+                            "GZ_hypervisor 3.2.1.004 built 2025-12-12 "
+                            "predates MediaTek Feb 2026 PSB fix."
+                        ),
+                        "reference": (
+                            "https://corp.mediatek.com/product-security-bulletin/"
+                            "September-2025"
+                        ),
+                    }
+                ]
+            },
+        )
+        matches = _match_parser_detected([blob])
+        assert len(matches) == 1
+        m = matches[0]
+        assert m.cve_id == "CVE-2025-20707"
+        assert m.severity == "medium"
+        assert m.confidence == "high"
+        assert m.tier == "parser_version_pin"
+        assert m.cvss_score is None
+        assert m.blob_id == blob.id
+        assert "3.2.1.004" in m.description
+        assert "Feb 2026" in m.description
+
+    def test_no_known_vulnerabilities_returns_empty(self) -> None:
+        blob = _make_blob(
+            vendor="mediatek", category="hypervisor", metadata={"other": "stuff"}
+        )
+        assert _match_parser_detected([blob]) == []
+
+    def test_empty_metadata_returns_empty(self) -> None:
+        blob = _make_blob(vendor="mediatek", category="hypervisor", metadata={})
+        assert _match_parser_detected([blob]) == []
+
+    def test_none_metadata_returns_empty(self) -> None:
+        blob = _make_blob(vendor="mediatek", category="hypervisor")
+        blob.metadata_ = None
+        assert _match_parser_detected([blob]) == []
+
+    def test_malformed_known_vulnerabilities_not_a_list(self) -> None:
+        blob = _make_blob(
+            vendor="mediatek",
+            category="hypervisor",
+            metadata={"known_vulnerabilities": "not-a-list"},
+        )
+        assert _match_parser_detected([blob]) == []
+
+    def test_non_dict_records_skipped(self) -> None:
+        blob = _make_blob(
+            vendor="mediatek",
+            category="hypervisor",
+            metadata={
+                "known_vulnerabilities": [
+                    "not-a-dict",
+                    42,
+                    None,
+                    {"cve_id": "CVE-2025-9999", "severity": "low"},
+                ]
+            },
+        )
+        matches = _match_parser_detected([blob])
+        assert len(matches) == 1
+        assert matches[0].cve_id == "CVE-2025-9999"
+
+    def test_records_without_cve_id_skipped(self) -> None:
+        blob = _make_blob(
+            vendor="mediatek",
+            category="hypervisor",
+            metadata={
+                "known_vulnerabilities": [
+                    {"severity": "high"},            # missing cve_id
+                    {"cve_id": "", "severity": "low"},  # empty cve_id
+                    {"cve_id": None, "severity": "low"},  # null cve_id
+                    {"cve_id": "CVE-2025-REAL"},
+                ]
+            },
+        )
+        matches = _match_parser_detected([blob])
+        assert [m.cve_id for m in matches] == ["CVE-2025-REAL"]
+
+    def test_defaults_when_optional_fields_missing(self) -> None:
+        """severity → 'medium', confidence → 'high', description → '' when absent."""
+        blob = _make_blob(
+            vendor="mediatek",
+            category="hypervisor",
+            metadata={"known_vulnerabilities": [{"cve_id": "CVE-2025-BARE"}]},
+        )
+        matches = _match_parser_detected([blob])
+        assert len(matches) == 1
+        m = matches[0]
+        assert m.severity == "medium"
+        assert m.confidence == "high"
+        assert m.description == ""
+        assert m.cvss_score is None
+
+    def test_multiple_blobs_aggregated(self) -> None:
+        blob_a = _make_blob(
+            vendor="mediatek",
+            category="hypervisor",
+            metadata={"known_vulnerabilities": [{"cve_id": "CVE-2025-A"}]},
+        )
+        blob_b = _make_blob(
+            vendor="mediatek",
+            category="tee",
+            metadata={"known_vulnerabilities": [{"cve_id": "CVE-2025-B"}]},
+        )
+        blob_no_meta = _make_blob(vendor="samsung", category="modem", metadata={})
+        matches = _match_parser_detected([blob_a, blob_b, blob_no_meta])
+        by_blob = {m.blob_id: m.cve_id for m in matches}
+        assert by_blob == {blob_a.id: "CVE-2025-A", blob_b.id: "CVE-2025-B"}
+
+    def test_multiple_cves_on_one_blob(self) -> None:
+        blob = _make_blob(
+            vendor="mediatek",
+            category="hypervisor",
+            metadata={
+                "known_vulnerabilities": [
+                    {"cve_id": "CVE-2025-ONE", "severity": "medium"},
+                    {"cve_id": "CVE-2025-TWO", "severity": "high"},
+                ]
+            },
+        )
+        matches = _match_parser_detected([blob])
+        assert {m.cve_id for m in matches} == {"CVE-2025-ONE", "CVE-2025-TWO"}
+        for m in matches:
+            assert m.tier == "parser_version_pin"
+            assert m.blob_id == blob.id
 
 
 # ---------------------------------------------------------------------------
@@ -348,6 +501,94 @@ async def test_match_firmware_cves_force_rescan_reinserts() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Tier 0 — parser_version_pin persistence (integration via match_firmware_cves)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_match_firmware_cves_persists_parser_version_pin_tier() -> None:
+    """A blob that carries ``metadata_["known_vulnerabilities"]`` yields a
+    persisted SbomVulnerability with ``match_tier='parser_version_pin'``.
+
+    Uses a vendor/category combination (``mediatek`` + ``hypervisor``)
+    absent from the curated YAML so Tier 3 doesn't also fire; the blob is
+    non-kmod so Tier 4/5 short-circuit without touching the DB."""
+    firmware_id = uuid.uuid4()
+    blob_id = uuid.uuid4()
+
+    blob = _make_blob(
+        vendor="mediatek",
+        category="hypervisor",
+        version="3.2.1.004",
+        blob_id=blob_id,
+        metadata={
+            "known_vulnerabilities": [
+                {
+                    "cve_id": "CVE-2025-20707",
+                    "severity": "medium",
+                    "cwe": "CWE-416",
+                    "subcomponent": "geniezone",
+                    "confidence": "high",
+                    "source": "parser_version_pin",
+                    "rationale": "GZ 3.2.1.004 predates Feb 2026 PSB fix.",
+                }
+            ]
+        },
+    )
+    db = _mock_db_for_matcher(blobs=[blob], existing=[])
+
+    matches = await match_firmware_cves(firmware_id, db)
+    tier0 = [m for m in matches if m.tier == "parser_version_pin"]
+    assert len(tier0) == 1
+    assert tier0[0].cve_id == "CVE-2025-20707"
+
+    added_rows = [call.args[0] for call in db.add.call_args_list]
+    tier0_rows = [r for r in added_rows if r.match_tier == "parser_version_pin"]
+    assert len(tier0_rows) == 1
+    row = tier0_rows[0]
+    assert isinstance(row, SbomVulnerability)
+    assert row.cve_id == "CVE-2025-20707"
+    assert row.match_confidence == "high"
+    assert row.severity == "medium"
+    assert row.blob_id == blob_id
+    assert row.firmware_id == firmware_id
+    assert row.component_id is None
+    assert row.resolution_status == "open"
+
+
+@pytest.mark.asyncio
+async def test_match_firmware_cves_tier0_dedups_on_rerun() -> None:
+    """A re-run with the same ``(blob_id, cve_id)`` pair already persisted
+    produces zero new inserts — Tier 0 goes through the same dedup path as
+    every other tier."""
+    firmware_id = uuid.uuid4()
+    blob_id = uuid.uuid4()
+
+    blob = _make_blob(
+        vendor="mediatek",
+        category="hypervisor",
+        blob_id=blob_id,
+        metadata={
+            "known_vulnerabilities": [
+                {"cve_id": "CVE-2025-20707", "severity": "medium"}
+            ]
+        },
+    )
+    # Feed back the existing pair so the dedup set rejects the insert.
+    db = _mock_db_for_matcher(
+        blobs=[blob],
+        existing=[(blob_id, "CVE-2025-20707")],
+    )
+
+    matches = await match_firmware_cves(firmware_id, db)
+    # Returned matches still include the Tier 0 hit (signature contract),
+    # but nothing was persisted.
+    tier0 = [m for m in matches if m.tier == "parser_version_pin"]
+    assert len(tier0) == 1
+    db.add.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
 # CveMatch dataclass importable
 # ---------------------------------------------------------------------------
 
@@ -497,7 +738,10 @@ async def test_kernel_cpe_matcher_populates_kmod_blobs() -> None:
     assert len(matches) == 6
     for m in matches:
         assert m.tier == "kernel_cpe"
-        assert m.confidence == "medium"
+        # Tier 4 projects every kernel CVE onto every kernel_module blob —
+        # O(CVEs × modules) row inflation. confidence="low" so UIs can
+        # down-rank vs. Tier 5 (subsystem-verified, "high").
+        assert m.confidence == "low"
         assert m.blob_id in {blob_a.id, blob_b.id}
         assert m.cve_id in {"CVE-2024-1111", "CVE-2024-2222", "CVE-2024-3333"}
 
@@ -568,7 +812,7 @@ async def test_kernel_cpe_matcher_aggregates_across_multiple_components() -> Non
     assert cve_ids == {"CVE-2024-AAAA", "CVE-2024-BBBB"}
     for m in matches:
         assert m.tier == "kernel_cpe"
-        assert m.confidence == "medium"
+        assert m.confidence == "low"
 
 
 @pytest.mark.asyncio
@@ -603,7 +847,7 @@ async def test_kernel_cpe_persists_and_dedups_on_rerun() -> None:
         assert row.blob_id == blob_id
         assert row.firmware_id == firmware_id
         assert row.component_id is None
-        assert row.match_confidence == "medium"
+        assert row.match_confidence == "low"
         assert row.cve_id in {"CVE-2024-K1", "CVE-2024-K2"}
 
     # Second run: feed back the pairs the first run produced → no inserts.
