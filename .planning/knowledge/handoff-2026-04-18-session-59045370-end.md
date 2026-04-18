@@ -23,20 +23,23 @@
 | `c71d1a5` | docs(knowledge): mex-adoption complementarity patterns (/learn #4) |
 | *(pending)* | feat(unpack): configurable `MAX_STANDALONE_BINARY_MB` (default 512 MB) — enables bare-metal firmware analysis past the old 10 MB limit |
 
-## State of the system (pre-final-commits)
+## State of the system (end of session)
 
 | Metric | Value |
 |---|---|
-| Backend health | healthy on `127.0.0.1:8000` |
+| Backend health | healthy on `127.0.0.1:8000` — `/health` 200, `/health/deep` 200 all four components |
 | Backend LAN (`10.54.8.152:8000`) | **refused** (A.1 active) |
 | Frontend health | healthy on `127.0.0.1:3000` |
 | Frontend LAN | **refused** (A.1 active) |
-| Worker | running; after the final rebuild will have new `MAX_STANDALONE_BINARY_MB` setting |
+| Worker | rebuilt with cwe_checker sequential batch + async-subprocess linter wired into CI |
 | DB | 11 firmware, DPCS10 `0ed279d8` canary intact (260 blobs / 27 hw-firmware CVEs / 439 kernel CVEs) |
 | `analysis_cache.operation` width | VARCHAR(512) — migration `1f6c72decc84` applied |
 | CLAUDE.md | 21 learned rules; new companion-scaffold section names `.mex/` |
 | `.mex/` | git-tracked as of `60c9af2`; ROUTER.md state refreshed; conventions.md checklist mirrors rules 1–21 |
-| Knowledge base | 4 new pattern files; none below medium confidence, no new harness.json rules appended |
+| Knowledge base | 5 new pattern files this session (autopilot, escape-symlink, deployment-loop, mex-adoption, plus the session handoff) |
+| Quality rules | `harness.json` unchanged — wave-2 lessons are procedural, not regex-shaped; AST linter in scripts/ instead |
+| Frontend perf | useFirmwareList hook + Zustand selectors: ~10 fewer fetches per page transition; SbomPage no longer re-renders on unrelated state changes |
+| CI | lint.yml gains a new step (`python3 scripts/lint_async_subprocess.py app/`) + concurrency guards |
 
 ## PowerPack firmware (project `bf422332...`, firmware `4e6da402...`)
 
