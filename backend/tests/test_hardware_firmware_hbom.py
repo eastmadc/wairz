@@ -231,7 +231,9 @@ async def test_hbom_emits_two_components_per_blob() -> None:
     comps = doc["components"]
     # 3 blobs -> 6 components (hardware + firmware per blob).
     assert len(comps) == 6
-    hw_count = sum(1 for c in comps if c["type"] == "hardware")
+    # CycloneDX 1.6 component.type enum has "device" for physical
+    # hardware (not "hardware" — that's not in the spec enum).
+    hw_count = sum(1 for c in comps if c["type"] == "device")
     fw_count = sum(1 for c in comps if c["type"] == "firmware")
     assert hw_count == 3
     assert fw_count == 3
@@ -269,10 +271,104 @@ async def test_hbom_vulnerabilities_attached_to_firmware_refs() -> None:
     # Rating carries severity + score.
     assert v["ratings"][0]["severity"] == "high"
     assert v["ratings"][0]["score"] == pytest.approx(7.8)
-    # Match provenance lives in properties.
+    # Match provenance lives in properties.  Tiers are now plural
+    # (multi-source rollup) and an affected_blob_count counter is
+    # surfaced for downstream filtering.
     prop_names = {p["name"]: p["value"] for p in v.get("properties", [])}
-    assert prop_names.get("wairz:match_tier") == "curated_yaml"
+    assert prop_names.get("wairz:match_tiers") == "curated_yaml"
     assert prop_names.get("wairz:match_confidence") == "high"
+    assert prop_names.get("wairz:affected_blob_count") == "1"
+
+
+@pytest.mark.asyncio
+async def test_hbom_dedups_same_cve_across_blobs() -> None:
+    """Same CVE on N blobs collapses to ONE vulnerability entry with
+    N affects refs — the canonical CycloneDX 1.6 shape and the fix for
+    the 222 MB DPCS10 HBOM bloat (177K rows → 1.2K distinct CVEs).
+    """
+    firmware_id = uuid.uuid4()
+    fw = _make_firmware(firmware_id=firmware_id)
+    blob_a = _make_blob(firmware_id=firmware_id, blob_path="/lib/modules/a.ko")
+    blob_b = _make_blob(firmware_id=firmware_id, blob_path="/lib/modules/b.ko")
+    blob_c = _make_blob(firmware_id=firmware_id, blob_path="/lib/modules/c.ko")
+    # Same CVE on three blobs (kernel_cpe tier projects identically
+    # onto every kmod blob — typical pattern).
+    vulns = [
+        _make_vuln(
+            cve_id="CVE-2024-KERNEL",
+            blob_id=b.id,
+            firmware_id=firmware_id,
+            match_tier="kernel_cpe",
+        )
+        for b in (blob_a, blob_b, blob_c)
+    ]
+    db = _mock_db(firmware=fw, blobs=[blob_a, blob_b, blob_c], vulns=vulns)
+
+    doc = await build_hbom(firmware_id, db)
+
+    vs = doc["vulnerabilities"]
+    assert len(vs) == 1, "three rows for one CVE must collapse to one entry"
+    entry = vs[0]
+    assert entry["id"] == "CVE-2024-KERNEL"
+
+    # affects[] carries one ref per blob — three refs, all distinct.
+    refs = {a["ref"] for a in entry["affects"]}
+    assert refs == {f"fw_{blob_a.id}", f"fw_{blob_b.id}", f"fw_{blob_c.id}"}
+
+    # Identical ratings across the three rows collapse to ONE rating
+    # (severity / score / vector dedupe).
+    assert len(entry["ratings"]) == 1
+
+    # affected_blob_count surfaces the rollup size.
+    props = {p["name"]: p["value"] for p in entry.get("properties", [])}
+    assert props["wairz:affected_blob_count"] == "3"
+
+
+@pytest.mark.asyncio
+async def test_hbom_picks_highest_priority_tier_for_description() -> None:
+    """Same CVE matched by parser_version_pin (specific) AND kernel_cpe
+    (broad projection) must keep the parser-pin description, not the
+    kernel description — most specific source wins for canonical text.
+    """
+    firmware_id = uuid.uuid4()
+    fw = _make_firmware(firmware_id=firmware_id)
+    gz_blob = _make_blob(firmware_id=firmware_id, blob_path="/firmware/gz.img")
+    km_blob = _make_blob(firmware_id=firmware_id, blob_path="/lib/modules/x.ko")
+    parser_match = _make_vuln(
+        cve_id="CVE-2025-20707",
+        blob_id=gz_blob.id,
+        firmware_id=firmware_id,
+        description="GZ_hypervisor 3.2.1.004 predates Feb 2026 PSB fix",
+        match_tier="parser_version_pin",
+    )
+    kernel_match = _make_vuln(
+        cve_id="CVE-2025-20707",
+        blob_id=km_blob.id,
+        firmware_id=firmware_id,
+        description="Generic kernel CPE description",
+        match_tier="kernel_cpe",
+    )
+    db = _mock_db(
+        firmware=fw,
+        blobs=[gz_blob, km_blob],
+        vulns=[parser_match, kernel_match],
+    )
+
+    doc = await build_hbom(firmware_id, db)
+
+    vs = doc["vulnerabilities"]
+    assert len(vs) == 1
+    entry = vs[0]
+    # Description from the parser-pin row wins (higher tier priority).
+    assert "GZ_hypervisor" in entry["description"]
+
+    # Both tiers surfaced in properties for filtering.
+    props = {p["name"]: p["value"] for p in entry["properties"]}
+    tiers = props["wairz:match_tiers"].split(",")
+    assert "parser_version_pin" in tiers
+    assert "kernel_cpe" in tiers
+    # Parser-pin (priority 4) listed before kernel_cpe (priority 1).
+    assert tiers.index("parser_version_pin") < tiers.index("kernel_cpe")
 
 
 @pytest.mark.asyncio

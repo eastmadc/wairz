@@ -57,28 +57,35 @@ def _iso_utc_now() -> str:
 
 
 def _build_hardware_component(blob: HardwareFirmwareBlob) -> dict:
-    """Build a CycloneDX v1.6 ``hardware`` component for a blob.
+    """Build a CycloneDX v1.6 ``device`` component for a blob.
 
-    ``manufacturer`` is included only when ``blob.vendor`` is populated
-    (None / unknown vendor -> omitted rather than stubbed out).
+    Per the CycloneDX 1.6 spec the ``component.type`` enum does not
+    include ``"hardware"`` — the canonical type for physical hardware
+    is ``"device"``.  The chipset identifier rides in ``properties[]``
+    (the spec's ``modelNumber`` field is not part of the generic
+    component object); ``manufacturer`` is included only when
+    ``blob.vendor`` is populated (None / unknown -> omitted rather
+    than stubbed out).
     """
     ref = f"chip_{blob.id}"
     vendor = (blob.vendor or "").strip()
-    category = (blob.category or "hardware").strip()
+    category = (blob.category or "device").strip()
 
     # Name: "<vendor> <category>" if we have a vendor, otherwise just the
     # category.  Always human-readable.
     name = f"{vendor} {category}".strip() if vendor else category
 
     comp: dict = {
-        "type": "hardware",
+        "type": "device",
         "bom-ref": ref,
         "name": name,
     }
     if vendor:
         comp["manufacturer"] = {"name": vendor}
     if blob.chipset_target:
-        comp["modelNumber"] = blob.chipset_target
+        comp["properties"] = [
+            {"name": "hw-firmware:chipset", "value": blob.chipset_target},
+        ]
     return comp
 
 
@@ -142,25 +149,27 @@ def _build_firmware_component(blob: HardwareFirmwareBlob) -> dict:
     return comp
 
 
-def _build_vulnerability(
-    vuln: SbomVulnerability,
-    firmware_ref: str,
-) -> dict:
-    """Build a CycloneDX v1.6 vulnerability entry.
+# Tier priority for picking the "best" representative SbomVulnerability
+# row when one CVE is matched by multiple tiers.  Higher = more
+# specific / more authoritative.  The winning row's description and
+# severity become the canonical entry text; non-winning rows still
+# contribute their (blob_ref, tier) attribution to the rolled-up
+# affects[] and properties.
+_TIER_PRIORITY = {
+    "parser_version_pin": 4,  # most specific: parser-extracted version pin
+    "curated_yaml": 3,         # human-vetted, version+chipset constraints
+    "kernel_subsystem": 2,     # kernel.org vulns.git CNA mapping
+    "chipset_cpe": 2,          # NVD CPE keyed by chipset
+    "nvd_freetext": 1,         # NVD keyword search
+    "kernel_cpe": 1,           # grype-projected onto every kmod blob
+}
 
-    ``affects.ref`` points at the firmware component bom-ref, mirroring
-    how grype-produced vulnerabilities attach to software components.
-    """
+
+def _rating_from_vuln(vuln: SbomVulnerability) -> dict:
+    """Build a single CycloneDX rating dict from one SbomVulnerability row."""
     severity = (vuln.severity or "unknown").lower()
     if severity not in _VALID_SEVERITIES:
         severity = "unknown"
-
-    entry: dict = {
-        "id": vuln.cve_id,
-        "affects": [{"ref": firmware_ref}],
-    }
-
-    ratings: list[dict] = []
     rating: dict = {"severity": severity}
     if vuln.cvss_score is not None:
         try:
@@ -169,7 +178,6 @@ def _build_vulnerability(
             pass
     if vuln.cvss_vector:
         rating["vector"] = vuln.cvss_vector
-        # Derive CycloneDX "method" from the vector prefix.
         v = vuln.cvss_vector.upper()
         if v.startswith("CVSS:3.1"):
             rating["method"] = "CVSSv31"
@@ -177,24 +185,103 @@ def _build_vulnerability(
             rating["method"] = "CVSSv3"
         elif v.startswith("CVSS:4"):
             rating["method"] = "CVSSv4"
-    ratings.append(rating)
-    entry["ratings"] = ratings
+    return rating
 
-    if vuln.description:
-        entry["description"] = vuln.description
 
-    # Wairz-specific match provenance stays in properties so downstream
-    # tooling can filter on tier/confidence without parsing description.
-    props: list[dict] = []
-    if vuln.match_tier:
-        props.append({"name": "wairz:match_tier", "value": vuln.match_tier})
-    if vuln.match_confidence:
-        props.append(
-            {"name": "wairz:match_confidence", "value": vuln.match_confidence},
+def _build_rolled_up_vulnerability(
+    cve_id: str,
+    rows: list[tuple[SbomVulnerability, str]],
+) -> dict:
+    """Build ONE CycloneDX v1.6 vulnerability entry for a CVE that may
+    affect many components.
+
+    ``rows`` is a list of ``(SbomVulnerability, firmware_bom_ref)``
+    tuples representing every persisted match for this ``cve_id``.
+
+    Per CycloneDX 1.6, ``vulnerability.affects[]`` is an ARRAY of
+    component refs — that's the canonical way to express "this CVE
+    affects N components".  Emitting one entry per (component × CVE)
+    row is what bloated the DPCS10 HBOM from ~2 MB to 222 MB; the
+    Linux kernel's kernel_cpe tier projects 785 kernel CVEs onto every
+    kernel-module blob (~225 of them), producing ~177K duplicate rows
+    instead of ~1,200 deduplicated entries.
+
+    Algorithm:
+      * Sort rows by (tier_priority desc, cvss_score desc) — the top
+        row wins for description / canonical severity.
+      * Roll up unique firmware refs into ``affects[]``.
+      * Emit unique ratings (deduped by vector+score+severity tuple)
+        so multi-source CVSS data survives, but identical ratings
+        from kernel_cpe × N blobs collapse to one.
+      * Tier provenance lives in properties: comma-joined tier list +
+        affected_blob_count for transparency.
+    """
+    # Sort by tier priority (most specific first), then by CVSS score
+    # descending so the highest-severity description wins on ties.
+    def _sort_key(row: tuple[SbomVulnerability, str]) -> tuple[int, float]:
+        v, _ = row
+        priority = _TIER_PRIORITY.get(v.match_tier or "", 0)
+        score = float(v.cvss_score or 0)
+        return (-priority, -score)
+
+    sorted_rows = sorted(rows, key=_sort_key)
+    canonical, _ = sorted_rows[0]
+
+    # Roll up unique firmware refs (preserve sort order from input — the
+    # caller passes rows in a deterministic order so the affects[] list
+    # is stable across exports of the same DB state).
+    seen_refs: set[str] = set()
+    affects: list[dict] = []
+    for _v, ref in sorted_rows:
+        if ref in seen_refs:
+            continue
+        seen_refs.add(ref)
+        affects.append({"ref": ref})
+
+    # Roll up unique ratings.  Two rows with identical (severity, score,
+    # vector) collapse — the kernel_cpe tier projects the SAME CVE
+    # ratings onto every kmod blob, so without dedup we'd carry 200+
+    # identical ratings per entry.
+    seen_ratings: set[tuple] = set()
+    ratings: list[dict] = []
+    for v, _ref in sorted_rows:
+        rating = _rating_from_vuln(v)
+        rkey = (
+            rating.get("severity"),
+            rating.get("score"),
+            rating.get("vector"),
         )
-    if props:
-        entry["properties"] = props
+        if rkey in seen_ratings:
+            continue
+        seen_ratings.add(rkey)
+        ratings.append(rating)
 
+    entry: dict = {
+        "id": cve_id,
+        "affects": affects,
+        "ratings": ratings,
+    }
+    if canonical.description:
+        entry["description"] = canonical.description
+
+    # Tier provenance: comma-joined unique tiers (sorted by priority
+    # desc) + affected blob count, so consumers can filter / triage
+    # without re-aggregating.
+    unique_tiers = sorted(
+        {v.match_tier for v, _ in rows if v.match_tier},
+        key=lambda t: -_TIER_PRIORITY.get(t, 0),
+    )
+    props: list[dict] = []
+    if unique_tiers:
+        props.append({"name": "wairz:match_tiers", "value": ",".join(unique_tiers)})
+    if canonical.match_confidence:
+        props.append(
+            {"name": "wairz:match_confidence", "value": canonical.match_confidence},
+        )
+    props.append(
+        {"name": "wairz:affected_blob_count", "value": str(len(affects))},
+    )
+    entry["properties"] = props
     return entry
 
 
@@ -249,7 +336,12 @@ async def build_hbom(
     # ── Build components + dependencies ────────────────────────────────
     components: list[dict] = []
     dependencies: list[dict] = []
-    vuln_entries: list[dict] = []
+
+    # Group SbomVulnerability rows by cve_id so we can roll up affects[]
+    # per CycloneDX 1.6 conventions.  Without this, kernel_cpe tier
+    # projects 785 distinct kernel CVEs onto every kernel-module blob
+    # (~225 blobs) producing 176K duplicate entries instead of 785.
+    rows_by_cve: dict[str, list[tuple[SbomVulnerability, str]]] = {}
 
     for blob in blobs:
         chip_ref = f"chip_{blob.id}"
@@ -260,7 +352,14 @@ async def build_hbom(
         dependencies.append({"ref": chip_ref, "provides": [fw_ref]})
 
         for v in vulns_by_blob.get(blob.id, []):
-            vuln_entries.append(_build_vulnerability(v, fw_ref))
+            rows_by_cve.setdefault(v.cve_id, []).append((v, fw_ref))
+
+    # Emit one vulnerability entry per distinct CVE, deterministically
+    # ordered by cve_id so snapshot tests stay stable.
+    vuln_entries: list[dict] = [
+        _build_rolled_up_vulnerability(cve_id, rows_by_cve[cve_id])
+        for cve_id in sorted(rows_by_cve)
+    ]
 
     # ── Assemble the document ──────────────────────────────────────────
     metadata: dict = {
