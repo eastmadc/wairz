@@ -21,13 +21,7 @@ import ProjectActionButtons from '@/components/projects/ProjectActionButtons'
 import DocumentsCard from '@/components/projects/DocumentsCard'
 import { exportProject } from '@/api/exportImport'
 import { useEventStream } from '@/hooks/useEventStream'
-
-const STATUS_VARIANT: Record<string, 'default' | 'secondary' | 'destructive' | 'outline'> = {
-  ready: 'default',
-  unpacking: 'secondary',
-  error: 'destructive',
-  created: 'outline',
-}
+import { PROJECT_STATUS_VARIANT } from '@/constants/statusConfig'
 
 export default function ProjectDetailPage() {
   const { projectId } = useParams<{ projectId: string }>()
@@ -216,7 +210,7 @@ export default function ProjectDetailPage() {
           <div className="flex items-center gap-3">
             <h1 className="text-2xl font-semibold tracking-tight">{project.name}</h1>
             <Badge
-              variant={STATUS_VARIANT[status] ?? 'outline'}
+              variant={PROJECT_STATUS_VARIANT[status] ?? 'outline'}
               className={status === 'unpacking' ? 'animate-pulse' : ''}
             >
               {status}
