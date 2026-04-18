@@ -11,12 +11,11 @@ services:
     volumes:
       - ./backend/app:/app/app:ro
       - ./backend/alembic:/app/alembic:ro
-    entrypoint: ["/usr/local/bin/entrypoint.sh"]
     command: []
     environment:
       WAIRZ_DEV_MODE: "true"
-    # Override entrypoint to use --reload for uvicorn
-    # The entrypoint.sh handles Docker socket GID fix, then we override the exec
+    # Override entrypoint to use --reload for uvicorn.
+    # The entrypoint.sh handles Docker socket GID fix, then we override the exec.
     entrypoint:
       - /bin/sh
       - -c

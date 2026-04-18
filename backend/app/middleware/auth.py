@@ -15,7 +15,7 @@ from starlette.responses import JSONResponse
 from app.config import get_settings
 
 # Paths that never require authentication.
-_EXEMPT_PATHS: set[str] = {"/", "/health", "/api/v1/health"}
+_EXEMPT_PATHS: set[str] = {"/health", "/api/v1/health"}
 
 
 class APIKeyMiddleware(BaseHTTPMiddleware):
