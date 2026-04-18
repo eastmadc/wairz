@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useParams, Link, useSearchParams } from 'react-router-dom'
 import { Shield, Loader2, RefreshCw, Smartphone } from 'lucide-react'
+
+const API_BASE = import.meta.env.VITE_API_URL || ''
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
@@ -120,13 +122,19 @@ export default function SecurityScanPage() {
 
   const handleVulhunt = async () => {
     if (!projectId) return
+    // Re-entry guard — scan already in flight.  The button is disabled
+    // while scanning, but a double-click in the brief window before
+    // React flushes the disabled state can still fire two handlers.
+    if (vulhuntEventSourceRef.current) return
     setVulhuntScanning(true)
     setVulhuntResult(null)
     setVulhuntProgress(null)
 
-    // Subscribe to SSE for progress updates
-    vulhuntEventSourceRef.current?.close()
-    const evtSource = new EventSource(`/api/v1/projects/${projectId}/events?types=vulhunt`)
+    // Subscribe to SSE for progress updates.  The re-entry guard above
+    // ensures ref.current is null here, so no explicit close() is needed.
+    const evtSource = new EventSource(
+      `${API_BASE}/api/v1/projects/${projectId}/events?types=vulhunt`,
+    )
     vulhuntEventSourceRef.current = evtSource
     evtSource.onmessage = (e) => {
       try {
