@@ -1,7 +1,7 @@
 import { create } from 'zustand'
-import type { Project, ProjectDetail } from '@/types'
+import type { FirmwareDetail, Project, ProjectDetail } from '@/types'
 import { listProjects, getProject, createProject, deleteProject } from '@/api/projects'
-import { uploadFirmware as apiFirmwareUpload, unpackFirmware as apiUnpackFirmware } from '@/api/firmware'
+import { uploadFirmware as apiFirmwareUpload, unpackFirmware as apiUnpackFirmware, listFirmware } from '@/api/firmware'
 import { extractErrorMessage } from '@/utils/error'
 
 interface ProjectState {
@@ -14,6 +14,14 @@ interface ProjectState {
   unpacking: boolean
   uploadProgress: number
   error: string | null
+  // Shared firmware-list cache — accessed via useFirmwareList().  The
+  // cache is keyed by projectId so a project switch invalidates
+  // implicitly (consumers see an empty list until the new project's
+  // list loads).  Upload / delete / rename paths call
+  // invalidateFirmwareList() to force a refetch.
+  firmwareList: FirmwareDetail[]
+  firmwareListProjectId: string | null
+  firmwareListLoading: boolean
 }
 
 interface ProjectActions {
@@ -26,6 +34,8 @@ interface ProjectActions {
   setSelectedFirmware: (firmwareId: string | null) => void
   clearError: () => void
   clearCurrentProject: () => void
+  loadFirmwareList: (projectId: string) => Promise<void>
+  invalidateFirmwareList: () => void
 }
 
 export const useProjectStore = create<ProjectState & ProjectActions>((set, get) => ({
@@ -38,6 +48,9 @@ export const useProjectStore = create<ProjectState & ProjectActions>((set, get) 
   unpacking: false,
   uploadProgress: 0,
   error: null,
+  firmwareList: [],
+  firmwareListProjectId: null,
+  firmwareListLoading: false,
 
   fetchProjects: async () => {
     set({ loading: true, error: null })
@@ -80,6 +93,9 @@ export const useProjectStore = create<ProjectState & ProjectActions>((set, get) 
         projects: s.projects.filter((p) => p.id !== id),
         currentProject: s.currentProject?.id === id ? null : s.currentProject,
         selectedFirmwareId: s.currentProject?.id === id ? null : s.selectedFirmwareId,
+        // Drop cache if it belonged to the deleted project.
+        firmwareList: s.firmwareListProjectId === id ? [] : s.firmwareList,
+        firmwareListProjectId: s.firmwareListProjectId === id ? null : s.firmwareListProjectId,
       }))
     } catch (e) {
       set({ error: extractError(e) })
@@ -96,6 +112,9 @@ export const useProjectStore = create<ProjectState & ProjectActions>((set, get) 
       set({ uploading: false, uploadProgress: 100, currentProject: project })
       // Sync into projects list
       syncProjectInList(set, get, project)
+      // Invalidate firmware list cache — new upload must appear on
+      // pages that already have the old list.
+      set({ firmwareList: [], firmwareListProjectId: null })
     } catch (e) {
       set({ uploading: false, error: extractError(e) })
       throw e
@@ -119,6 +138,34 @@ export const useProjectStore = create<ProjectState & ProjectActions>((set, get) 
   setSelectedFirmware: (firmwareId) => set({ selectedFirmwareId: firmwareId }),
   clearError: () => set({ error: null }),
   clearCurrentProject: () => set({ currentProject: null, selectedFirmwareId: null }),
+
+  loadFirmwareList: async (projectId) => {
+    // Cache hit — same project, list already populated.  Consumers
+    // that need fresh data call invalidateFirmwareList() first.
+    const state = get()
+    if (
+      state.firmwareListProjectId === projectId
+      && state.firmwareList.length > 0
+    ) {
+      return
+    }
+    set({ firmwareListLoading: true })
+    try {
+      const list = await listFirmware(projectId)
+      set({
+        firmwareList: list,
+        firmwareListProjectId: projectId,
+        firmwareListLoading: false,
+      })
+    } catch {
+      // Keep previous cached list on error; just stop the spinner.
+      set({ firmwareListLoading: false })
+    }
+  },
+
+  invalidateFirmwareList: () => {
+    set({ firmwareList: [], firmwareListProjectId: null })
+  },
 }))
 
 function projectFromDetail(d: ProjectDetail): Project {

@@ -8,8 +8,8 @@ import {
   Download,
 } from 'lucide-react'
 import { useProjectStore } from '@/stores/projectStore'
-import { listFirmware, deleteFirmware, updateFirmware, uploadRootfs } from '@/api/firmware'
-import type { FirmwareDetail } from '@/types'
+import { useFirmwareList } from '@/hooks/useFirmwareList'
+import { deleteFirmware, updateFirmware, uploadRootfs } from '@/api/firmware'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -35,8 +35,9 @@ export default function ProjectDetailPage() {
     unpackFirmware,
     clearCurrentProject,
   } = useProjectStore()
+  const invalidateFirmwareList = useProjectStore((s) => s.invalidateFirmwareList)
 
-  const [firmwareList, setFirmwareList] = useState<FirmwareDetail[]>([])
+  const { firmwareList } = useFirmwareList(projectId)
   const [showUpload, setShowUpload] = useState(false)
   const [exporting, setExporting] = useState(false)
   const [exportError, setExportError] = useState<string | null>(null)
@@ -53,13 +54,14 @@ export default function ProjectDetailPage() {
     return () => clearCurrentProject()
   }, [projectId, fetchProject, clearCurrentProject])
 
-  // Fetch full firmware list for details (includes unpack_log, extracted_path)
-  // Depend on project.id + status (not full object) to avoid redundant fetches on every poll
+  // When project-level status transitions (e.g. 'unpacking' → 'ready'),
+  // invalidate the cache so other pages see the fresh firmware state.
+  // The useFirmwareList hook re-loads automatically on invalidation.
   useEffect(() => {
     if (projectId && project) {
-      listFirmware(projectId).then(setFirmwareList).catch(() => {})
+      invalidateFirmwareList()
     }
-  }, [projectId, project?.id, project?.status])
+  }, [projectId, project?.id, project?.status, invalidateFirmwareList])
 
   // SSE: listen for unpacking events and refresh on status changes
   const isUnpacking = project?.status === 'unpacking'
@@ -71,8 +73,8 @@ export default function ProjectDetailPage() {
   const refreshProject = useCallback(() => {
     if (!projectId) return
     fetchProject(projectId)
-    listFirmware(projectId).then(setFirmwareList).catch(() => {})
-  }, [projectId, fetchProject])
+    invalidateFirmwareList()
+  }, [projectId, fetchProject, invalidateFirmwareList])
 
   // When an SSE event arrives, refresh data
   useEffect(() => {
@@ -116,7 +118,7 @@ export default function ProjectDetailPage() {
       try {
         await unpackFirmware(projectId, firmwareId)
         // Refresh firmware list
-        listFirmware(projectId).then(setFirmwareList).catch(() => {})
+        invalidateFirmwareList()
       } catch {
         // error shown via store
       }
@@ -129,7 +131,7 @@ export default function ProjectDetailPage() {
     try {
       await deleteFirmware(projectId, firmwareId)
       fetchProject(projectId)
-      listFirmware(projectId).then(setFirmwareList).catch(() => {})
+      invalidateFirmwareList()
     } catch {
       // error handled by caller
     }
@@ -172,7 +174,7 @@ export default function ProjectDetailPage() {
     try {
       await updateFirmware(projectId, fwId, { version_label: label })
       fetchProject(projectId)
-      listFirmware(projectId).then(setFirmwareList).catch(() => {})
+      invalidateFirmwareList()
     } catch {
       // error handled by caller
     }
@@ -186,7 +188,7 @@ export default function ProjectDetailPage() {
     try {
       await uploadRootfs(projectId, firmwareId, file)
       fetchProject(projectId)
-      listFirmware(projectId).then(setFirmwareList).catch(() => {})
+      invalidateFirmwareList()
     } catch (e) {
       setRootfsError(e instanceof Error ? e.message : 'Upload failed')
     } finally {
@@ -198,7 +200,7 @@ export default function ProjectDetailPage() {
     setShowUpload(false)
     if (projectId) {
       fetchProject(projectId)
-      listFirmware(projectId).then(setFirmwareList).catch(() => {})
+      invalidateFirmwareList()
     }
   }
 

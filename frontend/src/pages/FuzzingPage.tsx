@@ -18,7 +18,7 @@ import {
   listCrashes,
   triageCrash,
 } from '@/api/fuzzing'
-import { listFirmware } from '@/api/firmware'
+import { useFirmwareList } from '@/hooks/useFirmwareList'
 import { useProjectStore } from '@/stores/projectStore'
 import FirmwareSelector from '@/components/projects/FirmwareSelector'
 import { CampaignCard } from '@/components/fuzzing/CampaignCard'
@@ -26,7 +26,6 @@ import { CampaignDetail } from '@/components/fuzzing/CampaignDetail'
 import { extractErrorMessage } from '@/utils/error'
 import { useEventStream } from '@/hooks/useEventStream'
 import type {
-  FirmwareDetail,
   FuzzingCampaign,
   FuzzingCrash,
   FuzzingTargetAnalysis,
@@ -35,7 +34,7 @@ import type {
 export default function FuzzingPage() {
   const { projectId } = useParams<{ projectId: string }>()
   const selectedFirmwareId = useProjectStore((s) => s.selectedFirmwareId)
-  const [firmwareList, setFirmwareList] = useState<FirmwareDetail[]>([])
+  const { firmwareList } = useFirmwareList(projectId)
 
   const [campaigns, setCampaigns] = useState<FuzzingCampaign[]>([])
   const [loading, setLoading] = useState(true)
@@ -81,8 +80,7 @@ export default function FuzzingPage() {
 
   useEffect(() => {
     loadCampaigns()
-    if (projectId) listFirmware(projectId).then(setFirmwareList).catch(() => {})
-  }, [loadCampaigns, projectId])
+  }, [loadCampaigns])
 
   // SSE: listen for fuzzing events and refresh on status changes
   const hasRunningCampaign = campaigns.some((c) => c.status === 'running')
