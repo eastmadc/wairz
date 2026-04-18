@@ -119,6 +119,9 @@ vendors:
   - prefix: nxp
     display: "NXP Semiconductors"
     aliases: [freescale, fsl, nxp-nfc]
+  - prefix: edan
+    display: "Edan Instruments, Inc."
+    aliases: []
   - prefix: ti
     display: "Texas Instruments"
     aliases: [texas-instruments, tps, ccg]

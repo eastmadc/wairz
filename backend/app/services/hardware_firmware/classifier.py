@@ -322,6 +322,21 @@ def classify(path: str, magic: bytes, size: int) -> Classification | None:
         if _is_qcom_filename(name):
             cat = _category_from_qcom_name(name)
             return Classification(cat, "qualcomm", "qcom_mbn", "high")
+        # YAML pattern lookup — runs BEFORE the Venus/firmware-path/etc.
+        # fallbacks so vendor-specific ELF firmware (lib3a.ccu, vendor
+        # camera/audio/codec ELFs) get their proper category instead of
+        # bucket-defaulting to ``other``.  Force format="elf" since we
+        # already verified the magic; the YAML pattern's default
+        # "raw_bin" would otherwise misreport the container.
+        pm = pattern_match(name)
+        if pm is not None:
+            return Classification(
+                category=pm.category,
+                vendor=pm.vendor,
+                format="elf",
+                confidence=pm.confidence,
+                product=pm.product,
+            )
         # Venus video codec / IPA network accel (Qualcomm)
         if _VENUS_RE.match(name) or _IPA_RE.match(name):
             return Classification("other", "qualcomm", "elf", "medium")

@@ -11,11 +11,13 @@ import {
 import { Button } from '@/components/ui/button'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import {
+  getCveAggregate,
   getFirmwareDrivers,
   getHardwareFirmwareBlob,
   getHardwareFirmwareCves,
   listHardwareFirmware,
   runCveMatch,
+  type CveAggregate,
   type FirmwareCveMatch,
   type FirmwareDriver,
   type HardwareFirmwareBlob,
@@ -56,6 +58,7 @@ export default function HardwareFirmwarePage() {
 
   const [running, setRunning] = useState(false)
   const [runResult, setRunResult] = useState<string | null>(null)
+  const [cveAggregate, setCveAggregate] = useState<CveAggregate | null>(null)
 
   // Load firmware list for selector
   useEffect(() => {
@@ -64,13 +67,17 @@ export default function HardwareFirmwarePage() {
     }
   }, [projectId])
 
-  // Load blobs + drivers whenever project / firmware / filters change
+  // Load blobs + drivers + firmware-wide CVE aggregate whenever the
+  // project / firmware / filters change.  The aggregate is a cheap
+  // read-only count so the header badge can render on page load
+  // without re-running the matcher.  Filters don't apply to the
+  // aggregate -- it's always firmware-wide.
   const loadAll = useCallback(async () => {
     if (!projectId) return
     setLoading(true)
     setError(null)
     try {
-      const [blobsResp, driversResp] = await Promise.all([
+      const [blobsResp, driversResp, aggResp] = await Promise.all([
         listHardwareFirmware(projectId, {
           firmwareId: selectedFirmwareId,
           category: category ?? undefined,
@@ -81,9 +88,11 @@ export default function HardwareFirmwarePage() {
           drivers: [] as FirmwareDriver[],
           total: 0,
         })),
+        getCveAggregate(projectId, selectedFirmwareId).catch(() => null),
       ])
       setBlobs(blobsResp.blobs)
       setDrivers(driversResp.drivers)
+      setCveAggregate(aggResp)
     } catch (err) {
       setError(extractErrorMessage(err, 'Failed to load hardware firmware data'))
     } finally {
@@ -330,7 +339,9 @@ export default function HardwareFirmwarePage() {
             totalBlobs={totalBlobs}
             notSignedCount={notSignedCount}
             vendorCount={vendorCount}
-            cveCount={cveCount}
+            hardwareCveCount={cveAggregate?.hw_firmware_cves ?? 0}
+            selectedBlobCveCount={selectedBlobId ? cveCount : undefined}
+            advisoryCount={cveAggregate?.advisory_count ?? 0}
           />
 
           <div className="space-y-3">

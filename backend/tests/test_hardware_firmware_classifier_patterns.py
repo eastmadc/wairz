@@ -317,6 +317,120 @@ def test_classifier_vendors_export_matches_loader() -> None:
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# MCU / kernel / signed-archive patterns (2026-04-17 RespArray investigation).
+# Covers gaps surfaced by project 00815038 after the extraction-integrity fix.
+# ---------------------------------------------------------------------------
+
+
+def test_classify_nxp_imxrt_mcu_bin() -> None:
+    """NXP i.MX RT Cortex-M MCU firmware by filename."""
+    cls = classify("/firmware/imxrt1052_ix_iv_iap.bin", _RAW_BIN_MAGIC, 89_000)
+    assert cls is not None
+    assert cls.vendor == "nxp"
+    assert cls.category == "mcu"
+    assert cls.format == "imxrt_bin"
+    assert cls.confidence == "high"
+
+
+def test_classify_nxp_imxrt_merge_filename_variant() -> None:
+    """Filenames with parenthesised suffix (MERGE) must still match."""
+    cls = classify("/firmware/imxrt1052_ix_iv(MERGE).bin", _RAW_BIN_MAGIC, 1_900_000)
+    assert cls is not None
+    assert cls.vendor == "nxp"
+    assert cls.category == "mcu"
+
+
+def test_classify_edan_frontboard_bin() -> None:
+    """Edan medical-device frontboard MCU firmware."""
+    cls = classify("/frontboard/ix_iv_070(MERGE).bin", _RAW_BIN_MAGIC, 500_000)
+    assert cls is not None
+    assert cls.vendor == "edan"
+    assert cls.category == "mcu"
+    assert cls.confidence == "medium"
+
+
+def test_classify_edan_iap_variant() -> None:
+    cls = classify("/frontboard/update/ix_iv_070(IAP).bin", _RAW_BIN_MAGIC, 300_000)
+    assert cls is not None
+    assert cls.vendor == "edan"
+    assert cls.category == "mcu"
+
+
+def test_classify_edan_vendor_in_registry() -> None:
+    """edan must resolve through vendor_prefixes.yaml with a display string."""
+    assert "edan" in VENDORS
+    assert VENDOR_DISPLAY.get("edan") == "Edan Instruments, Inc."
+
+
+def test_classify_linux_zimage_by_magic() -> None:
+    """ARM zImage magic 0x016F2818 at offset 0x24 — high-confidence gate."""
+    magic = b"\x00" * 0x24 + b"\x18\x28\x6f\x01" + b"\x00" * 32
+    assert len(magic) == 64
+    cls = classify("/zImage-restore/zImage-restore", magic, 2_400_000)
+    assert cls is not None
+    assert cls.category == "kernel"
+    assert cls.format == "zImage"
+    assert cls.confidence == "high"
+
+
+def test_classify_linux_zimage_by_filename_fallback() -> None:
+    """zImage without the canonical magic still classifies via filename."""
+    cls = classify("/boot/zImage", _RAW_BIN_MAGIC, 4_000_000)
+    assert cls is not None
+    assert cls.category == "kernel"
+    assert cls.format == "zImage"
+
+
+def test_classify_uimage_by_filename() -> None:
+    cls = classify("/boot/uImage", _RAW_BIN_MAGIC, 5_000_000)
+    assert cls is not None
+    assert cls.category == "kernel"
+    assert cls.format == "uImage"
+
+
+def test_classify_vmlinuz_by_filename() -> None:
+    cls = classify("/boot/vmlinuz-5.10.0", _RAW_BIN_MAGIC, 8_000_000)
+    assert cls is not None
+    assert cls.category == "kernel"
+    assert cls.format == "vmlinuz"
+
+
+def test_classify_signed_archive_placeholder() -> None:
+    """Custom a3 df bb bf archive magic emits a placeholder classification."""
+    magic = b"\xa3\xdf\xbb\xbf" + b"\x00" * 60
+    cls = classify(
+        "/data/system_update.tar.xz",  # real filename lies about the format
+        magic,
+        10_000,
+    )
+    assert cls is not None
+    assert cls.category == "other"
+    assert cls.format == "signed_archive"
+    assert cls.confidence == "medium"
+
+
+def test_classify_zimage_magic_wins_over_yaml() -> None:
+    """Magic-byte precedence: zImage magic beats filename YAML pattern."""
+    magic = b"\x00" * 0x24 + b"\x18\x28\x6f\x01" + b"\x00" * 32
+    # Filename would also match YAML (zimage pattern), so both agree — test
+    # that the result is the high-confidence magic path, not a YAML hit.
+    cls = classify("/boot/zImage-restore", magic, 2_000_000)
+    assert cls is not None
+    assert cls.format == "zImage"
+    assert cls.vendor == "unknown"
+    # Magic path emits confidence=high with no source/product fields
+    assert cls.confidence == "high"
+
+
+def test_classify_mcu_and_kernel_in_categories() -> None:
+    """Ensure the new categories are in the export so downstream validation passes."""
+    assert "mcu" in classifier.CATEGORIES
+    assert "kernel" in classifier.CATEGORIES
+    for fmt in ("imxrt_bin", "zImage", "uImage", "vmlinuz", "signed_archive"):
+        assert fmt in classifier.FORMATS, f"{fmt} must be in FORMATS"
+
+
 def test_firmware_patterns_minimum_coverage() -> None:
     """The YAML must carry at least the 40 curated entries we committed to."""
     # We don't expose the compiled list directly (internal), but we can

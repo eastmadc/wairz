@@ -35,7 +35,11 @@ import struct
 from typing import Any
 
 from app.services.hardware_firmware.parsers.base import ParsedBlob, register_parser
-from app.services.hardware_firmware.parsers.mediatek_gfh import derive_chipset, walk_sub_images
+from app.services.hardware_firmware.parsers.mediatek_gfh import (
+    derive_chipset,
+    signed_from_subimages,
+    walk_sub_images,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -122,7 +126,11 @@ class MediatekTinysysParser:
                 "MediaTek PCM state-machine microcode; not ARM code. No "
                 "Ghidra language spec exists; parser surfaces metadata only."
             )
-            return ParsedBlob(metadata=meta, chipset_target=derive_chipset(meta))
+            return ParsedBlob(
+                metadata=meta,
+                signed=signed_from_subimages(subimages),
+                chipset_target=derive_chipset(meta),
+            )
 
         # SSPM — 0x58901690 segment-chain wrapper.
         if payload[:4] == _SSPM_SEGMENT_MAGIC:
@@ -142,7 +150,11 @@ class MediatekTinysysParser:
                     "find the real vector table. Deferred."
                 ),
             }
-            return ParsedBlob(metadata=meta, chipset_target=derive_chipset(meta))
+            return ParsedBlob(
+                metadata=meta,
+                signed=signed_from_subimages(subimages),
+                chipset_target=derive_chipset(meta),
+            )
 
         # Default: SCP / MCUPM / DPM — plain Cortex-M image with a
         # vector table at offset 0. Validate + extract.
@@ -188,6 +200,7 @@ class MediatekTinysysParser:
 
         return ParsedBlob(
             version=version,
+            signed=signed_from_subimages(subimages),
             metadata=meta,
             chipset_target=derive_chipset(meta),
         )

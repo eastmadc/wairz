@@ -537,3 +537,90 @@ patterns:
     product: "Fingerprint Cards FPCxxxx fingerprint sensor"
     category: fingerprint
     confidence: high
+
+  # =====================================================================
+  # NXP i.MX RT series — Cortex-M MCU firmware (raw .bin)
+  # Filename convention: imxrt1052_foo.bin, imxrt1064_merge.bin
+  # =====================================================================
+  - pattern: "^imxrt[0-9]+[_a-z0-9().-]*\\.bin$"
+    vendor: nxp
+    product: "NXP i.MX RT Cortex-M MCU firmware"
+    category: mcu
+    confidence: high
+    format: imxrt_bin
+    source: nxp-imxrt-reference-manual
+
+  # =====================================================================
+  # Edan Instruments — frontboard MCU firmware (medical devices)
+  # Filename convention: ix_iv_070(MERGE).bin, ix_iv_070(IAP).bin
+  # =====================================================================
+  - pattern: "^ix_iv_[0-9]+\\([a-z0-9_-]+\\)\\.bin$"
+    vendor: edan
+    product: "Edan frontboard MCU firmware"
+    category: mcu
+    confidence: medium
+    source: live-audit-2026-04-17-RespArray
+
+  # =====================================================================
+  # Linux kernel images — zImage / uImage / vmlinuz
+  # Magic-byte gate in classifier.py takes precedence when magic matches.
+  # =====================================================================
+  - pattern: "^zimage([-_.][a-z0-9._-]*)?$"
+    vendor: unknown
+    product: "Linux compressed ARM kernel (zImage)"
+    category: kernel
+    confidence: high
+    format: zImage
+  - pattern: "^uimage([-_.][a-z0-9._-]*)?$"
+    vendor: unknown
+    product: "U-Boot kernel image (uImage)"
+    category: kernel
+    confidence: high
+    format: uImage
+  - pattern: "^vmlinuz([-_.][a-z0-9._-]*)?$"
+    vendor: unknown
+    product: "Linux kernel (vmlinuz)"
+    category: kernel
+    confidence: high
+    format: vmlinuz
+
+  # =====================================================================
+  # MediaTek vendor/firmware partition blobs (DPCS10 / Genio / aiot* SKUs)
+  # Surfaced 2026-04-17 from live-audit of DPCS10_260413-1709 — these were
+  # all classified ``other`` because no filename pattern existed.
+  # =====================================================================
+
+  # MTK Camera Control Unit firmware — runs the ISP camera pipeline.
+  - pattern: "^lib3a\\.ccu$"
+    vendor: mediatek
+    product: "MediaTek 3A Camera Control Unit firmware"
+    category: camera
+    confidence: high
+    source: live-audit-2026-04-17-DPCS10
+
+  # MTK Wi-Fi RAM code — the chipset id is encoded in the suffix
+  # (WIFI_RAM_CODE_6759 → MT6759 family).  classifier.py applies the
+  # name-based chipset hint via the patterns_loader.
+  - pattern: "^wifi_ram_code_[0-9]{4,5}$"
+    vendor: mediatek
+    product: "MediaTek WLAN firmware (RAM code)"
+    category: wifi
+    confidence: high
+    source: live-audit-2026-04-17-DPCS10
+
+  # MTK Bluetooth firmware config (ASCII INI-style, e.g. BT_FW.cfg)
+  - pattern: "^bt_fw\\.cfg$"
+    vendor: mediatek
+    product: "MediaTek Bluetooth firmware config"
+    category: bluetooth
+    confidence: high
+    source: live-audit-2026-04-17-DPCS10
+
+  # MTK Bluetooth ROM patches — paired *_be_patch_*_hdr.bin files load
+  # ROM patches into the BT controller during link-up.
+  - pattern: "^romv[0-9]+_(be|le)_patch_[0-9_]+_hdr\\.bin$"
+    vendor: mediatek
+    product: "MediaTek Bluetooth ROM patch"
+    category: bluetooth
+    confidence: high
+    source: live-audit-2026-04-17-DPCS10

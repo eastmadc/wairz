@@ -21,6 +21,13 @@ export interface HardwareFirmwareBlob {
   detection_source: string
   detection_confidence: string
   created_at: string
+  // Per-blob CVE rollup populated by the list endpoint.  cve_count
+  // excludes ADVISORY-* entries; advisory_count tracks them separately
+  // so the UI can color severity correctly.  max_severity is the worst
+  // severity across both buckets.
+  cve_count: number
+  advisory_count: number
+  max_severity: 'critical' | 'high' | 'medium' | 'low' | null
 }
 
 export interface HardwareFirmwareListResponse {
@@ -127,6 +134,24 @@ export async function runCveMatch(
     `/projects/${projectId}/hardware-firmware/cve-match`,
     null,
     { params },
+  )
+  return data
+}
+
+export interface CveAggregate {
+  hw_firmware_cves: number
+  kernel_cves: number
+  advisory_count: number
+  last_match_at: string | null
+}
+
+export async function getCveAggregate(
+  projectId: string,
+  firmwareId?: string | null,
+): Promise<CveAggregate> {
+  const { data } = await apiClient.get<CveAggregate>(
+    `/projects/${projectId}/hardware-firmware/cve-aggregate`,
+    { params: firmwareId ? { firmware_id: firmwareId } : undefined },
   )
   return data
 }

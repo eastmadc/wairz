@@ -341,3 +341,38 @@ def derive_chipset(metadata: dict) -> str | None:
         if m:
             return f"mt{m.group(1).lower()}"
     return None
+
+
+def signed_from_subimages(subimages: list) -> str:
+    """Translate the LK container's sub-image walk into a signed verdict.
+
+    MTK LK containers (gz/atf/scp/sspm/spmfw) interleave payload sub-
+    images with ``cert2`` signature blocks at well-known offsets.  When
+    ``walk_sub_images`` returns at least one ``is_signature=True`` entry
+    alongside a non-empty primary payload, the container IS signed by
+    MTK -- the signature parser already validated the cert chain layout
+    even if we don't verify the cryptographic chain ourselves.
+
+    Returns:
+        ``"signed"`` when a non-empty ``cert2`` block accompanies a real
+            payload (the common case for gz/atf/tinysys subsystems)
+        ``"unsigned"`` when sub-images exist but no signature block does
+            (rare; would indicate a stripped or malformed container)
+        ``"unknown"`` when ``subimages`` is empty (parser failure path
+            or non-LK container -- don't claim a verdict we can't back)
+    """
+    if not subimages:
+        return "unknown"
+    has_payload = any(
+        not getattr(s, "is_signature", False) and getattr(s, "payload_size", 0) > 0
+        for s in subimages
+    )
+    has_signature = any(
+        getattr(s, "is_signature", False) and getattr(s, "payload_size", 0) > 0
+        for s in subimages
+    )
+    if has_payload and has_signature:
+        return "signed"
+    if has_payload and not has_signature:
+        return "unsigned"
+    return "unknown"
