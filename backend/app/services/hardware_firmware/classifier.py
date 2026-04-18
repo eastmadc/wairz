@@ -50,6 +50,12 @@ FORMATS: set[str] = {
     "mtk_preloader",
     "mtk_modem",
     "mtk_wifi_hdr",
+    # Phase C — MediaTek subsystem-specific parsers (strip LK container
+    # + route to role-aware analysis). All share the 0x58881688 outer
+    # magic; dispatch is by the partition name embedded in the LK header.
+    "mtk_atf",
+    "mtk_geniezone",
+    "mtk_tinysys",
     "awinic_acf",
     # MCU / kernel / opaque-archive placeholders
     "imxrt_bin",
@@ -214,12 +220,9 @@ def _classify_by_magic(magic: bytes) -> Classification | None:
         return Classification("tee", "unknown", "kinibi_mclf", "high")
 
     # MediaTek LK partition record (magic 0x58881688, little-endian).
-    # The first-pass magic alone can't tell us whether this is a real
-    # bootloader (lk, lk_a/b, preloader), a TEE/hypervisor (atf, gz),
-    # a modem stub (md1rom, md1dsp), camera firmware (cam_vpu*), etc.
-    # Peek at the partition-name field inside the LK header and dispatch
-    # to the correct Wairz category. Falls back to bootloader/mtk_lk
-    # when the name is missing or unknown.
+    # Dispatch by partition-name to the right Wairz category AND to a
+    # role-specific parser (mtk_atf / mtk_geniezone / mtk_tinysys) when
+    # one exists. Unrecognised names fall back to mtk_lk.
     if magic[:4] == b"\x88\x16\x88\x58":
         from app.services.hardware_firmware.parsers.mediatek_gfh import (
             lookup_partition,
@@ -227,7 +230,29 @@ def _classify_by_magic(magic: bytes) -> Classification | None:
         )
         hdr = parse_lk_header(magic)
         if hdr is not None and hdr.name:
+            name_lower = hdr.name.lower()
             dispatch = lookup_partition(hdr.name)
+            # Category comes from the authoritative name→category table;
+            # format comes from whether a role-specific parser exists.
+            # scp → ("dsp", "tinysys") → format=mtk_tinysys
+            # sspm → ("mcu", "tinysys") → format=mtk_tinysys
+            # atf → ("tee", "atf") → format=mtk_atf
+            # gz → ("tee", "geniezone") → format=mtk_geniezone
+            if name_lower == "atf":
+                cat = dispatch[0] if dispatch else "tee"
+                return Classification(cat, "mediatek", "mtk_atf", "high")
+            if name_lower == "gz":
+                cat = dispatch[0] if dispatch else "tee"
+                return Classification(cat, "mediatek", "mtk_geniezone", "high")
+            if (
+                name_lower in ("scp", "sspm", "mcupm", "dpm", "spmfw")
+                or name_lower.startswith("tinysys")
+            ):
+                cat = dispatch[0] if dispatch else "dsp"
+                return Classification(cat, "mediatek", "mtk_tinysys", "high")
+            # Everything else — logo, cam_vpu, md1rom, lk — routes
+            # through the generic mtk_lk parser with category from the
+            # name-lookup table.
             if dispatch is not None:
                 category, _component = dispatch
                 return Classification(category, "mediatek", "mtk_lk", "high")

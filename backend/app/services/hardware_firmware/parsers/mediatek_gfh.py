@@ -31,7 +31,13 @@ from dataclasses import dataclass
 
 _LK_MAGIC = 0x58881688
 _LK_FILE_INFO_MAGIC = 0x58891689
-_LK_HEADER_SIZE = 512
+# Outer container header is 512 bytes total: 48-byte LK record + GFH_FILE_INFO
+# record at 0x30 + 0xFF padding to 0x200. Every parser strips 0x200 to reach
+# the real payload.
+LK_CONTAINER_HEADER_SIZE = 0x200
+# Sub-image alignment inside a multi-payload container (observed on SCP where
+# the next sub-image starts at the next 16-byte boundary after size bytes).
+_SUBIMAGE_ALIGNMENT = 16
 
 # Compact (16-byte) vs legacy (512-byte) layouts are distinguished at
 # runtime by whether offset 0x08 holds a plausible ASCII name.  Valid
@@ -98,6 +104,61 @@ def parse_lk_header(data: bytes) -> LkHeader | None:
         file_info_offset=file_info_offset,
         has_file_info_magic=False,
     )
+
+
+@dataclass
+class SubImage:
+    """One sub-image inside an LK container (the primary payload, a trailing
+    `cert2` signature, or a secondary payload like `atf_dram` / `unmap2`)."""
+
+    name: str
+    offset: int        # offset of the LK header within the file
+    payload_size: int  # payload bytes, excluding the 0x200 header
+    payload_offset: int  # offset of the first payload byte (== offset + 0x200)
+    is_signature: bool   # True for cert2 and similar 1008-byte signature blocks
+
+
+def walk_sub_images(data: bytes, max_subimages: int = 16) -> list[SubImage]:
+    """Enumerate every LK sub-image inside a container.
+
+    Every MediaTek subsystem blob observed on DPCS10 / AIoT8788 ships as a
+    sequence of LK records: primary payload, a 0x3F0-byte ``cert2``
+    signature, optionally a secondary payload (``atf_dram``, ``unmap2``,
+    ``tinysys-scp-CM4_A``) + its own ``cert2``. Walking the chain lets us
+    hand the right stripped payload to each per-role parser instead of
+    misreading the secondary payload as part of the primary's byte stream.
+
+    Sub-image alignment: payload starts at header + 0x200, next header
+    starts at ``payload_end`` rounded up to a 16-byte boundary. This
+    matches the empirical layout on every blob we've seen.
+    """
+    out: list[SubImage] = []
+    offset = 0
+    safety = 0
+    while offset + 0x40 <= len(data) and safety < max_subimages:
+        safety += 1
+        try:
+            magic_u32, size_u32 = struct.unpack_from("<II", data, offset)
+        except struct.error:
+            break
+        if magic_u32 != _LK_MAGIC:
+            break
+        name = _decode_cstr(data[offset + 8 : offset + 0x20])
+        is_sig = name == "cert2"
+        out.append(SubImage(
+            name=name,
+            offset=offset,
+            payload_size=size_u32,
+            payload_offset=offset + LK_CONTAINER_HEADER_SIZE,
+            is_signature=is_sig,
+        ))
+        # Next header starts at payload_end, aligned up to 16.
+        payload_end = offset + LK_CONTAINER_HEADER_SIZE + size_u32
+        next_off = (payload_end + _SUBIMAGE_ALIGNMENT - 1) & ~(_SUBIMAGE_ALIGNMENT - 1)
+        if next_off <= offset:  # defensive — never loop forever
+            break
+        offset = next_off
+    return out
 
 
 def _decode_cstr(raw: bytes) -> str:

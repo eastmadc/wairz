@@ -166,22 +166,24 @@ class TestClassifierDispatch:
         assert self._classify("lk") == ("bootloader", "mediatek", "mtk_lk")
 
     def test_atf_becomes_tee(self):
-        assert self._classify("atf") == ("tee", "mediatek", "mtk_lk")
+        # Phase C: atf now routes to the role-specific mtk_atf parser.
+        assert self._classify("atf") == ("tee", "mediatek", "mtk_atf")
 
     def test_gz_becomes_tee(self):
-        assert self._classify("gz") == ("tee", "mediatek", "mtk_lk")
+        assert self._classify("gz") == ("tee", "mediatek", "mtk_geniezone")
 
     def test_cam_vpu1_becomes_camera(self):
+        # No role-specific parser for camera yet; stays on mtk_lk.
         assert self._classify("cam_vpu1") == ("camera", "mediatek", "mtk_lk")
 
     def test_md1rom_becomes_modem(self):
         assert self._classify("md1rom") == ("modem", "mediatek", "mtk_lk")
 
     def test_scp_becomes_dsp(self):
-        assert self._classify("scp") == ("dsp", "mediatek", "mtk_lk")
+        assert self._classify("scp") == ("dsp", "mediatek", "mtk_tinysys")
 
     def test_spmfw_becomes_mcu(self):
-        assert self._classify("spmfw") == ("mcu", "mediatek", "mtk_lk")
+        assert self._classify("spmfw") == ("mcu", "mediatek", "mtk_tinysys")
 
 
 # ─── Parser metadata sanity (no more 1.9GB nonsense) ──────────────────
