@@ -59,3 +59,7 @@ jobs:
       - name: Run Bandit
         working-directory: backend
         run: bandit -r app/ -c pyproject.toml
+
+      - name: Lint — async def must not call sync subprocess
+        working-directory: backend
+        run: python3 scripts/lint_async_subprocess.py app/

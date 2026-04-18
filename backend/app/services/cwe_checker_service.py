@@ -291,34 +291,42 @@ async def run_cwe_checker_batch(
     firmware_id: uuid.UUID,
     db: AsyncSession,
     timeout: int | None = None,
-    max_concurrent: int = 2,
+    max_concurrent: int = 2,  # retained for API compatibility; no longer used
 ) -> list[CweCheckResult]:
-    """Run cwe_checker on multiple binaries with concurrency control.
+    """Run cwe_checker on multiple binaries sequentially.
 
-    Processes binaries sequentially (cwe_checker is CPU+memory intensive),
-    but can be configured for limited parallelism.
+    Sequential by design (CLAUDE.md learned rule #7): earlier versions
+    used ``asyncio.gather`` on coroutines sharing ``db`` — a direct
+    violation of the rule (AsyncSession is not safe for concurrent
+    coroutine access).  The prior semaphore(max_concurrent=2) capped
+    simultaneous cwe_checker *processes* but did NOT serialise session
+    use, so two coroutines could interleave on ``db.execute`` /
+    ``db.add`` / ``db.flush`` and trigger
+    ``InvalidRequestError: Session is already flushing`` under load,
+    silently lose writes, or stamp the wrong cache row.
+
+    Since ``cwe_checker`` is CPU + memory heavy (and was already
+    semaphore-limited to 2 effective workers), the sequential rewrite
+    is the minimal correctness fix.  If future throughput pressure
+    demands parallelism, switch to a per-task session via
+    ``async_session_factory()`` — do NOT reintroduce a shared session.
+
+    ``max_concurrent`` is kept in the signature for backward
+    compatibility with existing callers; it is no longer consulted.
     """
-    results = []
-    semaphore = asyncio.Semaphore(max_concurrent)
-
-    async def _check_one(path: str) -> CweCheckResult:
-        async with semaphore:
-            return await run_cwe_checker(path, firmware_id, db, timeout)
-
-    # Run with limited concurrency
-    tasks = [_check_one(p) for p in binary_paths]
-    results = await asyncio.gather(*tasks, return_exceptions=True)
-
-    final = []
-    for i, r in enumerate(results):
-        if isinstance(r, Exception):
-            final.append(CweCheckResult(
-                binary_path=binary_paths[i],
-                binary_name=os.path.basename(binary_paths[i]),
-                sha256="",
-                error=str(r),
-            ))
-        else:
-            final.append(r)
-
-    return final
+    results: list[CweCheckResult] = []
+    for path in binary_paths:
+        try:
+            results.append(
+                await run_cwe_checker(path, firmware_id, db, timeout)
+            )
+        except Exception as exc:  # noqa: BLE001 — error captured per-row
+            results.append(
+                CweCheckResult(
+                    binary_path=path,
+                    binary_name=os.path.basename(path),
+                    sha256="",
+                    error=str(exc),
+                )
+            )
+    return results
