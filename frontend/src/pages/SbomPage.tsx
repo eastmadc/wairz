@@ -28,6 +28,7 @@ import {
 } from '@/api/sbom'
 import { listFirmware } from '@/api/firmware'
 import { useVulnerabilityStore } from '@/stores/vulnerabilityStore'
+import { useShallow } from 'zustand/react/shallow'
 import { useProjectStore } from '@/stores/projectStore'
 import FirmwareSelector from '@/components/projects/FirmwareSelector'
 import VulnerabilityRow from '@/components/sbom/VulnerabilityRow'
@@ -74,8 +75,10 @@ export default function SbomPage() {
   const [expandedComp, setExpandedComp] = useState<string | null>(null)
   const [firmwareList, setFirmwareList] = useState<import('@/types').FirmwareDetail[]>([])
 
-  const vulnStore = useVulnerabilityStore()
-  const { vulnerabilities, resolutionFilter } = vulnStore
+  // Individual selectors — avoid re-rendering on every store field change.
+  const vulnerabilities = useVulnerabilityStore((s) => s.vulnerabilities)
+  const resolutionFilter = useVulnerabilityStore((s) => s.resolutionFilter)
+  const sevFilter = useVulnerabilityStore((s) => s.sevFilter)
 
   // Load firmware list for selector
   useEffect(() => {
@@ -211,7 +214,7 @@ export default function SbomPage() {
 
   // Filter vulnerabilities by severity (resolution filter handled by store/API)
   const filteredVulns = vulnerabilities.filter((v) => {
-    if (vulnStore.sevFilter && v.severity !== vulnStore.sevFilter) return false
+    if (sevFilter && v.severity !== sevFilter) return false
     return true
   })
 
@@ -704,6 +707,9 @@ function VulnerabilitiesTab({ projectId, vulnerabilities }: {
   projectId: string
   vulnerabilities: SbomVulnerability[]
 }) {
+  // useShallow keeps the destructure ergonomic while scoping the
+  // re-render trigger to the fields actually pulled (vs. plain
+  // useVulnerabilityStore() which re-renders on ANY field change).
   const {
     sevFilter, setSevFilter: onSevFilter,
     resolutionFilter, setResolutionFilter: onResolutionFilter,
@@ -712,7 +718,25 @@ function VulnerabilitiesTab({ projectId, vulnerabilities }: {
     selectedIds, toggleSelected, selectAll, clearSelection,
     hasMore, loadingMore,
     resolve, bulkResolve, loadMore,
-  } = useVulnerabilityStore()
+  } = useVulnerabilityStore(useShallow((s) => ({
+    sevFilter: s.sevFilter,
+    setSevFilter: s.setSevFilter,
+    resolutionFilter: s.resolutionFilter,
+    setResolutionFilter: s.setResolutionFilter,
+    justificationDialog: s.justificationDialog,
+    setJustificationDialog: s.setJustificationDialog,
+    justificationText: s.justificationText,
+    setJustificationText: s.setJustificationText,
+    selectedIds: s.selectedIds,
+    toggleSelected: s.toggleSelected,
+    selectAll: s.selectAll,
+    clearSelection: s.clearSelection,
+    hasMore: s.hasMore,
+    loadingMore: s.loadingMore,
+    resolve: s.resolve,
+    bulkResolve: s.bulkResolve,
+    loadMore: s.loadMore,
+  })))
 
   const onResolve = useCallback((vulnId: string, status: VulnerabilityResolutionStatus, justification?: string) => {
     resolve(projectId, vulnId, status, justification)
