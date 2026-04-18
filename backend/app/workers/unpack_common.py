@@ -587,6 +587,74 @@ def check_extraction_limits(
     return None
 
 
+def remove_extraction_escape_symlinks(extraction_dir: str) -> int:
+    """Remove top-level symlinks whose target escapes extraction_dir.
+
+    ``binwalk3 -e -C output_dir input.bin`` ALWAYS creates a top-level
+    symlink ``output_dir/<input_basename>`` that points back at the
+    absolute path of the input file — regardless of whether it found
+    anything to extract.  When nothing is extracted that symlink is the
+    only artifact in ``extraction_dir``, and:
+
+      1. :func:`find_filesystem_root`'s fallback pass (pick the dir
+         with the most entries) counts it as "rootfs with 1 file"
+         and marks the extraction successful.
+      2. The file tree API exposes the symlink to the UI.
+      3. When a user clicks it, the sandbox (``_resolve_within_root``)
+         rewrites the absolute symlink target as root-relative —
+         yielding a nonexistent path inside ``extraction_dir`` that
+         404s.  User sees "can't access" for a file that visually
+         exists in the tree.
+
+    We scan ONLY the top level of ``extraction_dir`` — rootfs-internal
+    symlinks such as ``etc/passwd -> /usr/etc/passwd`` live deeper in
+    the tree and are preserved (the sandbox's chroot emulation handles
+    those correctly).  Broken symlinks (target missing) are also
+    removed — they are always extraction leftovers.
+
+    Safe to call multiple times: idempotent on an already-clean tree.
+
+    Returns the number of symlinks removed.
+    """
+    try:
+        real_root = os.path.realpath(extraction_dir)
+    except OSError:
+        return 0
+
+    try:
+        entries = list(os.scandir(extraction_dir))
+    except OSError:
+        return 0
+
+    removed = 0
+    for entry in entries:
+        if not entry.is_symlink():
+            continue
+        try:
+            target_real = os.path.realpath(entry.path)
+        except OSError:
+            # Broken symlink — target doesn't exist on disk at all.
+            # Always an extraction artifact; remove.
+            try:
+                os.unlink(entry.path)
+                removed += 1
+            except OSError:
+                pass
+            continue
+
+        # Escape check: realpath must equal real_root or be a prefix
+        # under it.  Anything else points outside the sandbox.
+        if target_real != real_root and not target_real.startswith(
+            real_root + os.sep
+        ):
+            try:
+                os.unlink(entry.path)
+                removed += 1
+            except OSError:
+                pass
+    return removed
+
+
 async def run_binwalk_extraction(firmware_path: str, output_dir: str, timeout: int = 600) -> str:
     """Run binwalk3 -e to extract firmware contents. Returns stdout+stderr."""
     proc = await asyncio.create_subprocess_exec(

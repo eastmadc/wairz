@@ -22,6 +22,7 @@ from app.workers.unpack_common import (  # noqa: F401
     cleanup_unblob_artifacts,
     convert_intel_hex_to_binary,
     find_filesystem_root,
+    remove_extraction_escape_symlinks,
     run_binwalk_extraction,
     run_unblob_extraction,
     run_uefi_extraction,
@@ -723,6 +724,16 @@ async def _unpack_firmware_inner(
                     removed += cleanup_unblob_artifacts(entry.path)
             if removed:
                 result.unpack_log += f"Cleaned up {removed} intermediate artifact(s).\n"
+            # Remove escape symlinks — binwalk3 always plants one back at
+            # the input file in its -C output dir, regardless of whether
+            # it found anything to extract.  Leaving it tricks
+            # find_filesystem_root into reporting success on a dir whose
+            # only "content" is a symlink the sandbox refuses to serve.
+            escape_removed = remove_extraction_escape_symlinks(extraction_dir)
+            if escape_removed:
+                result.unpack_log += (
+                    f"Removed {escape_removed} extraction-escape symlink(s).\n"
+                )
             # Recursively expand any nested archives that unblob/binwalk
             # didn't touch at the top level (common pattern: a firmware
             # ZIP holds multiple sibling .tar.xz archives — unblob extracts
