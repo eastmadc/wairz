@@ -288,6 +288,23 @@ def _compute_roots_sync(extracted_path: str | None) -> list[str]:
     # Walk the container for qualifying children.
     roots = _scan_container_for_roots(container)
 
+    # Include the container itself as a detection root when it holds raw
+    # image files directly at its top level.  This covers the post-
+    # scatter-relocation layout where ``_relocate_scatter_subdirs`` moves
+    # ``.img`` / ``.bin`` files out of the version subdir into the
+    # extraction root — the files become direct children of ``container/``
+    # rather than sitting inside ``container/<name>/``.  Without this
+    # branch ``_scan_container_for_roots`` only inspects subdirectories,
+    # leaving the top-level firmware blobs (lk.img, tee.img, gz.img,
+    # preloader*.bin, scp.img, sspm.img, ...) invisible to the detector.
+    # ``_dir_has_raw_image`` is strict (specific extensions, no recursion)
+    # so containers without firmware-shaped files are NOT promoted.
+    if container and os.path.isdir(container) and _dir_has_raw_image(container):
+        real_container = os.path.realpath(container)
+        existing = {os.path.realpath(r) for r in roots}
+        if real_container not in existing:
+            roots.append(container)
+
     # If the caller's extracted_path points at a specific sub-partition
     # (e.g. rootfs/partition_2_erofs/) that isn't in the shallow sweep,
     # add it as a detection root.

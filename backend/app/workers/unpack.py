@@ -582,13 +582,25 @@ async def _unpack_firmware_inner(
                 return result
             result.unpack_log += await _extract_android_ota(firmware_path, extraction_dir)
             bomb_error = check_extraction_limits(extraction_dir, fw_size)
+            _analyze_filesystem(result, extraction_dir)
+            if result.success:
+                # Fast path produced a usable rootfs — keep it even if the
+                # bomb check complained.  The limit is a defensive default
+                # (10 GB) that legitimate Android firmware can approach
+                # after sparse expansion; rmtree-ing here would discard
+                # real work for a defence-in-depth guard.
+                if bomb_error:
+                    result.unpack_log += (
+                        f"\nWARNING: {bomb_error} "
+                        "— extraction kept because filesystem analysis succeeded.\n"
+                    )
+                return result
+            # No rootfs AND bomb tripped: likely malformed firmware.  Clean
+            # up the oversized tree before trying other extractors.
             if bomb_error:
                 result.error = bomb_error
                 result.unpack_log += f"\n{bomb_error}\n"
                 shutil.rmtree(extraction_dir, ignore_errors=True)
-                return result
-            _analyze_filesystem(result, extraction_dir)
-            if result.success:
                 return result
             result.unpack_log += "\nAndroid extraction produced no filesystem root.\n"
         except Exception as e:
@@ -614,16 +626,23 @@ async def _unpack_firmware_inner(
             with _tarfile.open(firmware_path) as tf:
                 tf.extractall(extraction_dir, filter=_firmware_tar_filter)
             result.unpack_log += f"Extracted partition dump tar: {os.path.basename(firmware_path)}\n"
+            # Process extracted .img files through Android pipeline, THEN
+            # bomb-check — the Android loop skips user-data partitions and
+            # drops super.img raw, so sizing is measured after pruning.
+            result.unpack_log += await _extract_android_ota(extraction_dir, extraction_dir)
             bomb_error = check_extraction_limits(extraction_dir, fw_size)
+            _analyze_filesystem(result, extraction_dir)
+            if result.success:
+                if bomb_error:
+                    result.unpack_log += (
+                        f"\nWARNING: {bomb_error} "
+                        "— extraction kept because filesystem analysis succeeded.\n"
+                    )
+                return result
             if bomb_error:
                 result.error = bomb_error
                 result.unpack_log += f"\n{bomb_error}\n"
                 shutil.rmtree(extraction_dir, ignore_errors=True)
-                return result
-            # Process extracted .img files through Android pipeline
-            result.unpack_log += await _extract_android_ota(extraction_dir, extraction_dir)
-            _analyze_filesystem(result, extraction_dir)
-            if result.success:
                 return result
             result.unpack_log += "\nPartition dump extraction produced no filesystem root.\n"
         except Exception as e:
@@ -661,13 +680,18 @@ async def _unpack_firmware_inner(
             except Exception as e:
                 result.unpack_log += f"Nested extraction skipped: {e}\n"
             bomb_error = check_extraction_limits(extraction_dir, fw_size)
+            _analyze_filesystem(result, extraction_dir)
+            if result.success:
+                if bomb_error:
+                    result.unpack_log += (
+                        f"\nWARNING: {bomb_error} "
+                        "— extraction kept because filesystem analysis succeeded.\n"
+                    )
+                return result
             if bomb_error:
                 result.error = bomb_error
                 result.unpack_log += f"\n{bomb_error}\n"
                 shutil.rmtree(extraction_dir, ignore_errors=True)
-                return result
-            _analyze_filesystem(result, extraction_dir)
-            if result.success:
                 return result
             result.unpack_log += "\nTar extraction produced no filesystem root.\n"
         except Exception as e:
@@ -689,15 +713,9 @@ async def _unpack_firmware_inner(
             log = await func(firmware_path, extraction_dir, timeout=timeout)
             result.unpack_log += log
 
-            # Check if this extractor produced a usable filesystem
-            bomb_error = check_extraction_limits(extraction_dir, fw_size)
-            if bomb_error:
-                result.error = bomb_error
-                result.unpack_log += f"\n{bomb_error}\n"
-                shutil.rmtree(extraction_dir, ignore_errors=True)
-                return result
             # Clean up unblob/binwalk artifacts (.unknown chunks, raw images
-            # that have been extracted) to reduce file explorer noise
+            # that have been extracted) to reduce file explorer noise.  Run
+            # BEFORE the bomb check so intermediate chunks don't count.
             removed = cleanup_unblob_artifacts(extraction_dir)
             # Also clean nested extraction dirs (unblob nests under img_extract/)
             for entry in os.scandir(extraction_dir):
@@ -720,11 +738,22 @@ async def _unpack_firmware_inner(
                     )
             except Exception as e:
                 result.unpack_log += f"Nested extraction skipped: {e}\n"
+            bomb_error = check_extraction_limits(extraction_dir, fw_size)
             await _report("Analyzing filesystem", progress_base + 20)
             _analyze_filesystem(result, extraction_dir)
             if result.success:
                 await _report("Extraction complete", 100)
                 result.unpack_log += f"\n{name} extraction succeeded.\n"
+                if bomb_error:
+                    result.unpack_log += (
+                        f"\nWARNING: {bomb_error} "
+                        "— extraction kept because filesystem analysis succeeded.\n"
+                    )
+                return result
+            if bomb_error:
+                result.error = bomb_error
+                result.unpack_log += f"\n{bomb_error}\n"
+                shutil.rmtree(extraction_dir, ignore_errors=True)
                 return result
 
             result.unpack_log += f"\n{name} ran but no filesystem root found. Trying next...\n"

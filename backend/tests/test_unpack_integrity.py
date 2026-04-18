@@ -20,7 +20,9 @@ import pytest
 
 from app.workers.unpack_android import (
     _MIN_PARTITION_BYTES,
+    _USER_DATA_PARTITION_BASES,
     _extract_android_ota,
+    _is_user_data_partition,
     _relocate_scatter_subdirs,
     _verify_simg_output,
 )
@@ -567,3 +569,127 @@ class TestArchFallbackFromKernel:
         arch, endian = detect_architecture_from_kernel([str(tmp_path)])
         assert arch == "arm"
         assert endian == "little"
+
+
+# ─── Test 7: user-data partitions skipped before conversion ───────────────
+
+class TestUserDataPartitionSkipped:
+    """Skip ``userdata`` / ``cache`` / ``metadata`` / ``persist`` / ``misc``
+    before sparse→raw conversion so their multi-GB declared sizes don't
+    inflate the extraction tree and trip bomb limits (DPCS10 regression).
+    """
+
+    def test_every_aosp_user_data_partition_matches(self):
+        for base in ("userdata", "cache", "metadata", "persist", "misc"):
+            assert _is_user_data_partition(f"{base}.img") is True, base
+
+    def test_ab_slot_suffixes_match(self):
+        assert _is_user_data_partition("userdata_a.img") is True
+        assert _is_user_data_partition("userdata_b.img") is True
+        assert _is_user_data_partition("cache_a.img") is True
+
+    def test_case_insensitive(self):
+        assert _is_user_data_partition("USERDATA.img") is True
+        assert _is_user_data_partition("Cache.IMG") is True
+
+    def test_firmware_partitions_are_not_user_data(self):
+        for name in (
+            "system.img", "vendor.img", "vbmeta.img", "super.img",
+            "boot.img", "init_boot.img", "dtbo.img", "modem.img",
+            "tee.img", "gz.img", "scp.img", "lk.img",
+            "vbmeta_system.img", "vbmeta_vendor.img",
+        ):
+            assert _is_user_data_partition(name) is False, name
+
+    def test_user_data_base_set_matches_aosp_doc(self):
+        assert _USER_DATA_PARTITION_BASES == frozenset({
+            "userdata", "cache", "metadata", "persist", "misc",
+        })
+
+    @pytest.mark.asyncio
+    async def test_userdata_img_removed_during_ota_extract(self, tmp_path: Path):
+        """Scatter zip with userdata.img + firmware partition → userdata
+        deleted early, firmware survives, log records the skip."""
+        src_zip = tmp_path / "scatter.zip"
+        ver_dir = "DPCS10_260414-1134"
+        # Sparse-magic userdata (ensures the skip beats sparse→raw conversion)
+        userdata_bytes = b"\x3a\xff\x26\xed" + b"\x00" * 4096
+        lk_bytes = b"LK_CONTENT" * 500
+        with zipfile.ZipFile(src_zip, "w") as zf:
+            zf.writestr(f"{ver_dir}/userdata.img", userdata_bytes)
+            zf.writestr(f"{ver_dir}/lk.img", lk_bytes)
+
+        extraction_dir = tmp_path / "ext"
+        extraction_dir.mkdir()
+        log = await _extract_android_ota(str(src_zip), str(extraction_dir))
+
+        def _exists_anywhere(name: str) -> bool:
+            for _r, _d, files in os.walk(extraction_dir):
+                if name in files:
+                    return True
+            return False
+
+        assert not _exists_anywhere("userdata.img"), (
+            f"userdata.img should have been removed; log:\n{log}"
+        )
+        assert _exists_anywhere("lk.img"), (
+            f"lk.img was incorrectly removed; log:\n{log}"
+        )
+        assert "user-data partition" in log.lower(), (
+            f"Skip log missing; log:\n{log}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_all_five_user_data_names_skipped(self, tmp_path: Path):
+        src_zip = tmp_path / "scatter.zip"
+        ver_dir = "VER"
+        noise = b"\x00" * 128
+        with zipfile.ZipFile(src_zip, "w") as zf:
+            for name in ("cache.img", "metadata.img", "persist.img", "misc.img"):
+                zf.writestr(f"{ver_dir}/{name}", noise)
+            zf.writestr(f"{ver_dir}/userdata_a.img", noise)
+            zf.writestr(f"{ver_dir}/vbmeta.img", b"VBMETA" * 50)
+
+        extraction_dir = tmp_path / "ext"
+        extraction_dir.mkdir()
+        log = await _extract_android_ota(str(src_zip), str(extraction_dir))
+
+        def _exists_anywhere(name: str) -> bool:
+            for _r, _d, files in os.walk(extraction_dir):
+                if name in files:
+                    return True
+            return False
+
+        for name in (
+            "cache.img", "metadata.img", "persist.img", "misc.img",
+            "userdata_a.img",
+        ):
+            assert not _exists_anywhere(name), (
+                f"{name} should have been skipped; log:\n{log}"
+            )
+        assert _exists_anywhere("vbmeta.img"), "firmware partition lost"
+
+
+# ─── Test 8: super.img scan returns (extracted, total) tuple ──────────────
+
+class TestScanSuperReturnsTuple:
+    """Post-fix, ``_scan_super_partitions`` returns ``(extracted, total)``
+    so the caller can decide whether the raw LP2 container is redundant
+    (delete when full extraction succeeded — saves ~9 GB on real
+    Android firmware) or still load-bearing (keep when partial)."""
+
+    @pytest.mark.asyncio
+    async def test_empty_super_returns_zero_zero(self, tmp_path: Path):
+        from app.workers.unpack_android import _scan_super_partitions
+
+        raw = tmp_path / "super.img.raw"
+        raw.write_bytes(b"\x00" * 4096)
+        rootfs = tmp_path / "rootfs"
+        rootfs.mkdir()
+        log: list[str] = []
+
+        result = await _scan_super_partitions(str(raw), str(rootfs), log)
+
+        assert isinstance(result, tuple) and len(result) == 2
+        assert result == (0, 0)
+
