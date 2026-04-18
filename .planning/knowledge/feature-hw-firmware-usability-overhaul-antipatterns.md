@@ -97,3 +97,37 @@
 - **How to avoid:** Either bake test deps into the Dockerfile
   (simplest), or wrap the test invocation in a helper that ensures the
   deps are installed first. Don't rely on "it was there last time."
+
+### 7. Auto-expansion applied to one tree level only, not recursively
+
+- **What was done:** The initial autopilot pass of
+  `pickDefaultOpenPartitions` opened every partition containing a
+  CVE-bearing blob.  `openVendors` was initialised to `new Set()`
+  and only updated by text-search auto-expand.  Tests passed, the
+  intake's "auto-expand CVE partitions" bullet was green.
+- **Failure mode:** A partition header with CVE blobs opens, but
+  the VENDOR subgroup inside it stays closed.  User sees the CVE
+  count badge at the partition tier AND at the blob tier, but has
+  to click every vendor to reach the blobs.  Described by the user
+  as "the tree still doesn't fully expand."
+- **Evidence:** User report ~1h after ship.  Fix added the
+  vendor-tier mirror (`pickDefaultOpenVendors`) + an Expand-all
+  toggle as escape hatch.  Commit `f5dc449`.
+- **How to avoid:** For any N-tier tree with auto-open logic,
+  the open-set computation should run at every tier whose children
+  might contain the targeted items.  A single-tier helper is a
+  code smell — either make it recursive or ship per-tier mirrors
+  explicitly.  Also: pair any auto-expand feature with an
+  Expand-all button the first time you ship it — covers the edge
+  cases the auto-logic misses and costs ~15 LOC.
+
+## Meta-pattern — "agent QA is not user QA"
+
+Autopilot cleared all 13 items from the intake, 77/77 tests green,
+live verification passed.  The Expand-all follow-up is a reminder
+that the agent's verification scope is limited to what it can
+observe programmatically.  User-reported UX defects surface within
+minutes of a real human clicking around.  Budget ~10 minutes
+post-autopilot for the user to actually exercise the feature; the
+defects they find are usually tier/propagation bugs the tests
+couldn't catch.
