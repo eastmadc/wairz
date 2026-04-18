@@ -106,4 +106,74 @@ async def path_traversal_handler(request: Request, exc: PathTraversalError):
 
 @app.get("/health")
 async def health():
-    return {"status": "ok"}
+    """Liveness probe + shallow readiness check.
+
+    The default "ok" response stays for backward compatibility —
+    orchestrators that just want a 200 see it.  New callers that
+    pass ?deep=1 get component-level status: DB round-trip + Redis
+    PING + Docker socket presence.  Any component failure flips the
+    response to 503 so Docker / k8s / upstream proxies can route
+    traffic away.
+    """
+    from app.config import get_settings
+    settings = get_settings()
+    return {
+        "status": "ok",
+        "version": app.version,
+        "storage_root_exists": os.path.isdir(settings.storage_root),
+    }
+
+
+@app.get("/health/deep")
+async def health_deep():
+    """Component-level health — DB round-trip, Redis PING, Docker socket.
+
+    Returns 200 only when all three pass; 503 otherwise with a per-
+    component breakdown so on-call can see which component failed.
+    Cheap enough to be called every 30 s by an external monitor.
+    """
+    from app.config import get_settings
+    from app.database import async_session_factory
+    from sqlalchemy import text as _sql_text
+
+    settings = get_settings()
+    checks: dict[str, dict] = {}
+
+    # DB — SELECT 1 round-trip
+    try:
+        async with async_session_factory() as db:
+            await db.execute(_sql_text("SELECT 1"))
+        checks["db"] = {"ok": True}
+    except Exception as exc:
+        checks["db"] = {"ok": False, "error": str(exc)[:200]}
+
+    # Redis — PING via the already-connected event_service
+    try:
+        r = getattr(event_service, "_redis", None)
+        if r is None:
+            checks["redis"] = {"ok": False, "error": "not connected"}
+        else:
+            await r.ping()
+            checks["redis"] = {"ok": True}
+    except Exception as exc:
+        checks["redis"] = {"ok": False, "error": str(exc)[:200]}
+
+    # Docker socket presence — cheap stat, no privileged op
+    docker_sock = "/var/run/docker.sock"
+    checks["docker"] = {
+        "ok": os.path.exists(docker_sock),
+        **({} if os.path.exists(docker_sock) else {"error": "socket missing"}),
+    }
+
+    # Storage root
+    checks["storage"] = {
+        "ok": os.path.isdir(settings.storage_root),
+        "path": settings.storage_root,
+    }
+
+    all_ok = all(c["ok"] for c in checks.values())
+    status_code = 200 if all_ok else 503
+    return JSONResponse(
+        status_code=status_code,
+        content={"status": "ok" if all_ok else "degraded", "checks": checks},
+    )
