@@ -1,6 +1,8 @@
 ---
 title: "Data: Widen analysis_cache.operation from VARCHAR(100) to VARCHAR(512)"
-status: pending
+status: completed
+completed_at: 2026-04-18
+completed_in: session 59045370 autopilot (commit e3053b6)
 priority: critical
 target: backend/alembic/versions/
 ---

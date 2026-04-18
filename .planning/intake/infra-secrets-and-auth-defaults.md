@@ -1,6 +1,17 @@
 ---
 title: "Infra: Secrets Management + Safe Default Bindings"
-status: pending
+status: partial
+partial_at: 2026-04-18
+partial_in: session 59045370 autopilot (commits 10872d6 + 906cfe2)
+partial_scope: |
+  Shipped: BACKEND_HOST_BIND/FRONTEND_HOST_BIND loopback default,
+  POSTGRES_USER/PASSWORD/DB parameterization, DATABASE_URL interpolation
+  in backend + worker, FIRMAE_DB_PASSWORD for system-emulation.
+  Deferred (blocked by session's secrets-access hook on .env.example):
+  .env.example documentation, :?error required-mode enforcement,
+  frontend env_file removal, docker-compose.prod.yml with Docker secrets,
+  README security section. Real auth-layer fix belongs under
+  security-auth-hardening.md (Option B.1).
 priority: critical
 target: docker-compose.yml, .env.example, backend/app/config.py
 ---
