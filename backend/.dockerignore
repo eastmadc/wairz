@@ -11,3 +11,7 @@ images
 .planning
 .citadel
 .claude
+# Tests are dev-only; not exercised by the production image.
+# (E2E tests run Playwright against a live stack, not via this image.)
+tests/
+*.log
