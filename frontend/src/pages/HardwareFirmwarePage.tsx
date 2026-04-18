@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import {
   AlertTriangle,
@@ -6,7 +6,9 @@ import {
   Download,
   Loader2,
   RefreshCw,
+  Search,
   ShieldAlert,
+  X,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
@@ -16,8 +18,10 @@ import {
   getHardwareFirmwareBlob,
   getHardwareFirmwareCves,
   listHardwareFirmware,
+  listHardwareFirmwareCves,
   runCveMatch,
   type CveAggregate,
+  type CveRow,
   type FirmwareCveMatch,
   type FirmwareDriver,
   type HardwareFirmwareBlob,
@@ -31,8 +35,11 @@ import BlobFilters from '@/components/hardware-firmware/BlobFilters'
 import BlobTable from '@/components/hardware-firmware/BlobTable'
 import BlobDetail from '@/components/hardware-firmware/BlobDetail'
 import DriversTable from '@/components/hardware-firmware/DriversTable'
-import PartitionTree from '@/components/hardware-firmware/PartitionTree'
+import PartitionTree, {
+  matchesQuery,
+} from '@/components/hardware-firmware/PartitionTree'
 import DriverGraph from '@/components/hardware-firmware/DriverGraph'
+import CvesTab from '@/components/hardware-firmware/CvesTab'
 import type { FirmwareDetail } from '@/types'
 
 export default function HardwareFirmwarePage() {
@@ -42,6 +49,8 @@ export default function HardwareFirmwarePage() {
   const [firmwareList, setFirmwareList] = useState<FirmwareDetail[]>([])
   const [blobs, setBlobs] = useState<HardwareFirmwareBlob[]>([])
   const [drivers, setDrivers] = useState<FirmwareDriver[]>([])
+  const [cveRows, setCveRows] = useState<CveRow[]>([])
+  const [cveRowsLoading, setCveRowsLoading] = useState(false)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
@@ -50,6 +59,14 @@ export default function HardwareFirmwarePage() {
   const [signedOnly, setSignedOnly] = useState(false)
   const [hideKernelModules, setHideKernelModules] = useState(true)
   const [dedupeBySha, setDedupeBySha] = useState(true)
+  // Stat-card filters — mutually exclusive drill-ins.  Mapped to visibleBlobs
+  // predicates below.
+  const [focus, setFocus] = useState<'none' | 'cves' | 'kernel_cves' | 'not_signed'>('none')
+  // Active tab as controlled state so focus-clicks can move the user to
+  // the right view (e.g. "Kernel CVEs" card lands in Flat table because
+  // kernel-module blobs aren't pretty in the Tree).
+  const [activeTab, setActiveTab] = useState<'tree' | 'blobs' | 'cves' | 'drivers' | 'graph'>('tree')
+  const [treeSortMode, setTreeSortMode] = useState<'blobs' | 'cves'>('blobs')
 
   const [selectedBlobId, setSelectedBlobId] = useState<string | null>(null)
   const [blobDetail, setBlobDetail] = useState<HardwareFirmwareBlob | null>(null)
@@ -60,6 +77,26 @@ export default function HardwareFirmwarePage() {
   const [runResult, setRunResult] = useState<string | null>(null)
   const [cveAggregate, setCveAggregate] = useState<CveAggregate | null>(null)
 
+  // Debounced search — typing into the input updates `searchDraft`
+  // immediately for responsiveness, and propagates to `searchQuery`
+  // 200 ms later to drive the filter / highlight pipeline.
+  const [searchDraft, setSearchDraft] = useState('')
+  const [searchQuery, setSearchQuery] = useState('')
+  const searchTimeoutRef = useRef<number | null>(null)
+  useEffect(() => {
+    if (searchTimeoutRef.current !== null) {
+      window.clearTimeout(searchTimeoutRef.current)
+    }
+    searchTimeoutRef.current = window.setTimeout(() => {
+      setSearchQuery(searchDraft)
+    }, 200)
+    return () => {
+      if (searchTimeoutRef.current !== null) {
+        window.clearTimeout(searchTimeoutRef.current)
+      }
+    }
+  }, [searchDraft])
+
   // Load firmware list for selector
   useEffect(() => {
     if (projectId) {
@@ -67,17 +104,18 @@ export default function HardwareFirmwarePage() {
     }
   }, [projectId])
 
-  // Load blobs + drivers + firmware-wide CVE aggregate whenever the
-  // project / firmware / filters change.  The aggregate is a cheap
-  // read-only count so the header badge can render on page load
-  // without re-running the matcher.  Filters don't apply to the
-  // aggregate -- it's always firmware-wide.
+  // Load blobs + drivers + firmware-wide CVE aggregate + CVE-centric rows
+  // whenever the project / firmware / filters change.  The aggregate +
+  // flat CVEs are cheap read-only counts so the header badge + CVEs tab
+  // render on page load without re-running the matcher.  Filters don't
+  // apply to the aggregate -- it's always firmware-wide.
   const loadAll = useCallback(async () => {
     if (!projectId) return
     setLoading(true)
+    setCveRowsLoading(true)
     setError(null)
     try {
-      const [blobsResp, driversResp, aggResp] = await Promise.all([
+      const [blobsResp, driversResp, aggResp, cvesResp] = await Promise.all([
         listHardwareFirmware(projectId, {
           firmwareId: selectedFirmwareId,
           category: category ?? undefined,
@@ -89,14 +127,20 @@ export default function HardwareFirmwarePage() {
           total: 0,
         })),
         getCveAggregate(projectId, selectedFirmwareId).catch(() => null),
+        listHardwareFirmwareCves(projectId, selectedFirmwareId).catch(() => ({
+          cves: [] as CveRow[],
+          total: 0,
+        })),
       ])
       setBlobs(blobsResp.blobs)
       setDrivers(driversResp.drivers)
       setCveAggregate(aggResp)
+      setCveRows(cvesResp.cves)
     } catch (err) {
       setError(extractErrorMessage(err, 'Failed to load hardware firmware data'))
     } finally {
       setLoading(false)
+      setCveRowsLoading(false)
     }
   }, [projectId, selectedFirmwareId, category, vendor, signedOnly])
 
@@ -175,11 +219,16 @@ export default function HardwareFirmwarePage() {
     }
   }, [projectId, selectedFirmwareId, selectedBlobId, loadAll])
 
-  // Client-side filtering — apply kernel-module hide + sha dedup on top of
-  // the server's category/vendor/signed filters.
+  // Client-side filtering — apply kernel-module hide + sha dedup + focus
+  // filter on top of the server's category/vendor/signed filters, plus
+  // an optional text search that applies to every tab.
   const visibleBlobs = useMemo(() => {
     let list = blobs
-    if (hideKernelModules) {
+    // Focus card: "Kernel CVEs" narrows to kernel_module blobs and
+    // overrides the hide-kernel-modules default so the user actually
+    // sees them when drilling from that card.
+    const kernelFocus = focus === 'kernel_cves'
+    if (hideKernelModules && !kernelFocus) {
       list = list.filter((b) => b.category !== 'kernel_module')
     }
     if (dedupeBySha) {
@@ -190,8 +239,25 @@ export default function HardwareFirmwarePage() {
         return true
       })
     }
+    if (focus === 'cves') {
+      list = list.filter((b) => b.cve_count > 0)
+    } else if (focus === 'kernel_cves') {
+      list = list.filter(
+        (b) => b.category === 'kernel_module' && b.cve_count > 0,
+      )
+    } else if (focus === 'not_signed') {
+      list = list.filter(
+        (b) =>
+          b.signed === 'unsigned' ||
+          b.signed === 'weakly_signed' ||
+          b.signed === 'unknown',
+      )
+    }
+    if (searchQuery.trim()) {
+      list = list.filter((b) => matchesQuery(b, searchQuery.trim().toLowerCase()))
+    }
     return list
-  }, [blobs, hideKernelModules, dedupeBySha])
+  }, [blobs, hideKernelModules, dedupeBySha, focus, searchQuery])
 
   // Derived values (from the POST-FILTER list so stats match what the user sees)
   const totalBlobs = visibleBlobs.length
@@ -199,7 +265,7 @@ export default function HardwareFirmwarePage() {
     () => blobs.filter((b) => b.category === 'kernel_module').length,
     [blobs],
   )
-  const hiddenDupCount = blobs.length - visibleBlobs.length - (hideKernelModules ? kernelModuleCount : 0)
+  const hiddenDupCount = blobs.length - visibleBlobs.length - (hideKernelModules && focus !== 'kernel_cves' ? kernelModuleCount : 0)
   const notSignedCount = useMemo(
     () =>
       visibleBlobs.filter(
@@ -240,6 +306,29 @@ export default function HardwareFirmwarePage() {
       ? `${base}?firmware_id=${encodeURIComponent(selectedFirmwareId)}`
       : base
   }, [projectId, selectedFirmwareId])
+
+  const hbomTooltip = useMemo(() => {
+    const cveCountForHbom = cveAggregate
+      ? cveAggregate.hw_firmware_cves + cveAggregate.kernel_cves
+      : 0
+    return `CycloneDX v1.6 JSON · ${blobs.length} blobs · ${cveCountForHbom} CVEs`
+  }, [blobs.length, cveAggregate])
+
+  const handleFocus = useCallback(
+    (next: typeof focus) => {
+      setFocus((prev) => (prev === next ? 'none' : next))
+      // Land on the most useful view for the clicked card.
+      if (next === 'cves') {
+        setActiveTab('tree')
+        setTreeSortMode('cves')
+      } else if (next === 'kernel_cves') {
+        setActiveTab('blobs')
+      } else if (next === 'not_signed') {
+        setActiveTab('blobs')
+      }
+    },
+    [],
+  )
 
   if (!projectId) {
     return null
@@ -290,7 +379,7 @@ export default function HardwareFirmwarePage() {
             size="sm"
             disabled={!hasData}
             asChild
-            title="Download CycloneDX v1.6 HBOM"
+            title={hbomTooltip}
           >
             <a
               href={hbomUrl}
@@ -326,7 +415,7 @@ export default function HardwareFirmwarePage() {
         </div>
       )}
 
-      {!hasData ? (
+      {!hasData && focus === 'none' && searchQuery.trim() === '' ? (
         <div className="flex flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-border p-10 text-center text-sm text-muted-foreground">
           <Cpu className="h-6 w-6 text-muted-foreground" />
           <p>No hardware firmware detected.</p>
@@ -341,11 +430,54 @@ export default function HardwareFirmwarePage() {
             notSignedCount={notSignedCount}
             vendorCount={vendorCount}
             hardwareCveCount={cveAggregate?.hw_firmware_cves ?? 0}
+            kernelCveCount={cveAggregate?.kernel_cves ?? 0}
             selectedBlobCveCount={selectedBlobId ? cveCount : undefined}
             advisoryCount={cveAggregate?.advisory_count ?? 0}
+            severityCritical={cveAggregate?.hw_severity_critical ?? 0}
+            severityHigh={cveAggregate?.hw_severity_high ?? 0}
+            severityMedium={cveAggregate?.hw_severity_medium ?? 0}
+            severityLow={cveAggregate?.hw_severity_low ?? 0}
+            onHardwareCvesClick={() => handleFocus('cves')}
+            onKernelCvesClick={() => handleFocus('kernel_cves')}
+            onNotSignedClick={() => handleFocus('not_signed')}
+            hardwareCvesActive={focus === 'cves'}
+            kernelCvesActive={focus === 'kernel_cves'}
+            notSignedActive={focus === 'not_signed'}
           />
 
           <div className="space-y-3">
+            <div className="flex flex-wrap items-center gap-3">
+              <div className="relative flex-1 min-w-[240px] max-w-md">
+                <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+                <input
+                  type="text"
+                  placeholder="Search path, format, vendor, version, CVE…"
+                  value={searchDraft}
+                  onChange={(e) => setSearchDraft(e.target.value)}
+                  className="h-8 w-full rounded-md border bg-background pl-8 pr-8 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
+                />
+                {searchDraft && (
+                  <button
+                    type="button"
+                    onClick={() => setSearchDraft('')}
+                    aria-label="Clear search"
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                )}
+              </div>
+              {focus !== 'none' && (
+                <button
+                  type="button"
+                  onClick={() => setFocus('none')}
+                  className="rounded-full border border-border px-2 py-0.5 text-[11px] text-muted-foreground hover:bg-accent/30"
+                >
+                  Clear focus: {focus.replace('_', ' ')} ×
+                </button>
+              )}
+            </div>
+
             <BlobFilters
               categories={categories}
               vendors={vendors}
@@ -385,13 +517,35 @@ export default function HardwareFirmwarePage() {
                   )}
                 </span>
               </label>
+              <label className="inline-flex cursor-pointer items-center gap-1.5">
+                <span>Tree sort:</span>
+                <select
+                  value={treeSortMode}
+                  onChange={(e) =>
+                    setTreeSortMode(e.target.value as 'blobs' | 'cves')
+                  }
+                  className="h-6 rounded border bg-background px-1 text-[11px] focus:outline-none focus:ring-1 focus:ring-ring"
+                >
+                  <option value="blobs">Blob count (largest first)</option>
+                  <option value="cves">CVE count (most findings first)</option>
+                </select>
+              </label>
             </div>
           </div>
 
-          <Tabs defaultValue="tree" className="w-full">
+          <Tabs
+            value={activeTab}
+            onValueChange={(v) =>
+              setActiveTab(v as 'tree' | 'blobs' | 'cves' | 'drivers' | 'graph')
+            }
+            className="w-full"
+          >
             <TabsList>
               <TabsTrigger value="tree">Tree ({totalBlobs})</TabsTrigger>
               <TabsTrigger value="blobs">Flat table ({totalBlobs})</TabsTrigger>
+              <TabsTrigger value="cves">
+                CVEs ({cveRows.length})
+              </TabsTrigger>
               <TabsTrigger value="drivers">Drivers ({drivers.length})</TabsTrigger>
               <TabsTrigger value="graph">Driver graph</TabsTrigger>
             </TabsList>
@@ -402,8 +556,16 @@ export default function HardwareFirmwarePage() {
                   blobs={visibleBlobs}
                   selectedId={selectedBlobId}
                   onSelect={setSelectedBlobId}
+                  searchQuery={searchQuery}
+                  sortMode={treeSortMode}
                 />
-                <BlobDetail blob={blobDetail} cves={blobCves} loading={cveLoading} />
+                <BlobDetail
+                  blob={blobDetail}
+                  cves={blobCves}
+                  loading={cveLoading}
+                  projectId={projectId}
+                  firmwareId={selectedFirmwareId}
+                />
               </div>
             </TabsContent>
 
@@ -413,9 +575,29 @@ export default function HardwareFirmwarePage() {
                   blobs={visibleBlobs}
                   selectedId={selectedBlobId}
                   onSelect={setSelectedBlobId}
+                  searchQuery={searchQuery}
                 />
-                <BlobDetail blob={blobDetail} cves={blobCves} loading={cveLoading} />
+                <BlobDetail
+                  blob={blobDetail}
+                  cves={blobCves}
+                  loading={cveLoading}
+                  projectId={projectId}
+                  firmwareId={selectedFirmwareId}
+                />
               </div>
+            </TabsContent>
+
+            <TabsContent value="cves" className="pt-3">
+              <CvesTab
+                cves={cveRows}
+                blobs={blobs}
+                loading={cveRowsLoading}
+                searchQuery={searchQuery}
+                onSelectBlob={(id) => {
+                  setSelectedBlobId(id)
+                  setActiveTab('tree')
+                }}
+              />
             </TabsContent>
 
             <TabsContent value="drivers" className="pt-3">

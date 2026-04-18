@@ -62,6 +62,32 @@ class HardwareFirmwareCveAggregate(BaseModel):
     kernel_cves: int        # distinct CVEs from kernel_cpe + kernel_subsystem
     advisory_count: int     # distinct ADVISORY-* presence flags
     last_match_at: datetime | None = None
+    # Severity breakdown of ``hw_firmware_cves`` (NOT kernel-tier).
+    # Populated so the StatsHeader can render "26 CVEs (1 crit · 24 high
+    # · 2 med)" without a second round-trip.
+    hw_severity_critical: int = 0
+    hw_severity_high: int = 0
+    hw_severity_medium: int = 0
+    hw_severity_low: int = 0
+
+
+class HardwareFirmwareCveRow(BaseModel):
+    """One distinct CVE in the CVE-centric aggregate view."""
+
+    cve_id: str
+    severity: str
+    cvss_score: float | None = None
+    match_tier: str | None = None
+    match_confidence: str | None = None
+    description: str | None = None
+    affected_blob_count: int
+    affected_blob_ids: list[uuid.UUID]
+    affected_formats: list[str]  # distinct formats across affected blobs
+
+
+class HardwareFirmwareCvesResponse(BaseModel):
+    cves: list[HardwareFirmwareCveRow]
+    total: int
 
 
 class HardwareFirmwareFilter(BaseModel):

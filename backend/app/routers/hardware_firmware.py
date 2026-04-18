@@ -15,9 +15,11 @@ Endpoints:
 
 from __future__ import annotations
 
+import os
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import FileResponse
 from sqlalchemy import case, func, literal, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -32,6 +34,8 @@ from app.schemas.hardware_firmware import (
     FirmwareEdgesResponse,
     HardwareFirmwareBlobResponse,
     HardwareFirmwareCveAggregate,
+    HardwareFirmwareCveRow,
+    HardwareFirmwareCvesResponse,
     HardwareFirmwareListResponse,
 )
 
@@ -187,18 +191,28 @@ async def get_cve_aggregate(
     stmt = select(
         SbomVulnerability.cve_id,
         SbomVulnerability.match_tier,
+        SbomVulnerability.severity,
         func.max(SbomVulnerability.created_at).label("seen_at"),
     ).where(
         SbomVulnerability.firmware_id == firmware.id,
         SbomVulnerability.blob_id.is_not(None),
-    ).group_by(SbomVulnerability.cve_id, SbomVulnerability.match_tier)
+    ).group_by(
+        SbomVulnerability.cve_id,
+        SbomVulnerability.match_tier,
+        SbomVulnerability.severity,
+    )
     rows = (await db.execute(stmt)).all()
 
     hwfw_cves: set[str] = set()
     kernel_cves: set[str] = set()
     advisories: set[str] = set()
+    # Severity bucket is chosen once per distinct hw-firmware CVE, using
+    # the highest observed severity (critical > high > medium > low >
+    # unknown).  Track rank per cve_id so repeated rows with different
+    # severities resolve deterministically.
+    hw_sev_rank: dict[str, int] = {}
     last_seen = None
-    for cve_id, tier, seen in rows:
+    for cve_id, tier, severity, seen in rows:
         if seen is not None and (last_seen is None or seen > last_seen):
             last_seen = seen
         if cve_id.startswith("ADVISORY-"):
@@ -207,11 +221,157 @@ async def get_cve_aggregate(
             kernel_cves.add(cve_id)
         else:
             hwfw_cves.add(cve_id)
+            rank = _SEVERITY_RANK.get(severity or "", 0)
+            if rank > hw_sev_rank.get(cve_id, 0):
+                hw_sev_rank[cve_id] = rank
+
+    crit = sum(1 for r in hw_sev_rank.values() if r == 4)
+    high = sum(1 for r in hw_sev_rank.values() if r == 3)
+    med = sum(1 for r in hw_sev_rank.values() if r == 2)
+    low = sum(1 for r in hw_sev_rank.values() if r == 1)
     return HardwareFirmwareCveAggregate(
         hw_firmware_cves=len(hwfw_cves),
         kernel_cves=len(kernel_cves),
         advisory_count=len(advisories),
         last_match_at=last_seen,
+        hw_severity_critical=crit,
+        hw_severity_high=high,
+        hw_severity_medium=med,
+        hw_severity_low=low,
+    )
+
+
+@router.get("/cves", response_model=HardwareFirmwareCvesResponse)
+async def list_cves(
+    firmware=Depends(_resolve_firmware),
+    db: AsyncSession = Depends(get_db),
+) -> HardwareFirmwareCvesResponse:
+    """CVE-centric aggregation for the CVEs tab.
+
+    Returns one row per distinct ``cve_id`` (excluding ADVISORY-* and
+    kernel-tier rows) with the list of hw-firmware blobs it affects and
+    the distinct formats across those blobs.  Sorted critical → high →
+    medium → low → unknown; within-bucket tie-break by affected-blob
+    count desc.
+    """
+    stmt = (
+        select(
+            SbomVulnerability.cve_id,
+            SbomVulnerability.severity,
+            SbomVulnerability.cvss_score,
+            SbomVulnerability.match_tier,
+            SbomVulnerability.match_confidence,
+            SbomVulnerability.description,
+            SbomVulnerability.blob_id,
+            HardwareFirmwareBlob.format,
+        )
+        .join(
+            HardwareFirmwareBlob,
+            HardwareFirmwareBlob.id == SbomVulnerability.blob_id,
+        )
+        .where(
+            SbomVulnerability.firmware_id == firmware.id,
+            SbomVulnerability.blob_id.is_not(None),
+            ~SbomVulnerability.cve_id.like("ADVISORY-%"),
+            ~SbomVulnerability.match_tier.in_(list(_KERNEL_TIERS)),
+        )
+    )
+    rows = (await db.execute(stmt)).all()
+
+    by_cve: dict[str, dict] = {}
+    for r in rows:
+        rec = by_cve.setdefault(
+            r.cve_id,
+            {
+                "cve_id": r.cve_id,
+                "severity": r.severity or "unknown",
+                "cvss_score": float(r.cvss_score) if r.cvss_score is not None else None,
+                "match_tier": r.match_tier,
+                "match_confidence": r.match_confidence,
+                "description": r.description,
+                "blob_ids": set(),
+                "formats": set(),
+                "sev_rank": 0,
+            },
+        )
+        rec["blob_ids"].add(r.blob_id)
+        if r.format:
+            rec["formats"].add(r.format)
+        rank = _SEVERITY_RANK.get(r.severity or "", 0)
+        if rank > rec["sev_rank"]:
+            rec["sev_rank"] = rank
+            rec["severity"] = r.severity or rec["severity"]
+
+    cves = [
+        HardwareFirmwareCveRow(
+            cve_id=v["cve_id"],
+            severity=v["severity"],
+            cvss_score=v["cvss_score"],
+            match_tier=v["match_tier"],
+            match_confidence=v["match_confidence"],
+            description=v["description"],
+            affected_blob_count=len(v["blob_ids"]),
+            affected_blob_ids=sorted(v["blob_ids"]),
+            affected_formats=sorted(v["formats"]),
+        )
+        for v in by_cve.values()
+    ]
+    cves.sort(
+        key=lambda c: (
+            -_SEVERITY_RANK.get(c.severity, 0),
+            -c.affected_blob_count,
+            c.cve_id,
+        ),
+    )
+    return HardwareFirmwareCvesResponse(cves=cves, total=len(cves))
+
+
+@router.get("/{blob_id}/download")
+async def download_blob(
+    blob_id: uuid.UUID,
+    firmware=Depends(_resolve_firmware),
+    db: AsyncSession = Depends(get_db),
+) -> FileResponse:
+    """Stream a detected blob's raw bytes as a file attachment.
+
+    Sandbox: resolves the blob's on-disk path with ``os.path.realpath``
+    and enforces that it lives under the firmware's extraction_dir (or
+    extracted_path when extraction_dir is unset).  Anything else → 403.
+    """
+    blob_stmt = select(HardwareFirmwareBlob).where(
+        HardwareFirmwareBlob.id == blob_id,
+        HardwareFirmwareBlob.firmware_id == firmware.id,
+    )
+    blob = (await db.execute(blob_stmt)).scalar_one_or_none()
+    if blob is None:
+        raise HTTPException(404, "Blob not found")
+
+    candidate = os.path.realpath(blob.blob_path or "")
+    if not candidate or not os.path.isfile(candidate):
+        raise HTTPException(404, "Blob file missing on disk")
+
+    # Sandbox bounds: prefer extraction_dir, fall back to extracted_path.
+    # Both columns come off the Firmware row; realpath both sides so
+    # symlinked paths resolve consistently before the prefix check.
+    sandbox_roots: list[str] = []
+    for attr in ("extraction_dir", "extracted_path"):
+        v = getattr(firmware, attr, None)
+        if v:
+            sandbox_roots.append(os.path.realpath(v))
+    if not sandbox_roots:
+        raise HTTPException(403, "No sandbox root configured for firmware")
+
+    if not any(
+        candidate == root or candidate.startswith(root.rstrip("/") + "/")
+        for root in sandbox_roots
+    ):
+        raise HTTPException(403, "Blob path escapes firmware sandbox")
+
+    filename = os.path.basename(candidate) or f"blob-{blob_id}.bin"
+    return FileResponse(
+        candidate,
+        media_type="application/octet-stream",
+        filename=filename,
     )
 
 
