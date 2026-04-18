@@ -164,7 +164,22 @@ async def run_cve_match(
     """
     matches = await match_firmware_cves(firmware.id, db, force_rescan=force_rescan)
     await db.commit()
-    return {"count": len(matches)}
+    # Report distinct CVEs + a per-lane breakdown so the UI doesn't
+    # present the cartesian (kernel_cve × kernel_module) row count as
+    # the headline "match" number. Tiers 4 and 5 project each kernel
+    # CVE onto every kernel_module blob (by design — so per-blob CVE
+    # queries reflect kernel findings) which inflates the row count by
+    # ~O(CVEs × modules). Aggregate UI needs distinct-CVE semantics.
+    _KERNEL_TIERS = {"kernel_cpe", "kernel_subsystem"}
+    kernel_matches = [m for m in matches if m.tier in _KERNEL_TIERS]
+    hwfw_matches = [m for m in matches if m.tier not in _KERNEL_TIERS]
+    return {
+        "count": len({m.cve_id for m in matches}),
+        "rows": len(matches),
+        "hw_firmware_cves": len({m.cve_id for m in hwfw_matches}),
+        "kernel_cves": len({m.cve_id for m in kernel_matches}),
+        "kernel_module_rows": len(kernel_matches),
+    }
 
 
 @router.get("/cdx.json")

@@ -1,23 +1,36 @@
-"""MediaTek Little Kernel (LK) bootloader partition parser.
+"""MediaTek LK / partition-record parser.
 
-Handles classifier format ``mtk_lk``.  LK partition records carry magic
-``\\x88\\x16\\x88\\x58`` (u32 LE = ``0x58881688``) at offset 0 and describe
-a single boot-chain blob (``lk``, ``logo``, ``md1img``, ``spmfw`` …).
+Handles classifier format ``mtk_lk``. LK partition records begin with
+``0x58881688`` (LE) at offset 0 and wrap a boot-chain blob (``lk``,
+``logo``, ``md1rom``, ``spmfw``, ``atf``, ``gz``, ``cam_vpu1``, etc.).
 
-Record layout (LE, per u-boot ``tools/mtk_image.c`` and bkerler/mtkclient):
+Two header layouts coexist:
 
-    offset  size  field
-    0       4     magic         (0x58881688)
-    4       4     file_info_offset
-    8       4     size
-    12      4     magic_version
-    16      16    reserved / padding
-    32      32    name          (NUL-terminated partition name)
-    64      32    reserved / padding
+*   **Legacy (512-byte)** — 32-byte partition name at offset 0x20.
+    U-Boot ``tools/mtk_image.c`` builds this on older MTK SoCs.
+*   **Compact (16-byte)** — 8-byte partition name at offset 0x08, used
+    on MT6785 / MT6853 / MT8788 / Genio-700 and later.  Same magic, but
+    the legacy size/magic_version fields don't exist here — reading
+    them returns fragments of the name string.  Wairz used to emit
+    those fragments as "partition_size: 1915839597" nonsense; this
+    parser refuses to synthesise fields that don't belong to the
+    detected layout.
 
-Signing lives in the GFH blocks inside the payload, not the LK header;
-we therefore leave ``signed="unknown"`` unless we can locate a GFH
-``sig_len != 0`` field embedded in the first 512 bytes.
+The partition name drives the Wairz category via
+``mediatek_gfh.lookup_partition`` — ``atf`` is ``tee``, ``md1rom`` is
+``modem``, ``cam_vpu1`` is ``camera``, etc.  The classifier consults
+the same table so blobs don't end up stuck with the default
+``bootloader`` tag.
+
+Signing information lives in an embedded ``LK_FILE_INFO`` footer
+(magic ``0x58891689``) or a trailing GFH chain.  We detect the
+footer's presence as a best-effort ``signed`` hint but don't claim a
+verdict we can't substantiate.
+
+References:
+    - U-Boot ``tools/mtk_image.c`` (GPL-2.0)
+    - bkerler/mtkclient ``mtk_main.py`` / ``mtkimg.py`` (GPL-3.0)
+    - cyrozap/mediatek-lte-baseband-re ``SoC/mediatek_preloader.ksy``
 """
 
 from __future__ import annotations
@@ -28,27 +41,25 @@ import struct
 from typing import Any
 
 from app.services.hardware_firmware.parsers.base import ParsedBlob, register_parser
+from app.services.hardware_firmware.parsers.mediatek_gfh import (
+    is_stub_descriptor,
+    lookup_partition,
+    parse_lk_header,
+)
 
 logger = logging.getLogger(__name__)
 
 
-_LK_MAGIC = 0x58881688
-_LK_HEADER_SIZE = 512
+_LK_HEADER_READ = 64       # covers both compact (16) and the header portion of legacy
+_VERSION_SCAN_BYTES = 8192
 
-# u-boot/mtkclient field order for a partition record.
-_LK_STRUCT = struct.Struct("<IIII")  # magic, file_info_offset, size, magic_version
-
-# Quick scan window for an embedded GFH sig_len probe (offset 0x1E in the
-# GFH_FILE_INFO structure).  We don't depend on it — it's a best-effort
-# "signed?" hint.
-_GFH_SCAN_BYTES = 512
-
-# Version/build tokens we opportunistically pull from the payload.
 _VERSION_RES = (
     re.compile(rb"LK-([0-9][A-Za-z0-9._\-]+)"),
     re.compile(rb"(?:Little\s*Kernel|lk)\s*v?([0-9]+\.[0-9]+(?:\.[0-9]+)?)", re.IGNORECASE),
     re.compile(rb"BUILD_TIME=([0-9]{8,14})"),
 )
+
+_LK_FILE_INFO_MAGIC = 0x58891689
 
 
 def _read_bytes(path: str, limit: int) -> bytes:
@@ -59,30 +70,19 @@ def _read_bytes(path: str, limit: int) -> bytes:
         return b""
 
 
-def _decode_cstr(raw: bytes) -> str:
-    """Decode a NUL-terminated ASCII name field; tolerate embedded garbage."""
-    nul = raw.find(b"\x00")
-    if nul >= 0:
-        raw = raw[:nul]
-    try:
-        return raw.decode("ascii", errors="replace").strip()
-    except Exception:  # noqa: BLE001
-        return ""
-
-
 def _scan_version(data: bytes) -> str | None:
     for rx in _VERSION_RES:
         m = rx.search(data)
         if m:
             try:
                 return m.group(1).decode("utf-8", errors="replace")
-            except Exception:  # noqa: BLE001,S112 - best-effort decode, try next regex
+            except Exception:  # noqa: BLE001,S112 — best-effort decode, try next regex
                 continue
     return None
 
 
 class MediatekLkParser:
-    """Parser for MediaTek LK / partition-record headers (magic 0x58881688)."""
+    """Parser for MediaTek LK partition-record headers (magic 0x58881688)."""
 
     FORMAT = "mtk_lk"
 
@@ -90,39 +90,70 @@ class MediatekLkParser:
         meta: dict[str, Any] = {}
         version: str | None = None
         signed: str = "unknown"
-        chipset_target: str | None = None
 
         try:
-            header = _read_bytes(path, _LK_HEADER_SIZE)
-            if len(header) < 16:
-                meta["error"] = "file too small for LK partition header"
+            header = _read_bytes(path, _LK_HEADER_READ)
+            hdr = parse_lk_header(header)
+            if hdr is None:
+                meta["error"] = "LK magic mismatch or header truncated"
                 return ParsedBlob(signed=signed, metadata=meta)
 
-            magic_u32, file_info_offset, part_size, magic_version = _LK_STRUCT.unpack_from(
-                header, 0
-            )
-            if magic_u32 != _LK_MAGIC:
-                meta["error"] = f"bad magic 0x{magic_u32:08x}, expected 0x{_LK_MAGIC:08x}"
-                return ParsedBlob(signed=signed, metadata=meta)
+            meta["magic"] = f"0x{0x58881688:08x}"
+            meta["layout"] = hdr.layout
+            if hdr.name:
+                meta["partition_name"] = hdr.name
 
-            meta["magic"] = f"0x{magic_u32:08x}"
-            meta["file_info_offset"] = file_info_offset
-            meta["partition_size"] = part_size
-            meta["magic_version"] = magic_version
+            # Map partition name to component/subcomponent tag for
+            # downstream CVE matching. The classifier uses the same table
+            # to set the row's category/vendor.
+            dispatch = lookup_partition(hdr.name) if hdr.name else None
+            if dispatch:
+                category, component = dispatch
+                meta["component"] = component
+                meta["classified_category"] = category
 
-            # Partition name at offset 32 (32-byte NUL-terminated).
-            if len(header) >= 32 + 32:
-                name = _decode_cstr(header[32:64])
-                if name:
-                    meta["partition_name"] = name
+            # Stub detection: modem.img / md1dsp.img on modem-less SKUs
+            # are tiny scatter-config placeholders; the old parser
+            # interpreted the name bytes as struct fields and emitted
+            # ridiculous sizes (1.9 GB for a 528-byte file). Skip all
+            # struct-field emission on stubs.
+            if is_stub_descriptor(hdr.name, size):
+                meta["stub_descriptor"] = True
+                meta["note"] = (
+                    "Partition placeholder — no firmware payload in this file. "
+                    "Real payload lives in a sibling image (e.g. md1img.img) "
+                    "or on-chip ROM; often absent on modem-less SKUs."
+                )
+                return ParsedBlob(version=None, signed="unknown", metadata=meta)
 
-            # Opportunistic version / build-time pull from the first 8 KB
-            # (most LK payloads embed strings within this window).
-            scan = _read_bytes(path, 8 * 1024)
-            if scan:
-                v = _scan_version(scan)
-                if v:
-                    version = v
+            # file_info_offset is the u32 at 0x04. Meaningful only when
+            # it points inside the file; otherwise suppress to avoid the
+            # same nonsense-field problem that burned us before.
+            fio = hdr.file_info_offset
+            if 16 <= fio < size:
+                meta["file_info_offset"] = fio
+
+            # Best-effort signing hint: LK_FILE_INFO magic (0x58891689)
+            # presence at offset 0x30 in compact-layout headers indicates
+            # the image carries the secondary descriptor block that
+            # normally precedes signature metadata. Absence != unsigned;
+            # presence != signed — leave as "unknown" without harder
+            # evidence.
+            if hdr.has_file_info_magic:
+                meta["has_lk_file_info"] = True
+
+            # Scan the payload for an LK_FILE_INFO magic and a plausible
+            # sig_len field. When sig_len > 0 at offset +0x1E of the GFH
+            # we can report signed=signed confidently.
+            payload = _read_bytes(path, min(size, _VERSION_SCAN_BYTES))
+            sig_hint = _probe_signed(payload)
+            if sig_hint is not None:
+                signed = sig_hint
+
+            # Opportunistic version extraction from the payload
+            v = _scan_version(payload)
+            if v:
+                version = v
 
         except Exception as exc:  # noqa: BLE001
             logger.debug("MediatekLkParser failed on %s: %s", path, exc)
@@ -131,9 +162,33 @@ class MediatekLkParser:
         return ParsedBlob(
             version=version,
             signed=signed,
-            chipset_target=chipset_target,
             metadata=meta,
         )
+
+
+def _probe_signed(data: bytes) -> str | None:
+    """Best-effort signing probe: find LK_FILE_INFO magic, then read the
+    sig_type / sig_len at the known offsets inside the following struct.
+
+    Returns "signed" when sig_type != 0 OR sig_len > 0, "unsigned" when
+    both are explicitly zero, or None when we can't locate the record.
+    """
+    needle = struct.pack("<I", _LK_FILE_INFO_MAGIC)
+    idx = data.find(needle)
+    if idx < 0 or idx + 0x40 > len(data):
+        return None
+    # After LK_FILE_INFO magic, the second-tier record layout varies by
+    # SoC; sig_type is commonly at +0x0D and sig_len at +0x1E (GFH
+    # FILE_INFO-compatible). Do a conservative read with bounds check
+    # and only report a positive verdict.
+    try:
+        sig_type = data[idx + 0x0D]
+        sig_len = int.from_bytes(data[idx + 0x1E : idx + 0x22], "little")
+    except IndexError:
+        return None
+    if sig_type != 0 or sig_len > 0:
+        return "signed"
+    return None
 
 
 register_parser(MediatekLkParser())
