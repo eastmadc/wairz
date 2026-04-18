@@ -118,5 +118,22 @@ Options on the table:
 3. **Accept** — legacy rows are a snapshot of matching quality at
    upload time; preserving them is fine for audit purposes.
 
+**Resolution (verified 2026-04-18, session 59045370):**  Live DB now
+shows **zero** null-tier rows where ``blob_id IS NOT NULL`` across all
+three firmware (538 / 177,130 / 176,291 total hw-firmware rows, all
+tiered).  The legacy rows were cleared — most likely by a
+``force_rescan=true`` pass through ``/cve-match`` during the HW
+Firmware page overhaul in session 53c9c5ff (which exercised every
+matcher tier end-to-end per firmware).  The 10,898 remaining null-tier
+rows in the table are all userspace SBOM matches (``blob_id IS NULL``)
+from grype and are out of scope for the hw-firmware matcher — those
+correctly have no tier because the tier taxonomy only applies to
+hw-firmware detections.
+
+A.3 from ``seed-next-session-2026-04-19.md`` is therefore closed as a
+no-op.  Future legacy drift (from new pre-tiering uploads, a schema
+evolution, etc.) can re-use option 2 — rerun ``/cve-match`` with
+``force_rescan=true`` per firmware.
+
 Not scoped yet; flagging so the next campaign touching
 `sbom_vulnerabilities` has this context.
