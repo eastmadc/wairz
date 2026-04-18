@@ -233,6 +233,24 @@ export default function PartitionTree({
                                   <span className="font-mono text-[10px] text-muted-foreground">
                                     {b.format}
                                   </span>
+                                  {b.version && (
+                                    <Badge
+                                      variant="outline"
+                                      className="font-mono text-[10px] border-blue-500/40 text-blue-700 dark:text-blue-400"
+                                      title={`Parser-extracted version: ${b.version}`}
+                                    >
+                                      v{b.version}
+                                    </Badge>
+                                  )}
+                                  {(b.metadata as { known_vulnerabilities?: unknown[] } | null)
+                                    ?.known_vulnerabilities?.length ? (
+                                    <Badge
+                                      className="text-[10px] bg-red-600 text-white"
+                                      title="Parser-detected CVE(s)"
+                                    >
+                                      CVE
+                                    </Badge>
+                                  ) : null}
                                   <span className="w-16 text-right font-mono tabular-nums text-[10px] text-muted-foreground">
                                     {formatBytes(b.file_size)}
                                   </span>
