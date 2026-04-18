@@ -78,3 +78,24 @@ export const FINDING_SOURCE_CONFIG: Record<FindingSource, FindingSourceConfigEnt
   'apk-bytecode-scan': { icon: Code, label: 'APK Bytecode', className: 'border-violet-500/50 text-violet-600 dark:text-violet-400' },
   'apk-mobsfscan': { icon: FileSearch, label: 'APK SAST', className: 'border-fuchsia-500/50 text-fuchsia-600 dark:text-fuchsia-400' },
 }
+
+// ── Project status (Badge variant) ──
+
+/**
+ * Map of project `status` string to a shadcn Badge `variant`.  Values
+ * NOT present here fall back to `'outline'` at the call site — the
+ * lookup shape is intentionally looser (keyed by `string`, not a
+ * Union) because the backend can produce new status strings faster
+ * than the frontend enum evolves.  CLAUDE.md rule #9 applies: if a
+ * backend status enum is introduced and this map becomes exhaustive,
+ * tighten the key type.
+ */
+export const PROJECT_STATUS_VARIANT: Record<
+  string,
+  'default' | 'secondary' | 'destructive' | 'outline'
+> = {
+  ready: 'default',
+  unpacking: 'secondary',
+  error: 'destructive',
+  created: 'outline',
+}
