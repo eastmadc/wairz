@@ -778,8 +778,32 @@ async def _unpack_firmware_inner(
 
     # All extractors exhausted — fall back to standalone binary mode
     # If the file is small enough, just copy it and let users analyze
-    # the binary directly (common for single malware samples, test binaries)
-    _STANDALONE_BINARY_MAX = 10 * 1024 * 1024  # 10 MB
+    # the binary directly (common for single malware samples, test
+    # binaries, bare-metal medical / automotive / IoT firmware).
+    # Limit is configurable via MAX_STANDALONE_BINARY_MB (default 512
+    # MB — covers most embedded firmware; excludes unbounded bulk
+    # images).  Past the limit, the extraction fails cleanly with a
+    # readable error and the user gets a defined failure state instead
+    # of a silent "analysis unavailable".
+    from app.config import get_settings as _get_standalone_settings
+    _STANDALONE_BINARY_MAX = (
+        _get_standalone_settings().max_standalone_binary_mb * 1024 * 1024
+    )
+    if not result.success and fw_size > _STANDALONE_BINARY_MAX:
+        logger.info(
+            "Standalone-binary fallback skipped: %s is %d MB, exceeds "
+            "MAX_STANDALONE_BINARY_MB=%d",
+            os.path.basename(firmware_path),
+            fw_size // (1024 * 1024),
+            _STANDALONE_BINARY_MAX // (1024 * 1024),
+        )
+        result.unpack_log += (
+            f"\nAll extraction methods exhausted and file is "
+            f"{fw_size // (1024 * 1024)} MB — over the "
+            f"{_STANDALONE_BINARY_MAX // (1024 * 1024)} MB standalone-"
+            f"binary limit (MAX_STANDALONE_BINARY_MB). Raise the env "
+            f"var in .env to analyse larger raw firmware.\n"
+        )
     if not result.success and fw_size <= _STANDALONE_BINARY_MAX:
         import shutil
         from app.services.binary_analysis_service import analyze_binary
