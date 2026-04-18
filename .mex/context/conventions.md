@@ -1,0 +1,125 @@
+---
+name: conventions
+description: How code is written in Wairz — naming, file structure, async patterns, MCP handler rules, schema/model discipline, and the verify checklist derived from 15 learned rules. Load when writing new code or reviewing existing code.
+triggers:
+  - "convention"
+  - "pattern"
+  - "naming"
+  - "style"
+  - "how should I"
+  - "what's the right way"
+  - "verify"
+edges:
+  - target: context/architecture.md
+    condition: when a convention depends on understanding the system structure (services vs routers vs tools)
+  - target: context/stack.md
+    condition: when a convention is tied to a specific library's idioms (SQLAlchemy, arq, Zustand)
+  - target: context/mcp-tools.md
+    condition: when the work touches MCP tool handlers, registry, or ToolContext
+  - target: patterns/INDEX.md
+    condition: when starting a common task — a pattern likely encodes these conventions
+last_updated: 2026-04-17
+---
+
+# Conventions
+
+## Naming
+
+- **Python modules:** `snake_case.py` (`finding_service.py`, `cwe_checker_service.py`). Service files end in `_service.py`, router files named after the resource (`projects.py`, `firmware.py`).
+- **Classes:** `PascalCase`. SQLAlchemy models singular (`Project`, `Firmware`, `Finding`). Pydantic schemas suffixed by role: `ProjectCreate`, `ProjectResponse`, `ProjectListResponse`, `ProjectUpdate`.
+- **DB tables/columns:** plural snake_case tables (`projects`, `firmware`, `analysis_cache`), snake_case columns (`created_at`, `updated_at`, `project_id`). UUID PKs with `default=uuid.uuid4` AND `server_default=func.gen_random_uuid()` (dual default is mandatory).
+- **Router endpoint functions:** suffix with `_endpoint` when they share a conceptual name with an imported service function (Learned Rule #10). E.g. `run_clamav_scan_endpoint` in router, `run_clamav_scan` in service.
+- **MCP tool names:** lowercase snake_case verbs (`list_directory`, `decompile_function`, `check_known_cves`). Register via `registry.register(name=..., description=..., input_schema=..., handler=...)`.
+- **Frontend files:** Pages `PascalCasePage.tsx` (e.g. `ProjectsPage.tsx`, `EmulationPage.tsx`). API clients `camelCase.ts` in `src/api/` (`projects.ts`, `apkScan.ts`, `componentMap.ts`). Stores `camelCaseStore.ts`.
+- **TypeScript types:** exhaustive `Record<UnionType, Config>` maps must include every backend enum value (Learned Rule #9). Add `?? fallback` as defense in depth.
+
+## Structure
+
+- **Routers are thin.** Business logic lives in `app/services/<name>_service.py`. Routers import schemas from `app/schemas/`, call a service, return the Pydantic model. Never define Pydantic models inline in a router file (Learned Rule #12).
+- **MCP tool handlers live under `app/ai/tools/<category>.py`.** Each category file exposes a `register_<category>_tools(registry)` function that is called from `app/ai/__init__.py::create_tool_registry`. A new category file MUST be imported + registered there, otherwise the tool is invisible.
+- **ToolContext provides: `project_id`, `firmware_id`, `extracted_path`, `db` (AsyncSession), `resolve_path(path)`.** Always use `context.resolve_path()` — it calls `validate_path()` from `app/utils/sandbox.py`. Never `os.path.join(extracted_path, user_input)` directly.
+- **Background work goes through arq,** not `asyncio.create_task()` detached from the request. Unpacking the initial firmware upload is the exception — it uses `asyncio.create_task()` because the endpoint returns 202 and the frontend polls.
+- **Pydantic response schemas use `from_attributes=True`** (v2 replacement for `orm_mode`) when mapped directly from ORM rows.
+- **Alembic migrations** auto-run on worker container start via the entrypoint `alembic upgrade head && exec arq ...`. Generate with `docker compose exec backend alembic revision --autogenerate -m "msg"`.
+- **Frontend pages poll long-running operations** with `useEffect + setInterval` every 2s until status transitions. See `EmulationPage`, `FuzzingPage`, `ProjectDetailPage` for the canonical pattern.
+- **Frontend API calls** go through `src/api/<resource>.ts` which wraps the single Axios instance in `src/api/client.ts`. Pages never construct Axios calls directly.
+
+## Patterns
+
+### MCP tool handler — `flush()`, never `commit()`
+
+The outer MCP dispatch in `mcp_server.py` owns the transaction. Tool handlers write with `flush()` so changes are visible intra-session but roll back on exception.
+
+```python
+# Correct
+async def _handle_add_finding(input: dict, context: ToolContext) -> str:
+    finding = Finding(project_id=context.project_id, **input)
+    context.db.add(finding)
+    await context.db.flush()
+    return f"Created finding {finding.id}"
+
+# Wrong — commits break transaction ownership and bypass rollback
+await context.db.commit()
+```
+
+### Async DB access — never `gather()` coroutines sharing a session
+
+`AsyncSession` is NOT safe for concurrent coroutine access (Learned Rule #7). Sequential `await` or fresh session per task.
+
+```python
+# Correct — sequential
+result_a = await service_a(db, ...)
+result_b = await service_b(db, ...)
+
+# Correct — independent sessions
+async def worker(args):
+    async with async_session_factory() as db:
+        ...
+await asyncio.gather(worker(a), worker(b))
+
+# Wrong — shared session in gather, silent state corruption
+await asyncio.gather(service_a(db, ...), service_b(db, ...))
+```
+
+### Sync filesystem I/O — offload to executor (Learned Rule #5)
+
+Firmware may have 10K+ files; sync os.walk blocks the event loop.
+
+```python
+loop = asyncio.get_running_loop()
+result = await loop.run_in_executor(None, sync_scan_fn, extracted_path)
+```
+
+Use `app/utils/sandbox.py::safe_walk` when walking firmware — plain `os.walk` skips symlinks that firmware relies on (`/bin → /usr/bin`).
+
+### New Python dependency — update `pyproject.toml` in the same commit (Learned Rule #2)
+
+Then verify in Docker: `docker compose exec backend python -c "import <module>"`. A missing dependency only surfaces on container rebuild.
+
+## Verify Checklist
+
+Derived from CLAUDE.md Learned Rules (canonical source).  When a
+new rule lands in CLAUDE.md, update this checklist in the same
+commit (Learned Rule #21).
+
+Before presenting any code change:
+
+- [ ] **Sandbox:** every new file read uses `context.resolve_path()` (MCP tools) or `validate_path()` (services). No `os.path.join(extracted_path, x)` without validation. REST endpoints serving filesystem paths `realpath` BOTH sides before comparison (Learned Rule #1, extended for the hw-firmware symlink-escape test shape).
+- [ ] **DB transactions:** MCP tool handlers use `context.db.flush()`, not `commit()`. No `asyncio.gather()` on coroutines sharing a session (Learned Rules #3, #7).
+- [ ] **Blocking I/O:** any sync filesystem walk or CPU-bound loop inside an async handler is wrapped in `run_in_executor` (Learned Rule #5).
+- [ ] **Schema/model parity:** Pydantic response schema fields match the ORM model fields exactly (Learned Rule #4). No stray or missing columns.
+- [ ] **Router naming:** router functions that share a name with an imported service are suffixed `_endpoint` (Learned Rule #10).
+- [ ] **MCP tool registration:** new tool category files are imported AND called in `backend/app/ai/__init__.py::create_tool_registry`.
+- [ ] **Dependencies:** `pyproject.toml` updated for any new import; `docker compose exec backend python -c "import X"` passes (Learned Rule #2).
+- [ ] **Rebuild parity:** after backend code change, rebuild BOTH `backend` and `worker` (`docker compose up -d --build backend worker`). Never just one (Learned Rule #8).
+- [ ] **Frontend Record<> exhaustiveness:** if a backend enum/source value was added, grep `Record<{TypeName},` across `frontend/src/` and add the new key, plus `?? fallback` at lookup sites (Learned Rule #9).
+- [ ] **Inline Pydantic models:** none in router files — all schemas live in `app/schemas/` (Learned Rule #12).
+- [ ] **Detection roots:** filesystem walks across extracted firmware use `get_detection_roots(firmware)`, never `firmware.extracted_path` alone (Learned Rule #16). Post-relocation Android scatter containers holding raw `.img` files at top level are themselves detection roots (Learned Rule #18).
+- [ ] **Silent CLI exits:** any verification step whose success criterion is "exit 0" is canaried with a known-bad input before trusted (Learned Rule #17). Especially `tsc -b` and incremental linters.
+- [ ] **Android heuristics:** platform-signing detection uses the 3-tier manifest heuristic, not certificate negation (Learned Rule #13). `priv-app` paths matched as `system/priv-app` etc., not bare name (Learned Rule #14).
+- [ ] **Varchar widths:** columns storing composite keys that may exceed 100 chars (JADX class names, mangled symbols, decompile cache keys) use VARCHAR(512). Migration file width matches the ORM model width — do not rely on model-only changes (Learned Rule #15).
+- [ ] **File splits:** after splitting a large file, module-level constants referenced by moved methods are verified with a runtime import call, not just `py_compile` (Learned Rule #11).
+- [ ] **CLI upgrades:** before swapping an external CLI major version (binwalk v2→v3 etc.), grep every flag used and verify each exists in the new `--help` (Learned Rule #6).
+- [ ] **Evidence-first remediation:** before writing backfill / cleanup / migration code for "legacy rows like X", measure the condition with a SQL `COUNT(*)` or `grep` — if zero, close with a doc note, not dormant code (Learned Rule #19).
+- [ ] **Docker cp iteration:** when validating a single-file change against a stale running container (no dev bind mount), `docker cp` + in-container tool + `PYTHONPATH=/app` + `-w /app` is a <30 s iteration path. Still rebuild backend+worker before trusting for the next session (Learned Rule #20).
+- [ ] **Cross-scaffold sync:** when a rule is added to or changed in CLAUDE.md's Learned Rules list, update this Verify Checklist AND any affected `.mex/patterns/*.md` in the same commit (Learned Rule #21).
