@@ -138,7 +138,17 @@ export default function HardwareFirmwarePage() {
         forceRescan: false,
         firmwareId: selectedFirmwareId,
       })
-      setRunResult(`Found ${res.count} match(es).`)
+      {
+        const distinct = res.count ?? 0
+        const hwfw = res.hw_firmware_cves ?? distinct
+        const kernel = res.kernel_cves ?? 0
+        const kmodRows = res.kernel_module_rows ?? 0
+        const parts: string[] = []
+        if (hwfw > 0) parts.push(`${hwfw} hw-firmware`)
+        if (kernel > 0) parts.push(`${kernel} kernel (across ${kmodRows} modules)`)
+        const breakdown = parts.length ? ` — ${parts.join(', ')}` : ''
+        setRunResult(`Found ${distinct} distinct CVE(s)${breakdown}.`)
+      }
       // Refresh the list and any selected blob's CVEs.
       await loadAll()
       if (selectedBlobId) {

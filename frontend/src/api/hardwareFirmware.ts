@@ -108,14 +108,22 @@ export async function getHardwareFirmwareCves(
   return data
 }
 
+export interface CveMatchRunResult {
+  count: number           // distinct CVE IDs across all tiers
+  rows: number            // total persisted match rows (cartesian kernel_cve × kmod included)
+  hw_firmware_cves: number
+  kernel_cves: number
+  kernel_module_rows: number
+}
+
 export async function runCveMatch(
   projectId: string,
   options?: { forceRescan?: boolean; firmwareId?: string | null },
-): Promise<{ count: number }> {
+): Promise<CveMatchRunResult> {
   const params: Record<string, unknown> = {}
   if (options?.forceRescan) params.force_rescan = true
   if (options?.firmwareId) params.firmware_id = options.firmwareId
-  const { data } = await apiClient.post<{ count: number }>(
+  const { data } = await apiClient.post<CveMatchRunResult>(
     `/projects/${projectId}/hardware-firmware/cve-match`,
     null,
     { params },

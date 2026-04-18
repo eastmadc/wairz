@@ -69,6 +69,32 @@ def _load_known_firmware() -> list[dict]:
         return []
 
 
+# MediaTek's monthly Product Security Bulletins tag every CVE with a
+# Subcomponent (geniezone, atf, tinysys, wlan, modem, …). NVD descriptions
+# for these CVEs consistently begin "In <subcomponent>, …" — extracting
+# that tag lets downstream filtering narrow Tier 3/4 matches from
+# vendor-wide to component-scoped. The match itself is not yet enforced;
+# this utility exists so a future tightening can flip the switch without
+# schema changes.
+_SUBCOMPONENT_RE = re.compile(
+    r"^In\s+([a-z][a-z0-9_]{1,40})\b",
+    re.IGNORECASE,
+)
+
+
+def extract_subcomponent(description: str) -> str | None:
+    """Extract a MediaTek-style subcomponent tag from an NVD description.
+
+    Returns the lowercased tag (e.g. ``"geniezone"``, ``"atf"``,
+    ``"wlan"``) or ``None`` when the description doesn't follow the
+    ``"In <word>, …"`` convention.
+    """
+    if not description:
+        return None
+    m = _SUBCOMPONENT_RE.match(description.strip())
+    return m.group(1).lower() if m else None
+
+
 def _stringify_metadata(md: dict) -> list[str]:
     """Return all string values found in metadata (one level deep)."""
     out: list[str] = []
@@ -249,6 +275,12 @@ async def _match_kernel_cpe(
         cvss_score = float(vuln.cvss_score) if vuln.cvss_score is not None else None
         severity = vuln.severity or "unknown"
         description = vuln.description or ""
+        # Tier 4 is, by design, the broadest kernel projection: every
+        # kernel CVE gets mirrored onto every kernel_module row. That
+        # mirror is useful for drill-down but produces a row count of
+        # O(CVEs × modules) — 185k+ on Android builds. Flag as "low"
+        # confidence so UIs can filter or down-rank these; Tier 5
+        # (subsystem-verified) is the authoritative "high" tier.
         for blob in kmod_blobs:
             matches.append(
                 CveMatch(
@@ -257,7 +289,7 @@ async def _match_kernel_cpe(
                     severity=severity,
                     cvss_score=cvss_score,
                     description=description,
-                    confidence="medium",
+                    confidence="low",
                     tier="kernel_cpe",
                 )
             )

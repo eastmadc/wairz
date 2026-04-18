@@ -25,6 +25,8 @@ CATEGORIES: set[str] = {
     "dtb",
     "kernel_module",
     "bootloader",
+    "mcu",
+    "kernel",
     "other",
 }
 
@@ -49,6 +51,12 @@ FORMATS: set[str] = {
     "mtk_modem",
     "mtk_wifi_hdr",
     "awinic_acf",
+    # MCU / kernel / opaque-archive placeholders
+    "imxrt_bin",
+    "zImage",
+    "uImage",
+    "vmlinuz",
+    "signed_archive",
 }
 
 
@@ -205,13 +213,39 @@ def _classify_by_magic(magic: bytes) -> Classification | None:
     if magic[:4] == b"TRUS":
         return Classification("tee", "unknown", "kinibi_mclf", "high")
 
-    # MediaTek LK partition record (magic 0x58881688, little-endian)
+    # MediaTek LK partition record (magic 0x58881688, little-endian).
+    # The first-pass magic alone can't tell us whether this is a real
+    # bootloader (lk, lk_a/b, preloader), a TEE/hypervisor (atf, gz),
+    # a modem stub (md1rom, md1dsp), camera firmware (cam_vpu*), etc.
+    # Peek at the partition-name field inside the LK header and dispatch
+    # to the correct Wairz category. Falls back to bootloader/mtk_lk
+    # when the name is missing or unknown.
     if magic[:4] == b"\x88\x16\x88\x58":
+        from app.services.hardware_firmware.parsers.mediatek_gfh import (
+            lookup_partition,
+            parse_lk_header,
+        )
+        hdr = parse_lk_header(magic)
+        if hdr is not None and hdr.name:
+            dispatch = lookup_partition(hdr.name)
+            if dispatch is not None:
+                category, _component = dispatch
+                return Classification(category, "mediatek", "mtk_lk", "high")
         return Classification("bootloader", "mediatek", "mtk_lk", "high")
 
     # MediaTek preloader: MMM\x01 header, second byte starts with 0x38
     if len(magic) >= 5 and magic[:4] == b"MMM\x01" and magic[4] == 0x38:
         return Classification("bootloader", "mediatek", "mtk_preloader", "high")
+
+    # Linux ARM zImage: magic 0x016F2818 at offset 0x24 (Documentation/arm/booting.rst)
+    if len(magic) >= 0x28 and magic[0x24:0x28] == b"\x18\x28\x6f\x01":
+        return Classification("kernel", "unknown", "zImage", "high")
+
+    # Vendor-specific signed archive (seen on RespArray / Edan firmware bundles).
+    # Header is opaque — separable from their .signature sidecar files — so we
+    # surface a placeholder entry rather than skipping the file silently.
+    if magic[:4] == b"\xa3\xdf\xbb\xbf":
+        return Classification("other", "unknown", "signed_archive", "medium")
 
     return None
 
