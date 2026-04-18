@@ -1,12 +1,20 @@
+import { Download, Loader2 } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
-import { Loader2 } from 'lucide-react'
-import type { HardwareFirmwareBlob, FirmwareCveMatch } from '@/api/hardwareFirmware'
+import { Button } from '@/components/ui/button'
+import {
+  buildBlobDownloadUrl,
+  type FirmwareCveMatch,
+  type HardwareFirmwareBlob,
+} from '@/api/hardwareFirmware'
 import { displayPath } from './BlobTable'
 
 interface BlobDetailProps {
   blob: HardwareFirmwareBlob | null
   cves: FirmwareCveMatch[]
   loading: boolean
+  projectId: string
+  firmwareId: string | null
+  onDriverClick?: (driverPath: string) => void
 }
 
 // Exhaustive severity -> color map per CLAUDE.md rule 9.
@@ -18,7 +26,44 @@ const SEVERITY_STYLE: Record<string, string> = {
   info: 'bg-gray-500 text-white',
 }
 
-export default function BlobDetail({ blob, cves, loading }: BlobDetailProps) {
+// Keys promoted to structured fields above the JSON escape hatch.  If
+// the parser populated any of these we render them inline so the user
+// doesn't have to expand the raw JSON to read common values.
+const PROMOTED_METADATA_KEYS = [
+  'build_date',
+  'built_on',
+  'release',
+  'git_hash',
+  'commit',
+  'toolchain',
+  'architecture',
+] as const
+
+function promotedEntries(meta: Record<string, unknown>): [string, unknown][] {
+  const out: [string, unknown][] = []
+  for (const k of PROMOTED_METADATA_KEYS) {
+    if (k in meta && meta[k] !== null && meta[k] !== undefined && meta[k] !== '') {
+      out.push([k, meta[k]])
+    }
+  }
+  return out
+}
+
+function scalarDisplay(v: unknown): string {
+  if (v === null || v === undefined) return ''
+  if (typeof v === 'string') return v
+  if (typeof v === 'number' || typeof v === 'boolean') return String(v)
+  return JSON.stringify(v)
+}
+
+export default function BlobDetail({
+  blob,
+  cves,
+  loading,
+  projectId,
+  firmwareId,
+  onDriverClick,
+}: BlobDetailProps) {
   if (!blob) {
     return (
       <div className="flex h-full items-center justify-center rounded-lg border border-dashed border-border p-6 text-center text-xs text-muted-foreground">
@@ -27,15 +72,33 @@ export default function BlobDetail({ blob, cves, loading }: BlobDetailProps) {
     )
   }
 
+  const downloadUrl = buildBlobDownloadUrl(projectId, blob.id, firmwareId)
+  const filename = displayPath(blob.blob_path).split('/').pop() || 'blob.bin'
+  const metaEntries = blob.metadata ? Object.entries(blob.metadata) : []
+  const promoted = blob.metadata ? promotedEntries(blob.metadata) : []
+
   return (
     <div className="space-y-3 rounded-lg border border-border p-4">
       <div>
-        <p
-          className="break-all font-mono text-xs text-foreground"
-          title={blob.blob_path}
-        >
-          {displayPath(blob.blob_path)}
-        </p>
+        <div className="flex items-start justify-between gap-2">
+          <p
+            className="flex-1 break-all font-mono text-xs text-foreground"
+            title={blob.blob_path}
+          >
+            {displayPath(blob.blob_path)}
+          </p>
+          <Button
+            variant="outline"
+            size="sm"
+            asChild
+            title={`Download ${filename} (${blob.file_size.toLocaleString()} bytes)`}
+          >
+            <a href={downloadUrl} download={filename}>
+              <Download className="mr-1.5 h-3.5 w-3.5" />
+              Download
+            </a>
+          </Button>
+        </div>
         <div className="mt-2 flex flex-wrap items-center gap-1.5">
           <Badge variant="outline" className="text-[10px]">{blob.category}</Badge>
           <Badge variant="outline" className="text-[10px]">{blob.vendor ?? 'unknown'}</Badge>
@@ -93,17 +156,36 @@ export default function BlobDetail({ blob, cves, loading }: BlobDetailProps) {
         <span className="font-mono">{blob.detection_source}</span>
         <span className="text-muted-foreground">Confidence:</span>
         <span>{blob.detection_confidence}</span>
+        {promoted.map(([k, v]) => (
+          <div key={k} className="contents">
+            <span className="text-muted-foreground">{k.replace(/_/g, ' ')}:</span>
+            <span className="break-all font-mono text-[10px]">{scalarDisplay(v)}</span>
+          </div>
+        ))}
       </div>
 
       {blob.driver_references && blob.driver_references.length > 0 && (
         <div className="border-t border-border/50 pt-3">
           <p className="mb-1 text-xs font-medium text-muted-foreground">Driver references</p>
           <ul className="space-y-0.5">
-            {blob.driver_references.slice(0, 20).map((ref) => (
-              <li key={ref} className="break-all font-mono text-[11px]">
-                {ref}
-              </li>
-            ))}
+            {blob.driver_references.slice(0, 20).map((ref) =>
+              onDriverClick ? (
+                <li key={ref}>
+                  <button
+                    type="button"
+                    onClick={() => onDriverClick(ref)}
+                    className="break-all font-mono text-[11px] text-blue-500 hover:underline"
+                    title="Click to see blobs referenced by this driver"
+                  >
+                    {ref}
+                  </button>
+                </li>
+              ) : (
+                <li key={ref} className="break-all font-mono text-[11px]">
+                  {ref}
+                </li>
+              ),
+            )}
             {blob.driver_references.length > 20 && (
               <li className="text-[10px] italic text-muted-foreground">
                 +{blob.driver_references.length - 20} more
@@ -177,13 +259,15 @@ export default function BlobDetail({ blob, cves, loading }: BlobDetailProps) {
         )
       })()}
 
-      {blob.metadata && Object.keys(blob.metadata).length > 0 && (
-        <div className="border-t border-border/50 pt-3">
-          <p className="mb-1 text-xs font-medium text-muted-foreground">Parser metadata</p>
-          <pre className="max-h-64 overflow-auto rounded-md bg-muted p-2 text-[10px] leading-tight font-mono">
+      {metaEntries.length > 0 && (
+        <details className="border-t border-border/50 pt-3">
+          <summary className="cursor-pointer text-xs font-medium text-muted-foreground">
+            Parser metadata ({metaEntries.length} {metaEntries.length === 1 ? 'key' : 'keys'})
+          </summary>
+          <pre className="mt-2 max-h-64 overflow-auto rounded-md bg-muted p-2 text-[10px] leading-tight font-mono">
             {JSON.stringify(blob.metadata, null, 2)}
           </pre>
-        </div>
+        </details>
       )}
 
       <div className="border-t border-border/50 pt-3">

@@ -143,6 +143,11 @@ export interface CveAggregate {
   kernel_cves: number
   advisory_count: number
   last_match_at: string | null
+  // Per-severity breakdown of ``hw_firmware_cves`` (NOT kernel-tier).
+  hw_severity_critical: number
+  hw_severity_high: number
+  hw_severity_medium: number
+  hw_severity_low: number
 }
 
 export async function getCveAggregate(
@@ -154,6 +159,51 @@ export async function getCveAggregate(
     { params: firmwareId ? { firmware_id: firmwareId } : undefined },
   )
   return data
+}
+
+// CVE-centric aggregation — one row per distinct hw-firmware CVE with
+// the affected-blob list and distinct formats rolled up.  Backed by
+// GET .../hardware-firmware/cves.
+export interface CveRow {
+  cve_id: string
+  severity: string
+  cvss_score: number | null
+  match_tier: string | null
+  match_confidence: string | null
+  description: string | null
+  affected_blob_count: number
+  affected_blob_ids: string[]
+  affected_formats: string[]
+}
+
+export interface CveListResponse {
+  cves: CveRow[]
+  total: number
+}
+
+export async function listHardwareFirmwareCves(
+  projectId: string,
+  firmwareId?: string | null,
+): Promise<CveListResponse> {
+  const { data } = await apiClient.get<CveListResponse>(
+    `/projects/${projectId}/hardware-firmware/cves`,
+    { params: firmwareId ? { firmware_id: firmwareId } : undefined },
+  )
+  return data
+}
+
+// Build the download URL for a blob — the backend streams the file
+// with Content-Disposition: attachment so the browser handles it via
+// a plain `<a href download>` anchor.
+export function buildBlobDownloadUrl(
+  projectId: string,
+  blobId: string,
+  firmwareId?: string | null,
+): string {
+  const base = `/api/v1/projects/${projectId}/hardware-firmware/${blobId}/download`
+  return firmwareId
+    ? `${base}?firmware_id=${encodeURIComponent(firmwareId)}`
+    : base
 }
 
 export async function getFirmwareEdges(

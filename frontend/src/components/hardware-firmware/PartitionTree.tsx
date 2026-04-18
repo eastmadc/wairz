@@ -1,14 +1,22 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { ChevronDown, ChevronRight, Cpu } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import type { HardwareFirmwareBlob } from '@/api/hardwareFirmware'
 import VendorRollup from './VendorRollup'
-import { displayPath } from './BlobTable'
+import { displayPath, highlightMatches } from './BlobTable'
 
 interface PartitionTreeProps {
   blobs: HardwareFirmwareBlob[]
   selectedId: string | null
   onSelect: (id: string) => void
+  // Text-search query applied in-place; when non-empty, only blobs
+  // whose path, format, version, or chipset contains the query (case-
+  // insensitive) survive, and their containing partition + vendor
+  // auto-expand so matches are visible without a click.
+  searchQuery?: string
+  // Sort order for partition headers: "blobs" (default, largest first)
+  // or "cves" (partitions with the most CVE findings first).
+  sortMode?: 'blobs' | 'cves'
 }
 
 // Exhaustive signed-badge style map (CLAUDE.md rule 9).  The `?? fallback`
@@ -36,6 +44,26 @@ function cveBadgeClass(severity: string | null | undefined): string {
     default:
       return 'bg-red-600'  // CVEs without severity rank still flag red
   }
+}
+
+const SEVERITY_RANK: Record<string, number> = {
+  critical: 4,
+  high: 3,
+  medium: 2,
+  low: 1,
+}
+
+function worstSeverity(blobs: HardwareFirmwareBlob[]): string | null {
+  let best = 0
+  let label: string | null = null
+  for (const b of blobs) {
+    const rank = b.max_severity ? SEVERITY_RANK[b.max_severity] ?? 0 : 0
+    if (rank > best) {
+      best = rank
+      label = b.max_severity
+    }
+  }
+  return label
 }
 
 const UNKNOWN_PARTITION = '(unknown partition)'
@@ -66,10 +94,38 @@ interface Grouped {
     key: string
     blobs: HardwareFirmwareBlob[]
     vendors: { key: string; blobs: HardwareFirmwareBlob[] }[]
+    cveCount: number
+    maxSeverity: string | null
   }[]
 }
 
-function groupBlobs(blobs: HardwareFirmwareBlob[]): Grouped {
+/**
+ * Decide which partitions should be open on first render / after a
+ * filter change.  Priority:
+ *   1. Partitions containing any CVE-bearing blob (security researcher
+ *      lands on "where are the 26 CVEs?" — show them without clicks).
+ *   2. Fallback to the single largest partition when nothing has CVEs
+ *      (existing behaviour, preserved).
+ *
+ * Exported for unit testing — pure function, no React state.
+ */
+export function pickDefaultOpenPartitions(
+  partitions: Grouped['partitions'],
+): Set<string> {
+  const s = new Set<string>()
+  for (const p of partitions) {
+    if (p.cveCount > 0) s.add(p.key)
+  }
+  if (s.size === 0 && partitions.length > 0) {
+    s.add(partitions[0].key)
+  }
+  return s
+}
+
+function groupBlobs(
+  blobs: HardwareFirmwareBlob[],
+  sortMode: 'blobs' | 'cves',
+): Grouped {
   const byPartition = new Map<string, HardwareFirmwareBlob[]>()
   for (const b of blobs) {
     const p = partitionOf(b)
@@ -79,7 +135,6 @@ function groupBlobs(blobs: HardwareFirmwareBlob[]): Grouped {
   }
 
   const partitions = [...byPartition.entries()]
-    .sort((a, b) => b[1].length - a[1].length)
     .map(([key, items]) => {
       const byVendor = new Map<string, HardwareFirmwareBlob[]>()
       for (const b of items) {
@@ -96,7 +151,19 @@ function groupBlobs(blobs: HardwareFirmwareBlob[]): Grouped {
             displayPath(a.blob_path).localeCompare(displayPath(b.blob_path)),
           ),
         }))
-      return { key, blobs: items, vendors }
+      return {
+        key,
+        blobs: items,
+        vendors,
+        cveCount: items.reduce((acc, b) => acc + (b.cve_count || 0), 0),
+        maxSeverity: worstSeverity(items),
+      }
+    })
+    .sort((a, b) => {
+      if (sortMode === 'cves') {
+        if (b.cveCount !== a.cveCount) return b.cveCount - a.cveCount
+      }
+      return b.blobs.length - a.blobs.length
     })
 
   return { partitions }
@@ -114,22 +181,55 @@ export default function PartitionTree({
   blobs,
   selectedId,
   onSelect,
+  searchQuery,
+  sortMode = 'blobs',
 }: PartitionTreeProps) {
-  const grouped = useMemo(() => groupBlobs(blobs), [blobs])
+  const grouped = useMemo(
+    () => groupBlobs(blobs, sortMode),
+    [blobs, sortMode],
+  )
 
-  // Default: expand the largest partition, collapse the rest.
-  const defaultOpenPartitions = useMemo(() => {
-    const s = new Set<string>()
-    if (grouped.partitions.length > 0) {
-      s.add(grouped.partitions[0].key)
-    }
-    return s
-  }, [grouped.partitions])
+  // Default: expand every partition with CVEs; fall back to the largest
+  // partition when nothing qualifies (keeps the pre-fix behaviour when
+  // a firmware has zero findings).
+  const defaultOpenPartitions = useMemo(
+    () => pickDefaultOpenPartitions(grouped.partitions),
+    [grouped.partitions],
+  )
 
   const [openPartitions, setOpenPartitions] = useState<Set<string>>(
     defaultOpenPartitions,
   )
   const [openVendors, setOpenVendors] = useState<Set<string>>(new Set())
+
+  // If the set of partitions changes (filters toggled, firmware
+  // switched), re-apply the default so CVE-bearing partitions are
+  // visible without an extra click.
+  useEffect(() => {
+    setOpenPartitions(defaultOpenPartitions)
+  }, [defaultOpenPartitions])
+
+  // Text-search auto-expansion: when the query is non-empty, open every
+  // partition + vendor whose descendant blobs match, so the filtered
+  // tree isn't hiding the hit behind a collapsed row.
+  const query = (searchQuery ?? '').trim().toLowerCase()
+  useEffect(() => {
+    if (!query) return
+    const newPartitions = new Set<string>()
+    const newVendors = new Set<string>()
+    for (const p of grouped.partitions) {
+      for (const v of p.vendors) {
+        for (const b of v.blobs) {
+          if (matchesQuery(b, query)) {
+            newPartitions.add(p.key)
+            newVendors.add(`${p.key}::${v.key}`)
+          }
+        }
+      }
+    }
+    setOpenPartitions(newPartitions.size ? newPartitions : defaultOpenPartitions)
+    setOpenVendors(newVendors)
+  }, [query, grouped.partitions, defaultOpenPartitions])
 
   const togglePartition = (key: string) => {
     setOpenPartitions((prev) => {
@@ -183,6 +283,16 @@ export default function PartitionTree({
                 {partition.blobs.length} blob
                 {partition.blobs.length === 1 ? '' : 's'}
               </Badge>
+              {partition.cveCount > 0 && (
+                <Badge
+                  className={`text-[10px] text-white ${cveBadgeClass(partition.maxSeverity)}`}
+                  title={`${partition.cveCount} CVE finding${
+                    partition.cveCount === 1 ? '' : 's'
+                  } across this partition (max severity: ${partition.maxSeverity ?? 'unknown'})`}
+                >
+                  {partition.cveCount} CVE · {partition.maxSeverity ?? 'unknown'}
+                </Badge>
+              )}
               <div className="ml-auto">
                 <VendorRollup blobs={partition.blobs} max={6} />
               </div>
@@ -224,71 +334,76 @@ export default function PartitionTree({
 
                       {vendorOpen && (
                         <ul className="divide-y divide-border/50">
-                          {vendor.blobs.map((b) => {
-                            const isSelected = selectedId === b.id
-                            const signedStyle =
-                              SIGNED_STYLE[b.signed] ??
-                              'border-border text-muted-foreground'
-                            return (
-                              <li key={b.id}>
-                                <button
-                                  type="button"
-                                  onClick={() => onSelect(b.id)}
-                                  aria-pressed={isSelected}
-                                  className={`flex w-full items-center gap-2 px-6 py-1 text-left text-[11px] transition-colors ${
-                                    isSelected
-                                      ? 'bg-accent/60'
-                                      : 'hover:bg-accent/30'
-                                  }`}
-                                  title={b.blob_path}
-                                >
-                                  <span className="flex-1 truncate font-mono">
-                                    {displayPath(b.blob_path)}
-                                  </span>
-                                  <span className="font-mono text-[10px] text-muted-foreground">
-                                    {b.category}
-                                  </span>
-                                  <span className="font-mono text-[10px] text-muted-foreground">
-                                    {b.format}
-                                  </span>
-                                  {b.version && (
+                          {vendor.blobs
+                            .filter((b) => !query || matchesQuery(b, query))
+                            .map((b) => {
+                              const isSelected = selectedId === b.id
+                              const signedStyle =
+                                SIGNED_STYLE[b.signed] ??
+                                'border-border text-muted-foreground'
+                              return (
+                                <li key={b.id}>
+                                  <button
+                                    type="button"
+                                    onClick={() => onSelect(b.id)}
+                                    aria-pressed={isSelected}
+                                    className={`flex w-full items-center gap-2 px-6 py-1 text-left text-[11px] transition-colors ${
+                                      isSelected
+                                        ? 'bg-accent/60'
+                                        : 'hover:bg-accent/30'
+                                    }`}
+                                    title={b.blob_path}
+                                  >
+                                    <span className="flex-1 truncate font-mono">
+                                      {highlightMatches(
+                                        displayPath(b.blob_path),
+                                        query,
+                                      )}
+                                    </span>
+                                    <span className="font-mono text-[10px] text-muted-foreground">
+                                      {b.category}
+                                    </span>
+                                    <span className="font-mono text-[10px] text-muted-foreground">
+                                      {b.format}
+                                    </span>
+                                    {b.version && (
+                                      <Badge
+                                        variant="outline"
+                                        className="font-mono text-[10px] border-blue-500/40 text-blue-700 dark:text-blue-400"
+                                        title={`Parser-extracted version: ${b.version}`}
+                                      >
+                                        v{b.version}
+                                      </Badge>
+                                    )}
+                                    {b.cve_count > 0 && (
+                                      <Badge
+                                        className={`text-[10px] text-white ${cveBadgeClass(b.max_severity)}`}
+                                        title={`${b.cve_count} CVE${b.cve_count === 1 ? '' : 's'} matched (max severity: ${b.max_severity ?? 'unknown'})`}
+                                      >
+                                        {b.cve_count} CVE
+                                      </Badge>
+                                    )}
+                                    {b.advisory_count > 0 && (
+                                      <Badge
+                                        className="text-[10px] bg-amber-600 text-white"
+                                        title={`${b.advisory_count} advisory presence flag(s)`}
+                                      >
+                                        ADV
+                                      </Badge>
+                                    )}
+                                    <span className="w-16 text-right font-mono tabular-nums text-[10px] text-muted-foreground">
+                                      {formatBytes(b.file_size)}
+                                    </span>
                                     <Badge
                                       variant="outline"
-                                      className="font-mono text-[10px] border-blue-500/40 text-blue-700 dark:text-blue-400"
-                                      title={`Parser-extracted version: ${b.version}`}
+                                      className={`w-24 justify-center text-[10px] ${signedStyle}`}
                                     >
-                                      v{b.version}
+                                      {b.signed}
                                     </Badge>
-                                  )}
-                                  {b.cve_count > 0 && (
-                                    <Badge
-                                      className={`text-[10px] text-white ${cveBadgeClass(b.max_severity)}`}
-                                      title={`${b.cve_count} CVE${b.cve_count === 1 ? '' : 's'} matched (max severity: ${b.max_severity ?? 'unknown'})`}
-                                    >
-                                      {b.cve_count} CVE
-                                    </Badge>
-                                  )}
-                                  {b.advisory_count > 0 && (
-                                    <Badge
-                                      className="text-[10px] bg-amber-600 text-white"
-                                      title={`${b.advisory_count} advisory presence flag(s)`}
-                                    >
-                                      ADV
-                                    </Badge>
-                                  )}
-                                  <span className="w-16 text-right font-mono tabular-nums text-[10px] text-muted-foreground">
-                                    {formatBytes(b.file_size)}
-                                  </span>
-                                  <Badge
-                                    variant="outline"
-                                    className={`w-24 justify-center text-[10px] ${signedStyle}`}
-                                  >
-                                    {b.signed}
-                                  </Badge>
-                                </button>
-                              </li>
-                            )
-                          })}
+                                  </button>
+                                </li>
+                              )
+                            })}
                         </ul>
                       )}
                     </div>
@@ -301,4 +416,26 @@ export default function PartitionTree({
       })}
     </div>
   )
+}
+
+/**
+ * Case-insensitive substring match across the blob's searchable text
+ * fields.  Exported so the page-level filtered count stays consistent
+ * with the in-tree filter.
+ */
+export function matchesQuery(blob: HardwareFirmwareBlob, query: string): boolean {
+  if (!query) return true
+  const q = query.toLowerCase()
+  const haystack = [
+    blob.blob_path,
+    blob.format,
+    blob.category,
+    blob.vendor ?? '',
+    blob.version ?? '',
+    blob.chipset_target ?? '',
+    blob.partition ?? '',
+  ]
+    .join(' ')
+    .toLowerCase()
+  return haystack.includes(q)
 }
