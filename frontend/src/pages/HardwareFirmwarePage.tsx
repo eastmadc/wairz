@@ -265,7 +265,8 @@ export default function HardwareFirmwarePage() {
           <div>
             <h1 className="text-lg font-semibold">Hardware Firmware</h1>
             <p className="text-sm text-muted-foreground">
-              Modem / TEE / Wi-Fi / GPU / DSP blobs, drivers, and three-tier CVE matches.
+              Vendor firmware blobs (modem, TEE, MCU, Wi-Fi, BT, GPU, DSP, camera, audio, NFC, sensor &amp; more),
+              drivers, and six-tier CVE matching.
             </p>
           </div>
         </div>
