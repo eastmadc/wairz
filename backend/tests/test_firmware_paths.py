@@ -516,6 +516,88 @@ async def test_persist_failure_is_non_fatal(tmp_path: Path):
 
 
 # ---------------------------------------------------------------------------
+# Post-scatter-relocation layout — regression guard
+# ---------------------------------------------------------------------------
+#
+# After ``_relocate_scatter_subdirs`` runs, the scatter version subdirectory
+# is empty and the firmware blobs live as direct children of
+# ``extraction/``.  The detector must treat the extraction container
+# itself as a walk root so those blobs surface.  Without this guard the
+# helper returns only [rootfs, rootfs/partition_*], dropping ~14
+# MediaTek blobs (lk.img, tee.img, gz.img, preloader*.bin, scp/sspm/
+# spmfw/md1dsp/modem.img, cam_vpu*, logo.bin) from downstream detection.
+
+
+def test_post_relocation_layout_includes_container(tmp_path: Path):
+    """Files at ``extracted/`` top level → container is a detection root."""
+    extraction = tmp_path / "extracted"
+    extraction.mkdir()
+    # Android rootfs with system + vendor children (valid partition-like
+    # layout — proves the helper doesn't mistakenly skip the container
+    # just because rootfs/ is also present).
+    rootfs = extraction / "rootfs"
+    (rootfs / "system").mkdir(parents=True)
+    (rootfs / "vendor").mkdir()
+    # Scatter version subdir — empty after relocation.
+    (extraction / "DPCS10_260414-1134").mkdir()
+    # Relocated firmware blobs live directly under extraction/
+    for name in (
+        "lk.img", "tee.img", "gz.img", "scp.img", "sspm.img",
+        "spmfw.img", "md1dsp.img", "modem.img",
+        "preloader_aiot8788ep1_64_bsp_k66.bin",
+    ):
+        (extraction / name).write_bytes(b"\x00" * 64)
+
+    roots = _compute_roots_sync(str(rootfs))
+    real_roots = _reals(roots)
+    assert os.path.realpath(str(extraction)) in real_roots, (
+        f"Expected extraction container as a detection root; got {roots}"
+    )
+    assert os.path.realpath(str(rootfs)) in real_roots, (
+        f"Expected rootfs as a detection root; got {roots}"
+    )
+
+
+def test_linux_rootfs_only_container_not_included(tmp_path: Path):
+    """Pure Linux rootfs (no raw images at extraction root) → container
+    is NOT promoted.  Regression guard so the fix for the Android post-
+    relocation case doesn't over-include for Linux tarballs."""
+    extraction = tmp_path / "extracted"
+    extraction.mkdir()
+    rootfs = extraction / "rootfs"
+    (rootfs / "etc").mkdir(parents=True)
+    (rootfs / "bin").mkdir()
+    (rootfs / "lib").mkdir()
+    # No .img / .bin at the extraction top level.
+
+    roots = _compute_roots_sync(str(rootfs))
+    real_roots = _reals(roots)
+    assert os.path.realpath(str(extraction)) not in real_roots, (
+        f"Linux extraction container should not be promoted; got {roots}"
+    )
+
+
+def test_pre_relocation_scatter_subdir_still_detected(tmp_path: Path):
+    """Pre-relocation layout (files still in DPCS10_*/ subdir) → the
+    subdir is a detection root per ``_dir_has_raw_image`` — unchanged
+    from pre-fix behaviour."""
+    extraction = tmp_path / "extracted"
+    extraction.mkdir()
+    rootfs = extraction / "rootfs"
+    (rootfs / "system").mkdir(parents=True)
+    scatter = extraction / "DPCS10_260414-1134"
+    scatter.mkdir()
+    for name in ("lk.img", "tee.img", "gz.img"):
+        (scatter / name).write_bytes(b"\x00" * 64)
+
+    roots = _compute_roots_sync(str(rootfs))
+    real_roots = _reals(roots)
+    assert os.path.realpath(str(scatter)) in real_roots, (
+        f"Pre-relocation scatter subdir should still be a root; got {roots}"
+    )
+
+
+# ---------------------------------------------------------------------------
 # Pytest collection sanity marker
 # ---------------------------------------------------------------------------
 

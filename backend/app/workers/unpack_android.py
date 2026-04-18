@@ -16,6 +16,32 @@ logger = logging.getLogger(__name__)
 _MIN_PARTITION_BYTES = 64
 
 
+# Android user-data / factory-reset partitions — NOT firmware.
+# Per AOSP (source.android.com/docs/core/architecture/partitions): userdata
+# holds user apps+data, cache is temporary data, metadata stores the
+# encryption key, persist holds per-device state (calibration, certs),
+# misc is a 4 KB boot-flag region.  All are erased on factory reset and
+# contain no firmware code worth analysing.  Skipping them avoids
+# sparse→raw inflation of empty OEM userdata (3 GB+) which otherwise
+# trips the extraction-bomb limit.
+_USER_DATA_PARTITION_BASES: frozenset[str] = frozenset({
+    "userdata", "cache", "metadata", "persist", "misc",
+})
+
+
+def _is_user_data_partition(img_name: str) -> bool:
+    """True if ``img_name`` names a user-data / factory-reset partition.
+
+    Matches ``userdata.img``, ``cache.img``, ``metadata.img``,
+    ``persist.img``, ``misc.img`` and their A/B slot variants
+    (``userdata_a.img``, ``userdata_b.img``).  Case-insensitive.
+    """
+    base = img_name.rsplit(".", 1)[0].lower()
+    if len(base) > 2 and base[-2:] in ("_a", "_b"):
+        base = base[:-2]
+    return base in _USER_DATA_PARTITION_BASES
+
+
 # Filesystem / bootloader magics we recognise at offset 0 in a partition
 # image.  Used by `_verify_simg_output` to confirm the sparse→raw conversion
 # produced a plausible image instead of truncated garbage.
@@ -367,8 +393,15 @@ async def _extract_ramdisk(data: bytes, output_dir: str) -> None:
 
 async def _scan_super_partitions(
     raw_path: str, rootfs_dir: str, log_lines: list[str]
-) -> int:
-    """Scan a raw super.img for embedded EROFS/ext4 partitions and extract them."""
+) -> tuple[int, int]:
+    """Scan a raw super.img for embedded EROFS/ext4 partitions and extract them.
+
+    Returns ``(extracted_count, partitions_detected)``.  Callers compare the
+    two to decide whether the raw container can be removed safely: when
+    every detected partition was carved into ``rootfs/``, the raw LP2
+    container is redundant; when extraction was partial we keep the raw
+    so corrupt inner partitions remain recoverable.
+    """
     import mmap
     import tempfile
 
@@ -393,11 +426,11 @@ async def _scan_super_partitions(
             mm.close()
     except Exception as e:
         log_lines.append(f"Error scanning super.img: {e}")
-        return 0
+        return 0, 0
 
     if not partitions:
         log_lines.append("No EROFS or ext4 partitions found in super.img")
-        return 0
+        return 0, 0
 
     partitions.sort(key=lambda x: x[1])
     log_lines.append(f"Found {len(partitions)} partition(s) in super.img")
@@ -451,7 +484,7 @@ async def _scan_super_partitions(
                 pass
 
     log_lines.append(f"Extracted {extracted_count}/{len(partitions)} partitions from super.img")
-    return extracted_count
+    return extracted_count, len(partitions)
 
 
 async def _extract_android_ota(firmware_path: str, extraction_dir: str) -> str:
@@ -540,6 +573,26 @@ async def _extract_android_ota(firmware_path: str, extraction_dir: str) -> str:
                 continue
             img_path = os.path.join(search_dir, img_name)
 
+            # Skip user-data partitions before any conversion / extraction.
+            # Their declared sparse sizes are often multi-GB of mostly-zero
+            # data that inflates the extraction tree and trips the bomb
+            # limit, without contributing any firmware content worth
+            # analysing.  See `_is_user_data_partition` for the set.
+            if _is_user_data_partition(img_name):
+                try:
+                    size_mb = os.path.getsize(img_path) // (1024 * 1024)
+                except OSError:
+                    size_mb = 0
+                try:
+                    os.remove(img_path)
+                except OSError:
+                    pass
+                log_lines.append(
+                    f"Skipped {img_name} ({size_mb}MB, user-data partition — "
+                    "not firmware)"
+                )
+                continue
+
             # Skip clearly-empty placeholders but preserve small real stubs
             # (DPCS10 modem.img is 528 B, md1dsp.img ~2 KB).  The previous
             # 1 MiB floor silently dropped them.
@@ -614,15 +667,44 @@ async def _extract_android_ota(firmware_path: str, extraction_dir: str) -> str:
                 pass
 
             if is_super:
-                await _scan_super_partitions(raw_path, rootfs_dir, log_lines)
-                # Previously: os.remove(raw_path).  The Phase 3 MediaTek
-                # parsers (mtk_preloader, mtk_lk, mediatek_modem) operate on
-                # the RAW bytes — they don't need a mountable FS.  Keeping
-                # the image costs disk but preserves Phase 4 backfill data.
-                logger.info(
-                    "super scan complete for %s; keeping raw image for downstream parsers",
-                    raw_path,
+                extracted_count, total_partitions = await _scan_super_partitions(
+                    raw_path, rootfs_dir, log_lines,
                 )
+                # When every detected inner partition extracted cleanly the
+                # raw LP2 container is redundant — no parser operates on
+                # super.img directly; only the carved inner partitions
+                # matter (mtk_preloader / mtk_lk / mediatek_modem target
+                # leaf partitions, not the super wrapper).  Keeping the
+                # raw would double-count against the extraction-bomb cap
+                # and cost ~9 GB per Android firmware for no analytic
+                # value.  Partial extraction keeps the raw so corrupt
+                # inner partitions remain recoverable from its bytes.
+                all_extracted = (
+                    total_partitions > 0 and extracted_count == total_partitions
+                )
+                if all_extracted:
+                    try:
+                        raw_mb = os.path.getsize(raw_path) // (1024 * 1024)
+                    except OSError:
+                        raw_mb = 0
+                    try:
+                        os.remove(raw_path)
+                        log_lines.append(
+                            f"Removed {os.path.basename(raw_path)} ({raw_mb}MB) "
+                            "after super scan (inner partitions carved into rootfs/)"
+                        )
+                    except OSError:
+                        logger.info(
+                            "super scan complete for %s; unable to remove raw",
+                            raw_path,
+                        )
+                else:
+                    logger.info(
+                        "super scan of %s extracted %d/%d partitions; keeping raw",
+                        raw_path,
+                        extracted_count,
+                        total_partitions,
+                    )
                 continue
 
             partition_name = img_name.replace(".img", "").replace(".raw", "")
