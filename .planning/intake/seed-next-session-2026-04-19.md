@@ -1,6 +1,17 @@
 ---
 title: "Next-session seed — post-DPCS10-overhaul continuation (deep-researched)"
-status: pending
+status: option-a-completed
+resolved_at: 2026-04-18
+resolved_in: session 59045370 autopilot
+resolution: |
+  Option A fully processed. Commits on clean-history:
+    10872d6 — A.1 bind backend + frontend to 127.0.0.1
+    906cfe2 — A.1 follow-up: Postgres + FirmAE passwords via env vars
+    e3053b6 — A.2 widen analysis_cache.operation VARCHAR(100→512)
+    b9797da — A.3 null-tier CVE backfill (verified no-op, doc-only)
+  DPCS10 canary intact: 260 blobs / 27 hw-firmware CVE / 439 kernel CVE.
+  Options B (security sweep) and C (hardware firmware expansion) remain
+  for a future session.
 priority: high
 format: ouroboros-seed-v1
 author: session-53c9c5ff-handoff
