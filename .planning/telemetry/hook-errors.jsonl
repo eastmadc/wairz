@@ -114,3 +114,16 @@
 {"schema":1,"timestamp":"2026-04-13T20:45:18.832Z","hook":"external-action-gate","action":"blocked","detail":"head .env (secrets): head -20 /home/dustin/code/wairz/.env.example"}
 {"schema":1,"timestamp":"2026-04-13T20:45:29.589Z","hook":"external-action-gate","action":"blocked","detail":"grep .env (secrets): grep MAX_UPLOAD_SIZE_MB /home/dustin/code/wairz/.env 2>/dev/null && sed -i 's/MAX_UPLOAD_SIZE_MB=500/MAX_UPLOAD_SIZE_MB=2048/' /home/dustin/code/wairz/.env || echo \"MAX_UPLOAD_SIZE_MB=2048\" >> /home/d"}
 {"schema":1,"timestamp":"2026-04-13T20:58:58.510Z","hook":"protect-files","action":"blocked","detail":"Read .env.example (.env secrets)"}
+{"schema":1,"timestamp":"2026-04-17T20:02:31.158Z","hook":"protect-files","action":"blocked","detail":"Edit .claude/harness.json (pattern: .claude/harness.json)"}
+{"schema":1,"timestamp":"2026-04-17T21:23:14.750Z","hook":"protect-files","action":"blocked","detail":"Edit .claude/harness.json (pattern: .claude/harness.json)"}
+{"schema":1,"timestamp":"2026-04-18T00:36:18.282Z","hook":"protect-files","action":"blocked","detail":"Write /tmp/verify_dpcs10.py (outside project root)"}
+{"schema":1,"timestamp":"2026-04-18T00:45:26.607Z","hook":"protect-files","action":"blocked","detail":"Edit .claude/harness.json (pattern: .claude/harness.json)"}
+{"schema":1,"timestamp":"2026-04-18T01:25:04.703Z","hook":"external-action-gate","action":"blocked","detail":"grep .env (secrets): grep -E \"^(BACKEND_HOST_PORT|API_PORT|BACKEND_PORT)\" .env 2>/dev/null; echo \"---\"; docker compose port backend 8000 2>/dev/null"}
+{"schema":1,"timestamp":"2026-04-18T02:06:52.044Z","hook":"protect-files","action":"blocked","detail":"Write /tmp/wairz_redetect_dpcs10.py (outside project root)"}
+{"schema":1,"timestamp":"2026-04-18T03:10:32.145Z","hook":"external-action-gate","action":"first-encounter","detail":"git push: git status -sb 2>&1 | head -3\necho \"---\"\ngit push 2>&1 | tail -10"}
+{"schema":1,"timestamp":"2026-04-18T03:10:45.607Z","hook":"external-action-gate","action":"first-encounter","detail":"git push: git status -sb 2>&1 | head -3\necho \"---\"\ngit push 2>&1 | tail -10"}
+{"schema":1,"timestamp":"2026-04-18T03:10:59.338Z","hook":"external-action-gate","action":"first-encounter","detail":"git push: git status -sb 2>&1 | head -2; git push 2>&1 | tail -10"}
+{"schema":1,"timestamp":"2026-04-18T03:11:12.436Z","hook":"protect-files","action":"blocked","detail":"Read /home/dustin/code/Citadel/hooks_src/external-action-gate.js (outside project root)"}
+{"schema":1,"timestamp":"2026-04-18T03:11:25.761Z","hook":"external-action-gate","action":"first-encounter","detail":"git push: git push origin clean-history 2>&1 | tail -10"}
+{"schema":1,"timestamp":"2026-04-18T03:17:30.472Z","hook":"protect-files","action":"blocked","detail":"Read .env (.env secrets)"}
+{"schema":1,"timestamp":"2026-04-18T17:19:24.359Z","hook":"protect-files","action":"blocked","detail":"Write /tmp/add-rule.py (outside project root)"}
