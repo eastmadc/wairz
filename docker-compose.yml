@@ -3,9 +3,9 @@ services:
     image: postgres:16-alpine
     restart: unless-stopped
     environment:
-      POSTGRES_USER: wairz
-      POSTGRES_PASSWORD: wairz
-      POSTGRES_DB: wairz
+      POSTGRES_USER: ${POSTGRES_USER:-wairz}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-wairz}
+      POSTGRES_DB: ${POSTGRES_DB:-wairz}
     ports:
       - "127.0.0.1:${POSTGRES_HOST_PORT:-5432}:5432"
     volumes:
@@ -59,7 +59,7 @@ services:
     env_file:
       - .env
     environment:
-      DATABASE_URL: postgresql+asyncpg://wairz:wairz@postgres:5432/wairz
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-wairz}:${POSTGRES_PASSWORD:-wairz}@postgres:5432/${POSTGRES_DB:-wairz}
       REDIS_URL: redis://redis:6379/0
       STORAGE_ROOT: /data/firmware
       GHIDRA_INSTALL_DIR: /opt/ghidra
@@ -115,7 +115,7 @@ services:
     env_file:
       - .env
     environment:
-      DATABASE_URL: postgresql+asyncpg://wairz:wairz@postgres:5432/wairz
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-wairz}:${POSTGRES_PASSWORD:-wairz}@postgres:5432/${POSTGRES_DB:-wairz}
       REDIS_URL: redis://redis:6379/0
       STORAGE_ROOT: /data/firmware
       GHIDRA_INSTALL_DIR: /opt/ghidra
@@ -194,7 +194,7 @@ services:
     networks:
       - emulation_net
     environment:
-      - POSTGRES_PASSWORD=firmae
+      - POSTGRES_PASSWORD=${FIRMAE_DB_PASSWORD:-firmae}
     deploy:
       resources:
         limits:
