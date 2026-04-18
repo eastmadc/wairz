@@ -1,6 +1,8 @@
 ---
 title: "Backend: Fix cwe_checker AsyncSession Sharing + Add Lint Rule"
-status: pending
+status: completed
+completed_at: 2026-04-18
+completed_in: session 59045370 autopilot wave-2 (commit b9f625a)
 priority: critical
 target: backend/app/services/cwe_checker_service.py, backend/pyproject.toml
 ---
