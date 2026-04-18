@@ -23,7 +23,7 @@ export interface DeviceDetail {
   getprop: Record<string, string>
   partitions: string[]
   partition_sizes: PartitionInfo[]
-  device_metadata: Record<string, any> | null
+  device_metadata: Record<string, unknown> | null
 }
 
 export interface PartitionStatus {
@@ -47,6 +47,6 @@ export interface DumpStatus {
 
 export interface ImportResult {
   firmware_id: string
-  device_metadata: Record<string, any> | null
+  device_metadata: Record<string, unknown> | null
   message: string
 }
