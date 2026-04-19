@@ -1,4 +1,41 @@
 services:
+  # One-shot schema migrator (Phase 3 / O2). Runs exactly once per
+  # ``docker compose up``, obtains the alembic advisory lock, upgrades
+  # the schema, and exits 0. Backend + worker ``depends_on`` this
+  # service with ``condition: service_completed_successfully`` so they
+  # never race on startup. On an already-migrated DB this exits in <2s.
+  #
+  # Operational notes:
+  #   - If migration fails, backend AND worker fail to start. Check
+  #     ``docker compose logs migrator`` — the failure surfaces cleanly
+  #     rather than being obscured by the backend's restart loop.
+  #   - No Redis / Docker proxy dependency — alembic only needs
+  #     PostgreSQL.
+  #   - Uses the same image as backend/worker so there's no extra
+  #     build cache target.
+  migrator:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      additional_contexts:
+        kernels: ./emulation/kernels
+      args:
+        DOCKER_GID: "${DOCKER_GID:-999}"
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-wairz}:${POSTGRES_PASSWORD:-wairz}@postgres:5432/${POSTGRES_DB:-wairz}
+    entrypoint: ["sh", "-c", ".venv/bin/python -m alembic upgrade head"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
   docker-proxy:
     image: ghcr.io/tecnativa/docker-socket-proxy:0.3.0
     restart: unless-stopped
@@ -120,6 +157,8 @@ services:
       - default
       - emulation_net
     depends_on:
+      migrator:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
       redis:
@@ -173,13 +212,15 @@ services:
       - ./emulation/kernels:/opt/kernels:rw
       - /tmp/wairz-dumps:/tmp/wairz-dumps
     depends_on:
+      migrator:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
       docker-proxy:
         condition: service_started
-    entrypoint: ["sh", "-c", ".venv/bin/python -m alembic upgrade head && exec .venv/bin/arq app.workers.arq_worker.WorkerSettings"]
+    entrypoint: ["sh", "-c", "exec .venv/bin/arq app.workers.arq_worker.WorkerSettings"]
     deploy:
       resources:
         limits:

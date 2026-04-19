@@ -14,4 +14,9 @@ fi
 
 # Use the pre-built venv directly instead of `uv run` which recreates the
 # venv and wipes manually-installed packages (Qiling, keystone-engine).
-exec su -s /bin/sh wairz -c '.venv/bin/python -m alembic upgrade head && .venv/bin/python -m uvicorn app.main:app --host 0.0.0.0 --port 8000'
+#
+# Alembic migration is no longer run here — the ``migrator`` one-shot service
+# in docker-compose.yml handles schema upgrades exactly once before backend +
+# worker start (Phase 3 / O2). Backend + worker depend_on migrator with
+# ``condition: service_completed_successfully``.
+exec su -s /bin/sh wairz -c '.venv/bin/python -m uvicorn app.main:app --host 0.0.0.0 --port 8000'
