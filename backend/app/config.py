@@ -106,6 +106,13 @@ class Settings(BaseSettings):
     # the docker-compose working directory (typically the repo root).
     backup_dir: str = "./backups"
 
+    # --- analysis_cache cleanup (backend-cache-module-extraction-and-ttl) ---
+    # Rows in the ``analysis_cache`` table older than this many days are
+    # deleted by the ``cleanup_analysis_cache`` arq cron job. Cached Ghidra
+    # decompilations and JADX dumps can be multi-megabyte in the JSONB
+    # ``result`` column; without a TTL, the table grows unboundedly.
+    analysis_cache_retention_days: int = 30
+
 
 @lru_cache
 def get_settings() -> Settings:
