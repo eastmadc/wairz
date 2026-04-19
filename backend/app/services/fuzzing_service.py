@@ -1003,3 +1003,105 @@ class FuzzingService:
                     logger.exception("Failed to stop expired campaign: %s", campaign.id)
 
         return count
+
+    async def cleanup_orphans(self) -> dict:
+        """Reconcile fuzzing DB rows with live containers (Phase 3 / O1).
+
+        Two-sided reconciliation keyed on the ``wairz.type=fuzzing`` +
+        ``wairz.campaign_id=<uuid>`` labels set at container creation:
+
+        1. **DB row says running but the container is gone** — mark the row
+           as ``error`` with a diagnostic ``error_message``. Leaves stats
+           intact so the UI can explain the vanished campaign.
+        2. **Container exists but the DB row is terminal (stopped /
+           completed / error) or missing** — remove the container. These
+           are leftovers from crashes or previous campaigns whose DB row
+           was already reconciled but whose container survived.
+
+        Safe to call repeatedly. Uses a fresh docker client per invocation
+        (matches the rest of the service). Returns a summary dict so the
+        arq cron wrapper can log reap counts.
+        """
+        client = self._get_docker_client()
+
+        # 1. Fetch all DB campaigns (not just running) so we can cross-reference
+        #    terminal rows whose containers didn't get cleaned up.
+        campaigns_result = await self.db.execute(select(FuzzingCampaign))
+        all_campaigns = campaigns_result.scalars().all()
+        campaigns_by_container: dict[str, FuzzingCampaign] = {
+            c.container_id: c for c in all_campaigns if c.container_id
+        }
+        running_campaign_ids_no_container: list[UUID] = [
+            c.id for c in all_campaigns
+            if c.status == "running" and not c.container_id
+        ]
+
+        # 2. List ALL (running + stopped) containers with the fuzzing label.
+        try:
+            containers = client.containers.list(
+                all=True, filters={"label": "wairz.type=fuzzing"}
+            )
+        except Exception:
+            logger.exception("cleanup_orphans: failed to list containers")
+            return {"db_fixed": 0, "containers_reaped": 0, "error": "list_failed"}
+
+        live_container_ids: set[str] = {c.id for c in containers}
+        containers_by_id: dict[str, object] = {c.id: c for c in containers}
+
+        db_fixed = 0
+        containers_reaped = 0
+
+        # Side A: DB says running but container is gone.
+        for campaign in all_campaigns:
+            if (
+                campaign.status == "running"
+                and campaign.container_id
+                and campaign.container_id not in live_container_ids
+            ):
+                campaign.status = "error"
+                campaign.stopped_at = datetime.now(timezone.utc)
+                existing = campaign.error_message or ""
+                tag = "Container vanished (orphan reaper)"
+                campaign.error_message = (
+                    f"{existing}\n{tag}".strip() if existing else tag
+                )
+                db_fixed += 1
+
+        # Also reconcile running rows that never got a container_id (crash
+        # between container.run and DB commit).
+        for cid in running_campaign_ids_no_container:
+            row = next((c for c in all_campaigns if c.id == cid), None)
+            if row is None:
+                continue
+            row.status = "error"
+            row.stopped_at = datetime.now(timezone.utc)
+            tag = "No container id recorded (orphan reaper)"
+            row.error_message = tag
+            db_fixed += 1
+
+        # Side B: container exists but DB row is terminal or missing.
+        for container_id, container in containers_by_id.items():
+            row = campaigns_by_container.get(container_id)
+            is_terminal = row is not None and row.status in (
+                "stopped", "completed", "error"
+            )
+            if row is None or is_terminal:
+                try:
+                    container.remove(force=True)
+                    containers_reaped += 1
+                except docker.errors.NotFound:
+                    # Race — already gone
+                    pass
+                except Exception:
+                    logger.exception(
+                        "cleanup_orphans: failed to remove container %s",
+                        container_id,
+                    )
+
+        if db_fixed or containers_reaped:
+            await self.db.flush()
+
+        return {
+            "db_fixed": db_fixed,
+            "containers_reaped": containers_reaped,
+        }
