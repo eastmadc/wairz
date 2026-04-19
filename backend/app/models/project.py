@@ -41,3 +41,23 @@ class Project(Base):
         back_populates="project",
         cascade="all, delete-orphan",
     )
+    emulation_sessions: Mapped[list["EmulationSession"]] = relationship(  # noqa: F821
+        back_populates="project",
+        cascade="all, delete-orphan",
+    )
+    emulation_presets: Mapped[list["EmulationPreset"]] = relationship(  # noqa: F821
+        back_populates="project",
+        cascade="all, delete-orphan",
+    )
+    uart_sessions: Mapped[list["UARTSession"]] = relationship(  # noqa: F821
+        back_populates="project",
+        cascade="all, delete-orphan",
+    )
+    fuzzing_campaigns: Mapped[list["FuzzingCampaign"]] = relationship(  # noqa: F821
+        back_populates="project",
+        cascade="all, delete-orphan",
+    )
+    attack_surface_entries: Mapped[list["AttackSurfaceEntry"]] = relationship(  # noqa: F821
+        back_populates="project",
+        cascade="all, delete-orphan",
+    )

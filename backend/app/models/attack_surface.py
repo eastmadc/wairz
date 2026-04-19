@@ -3,7 +3,7 @@ from datetime import datetime
 
 from sqlalchemy import Boolean, ForeignKey, Index, Integer, Text, func
 from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
 
@@ -56,6 +56,8 @@ class AttackSurfaceEntry(Base):
         Boolean, default=False, server_default="false",
     )
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+
+    project: Mapped["Project"] = relationship(back_populates="attack_surface_entries")  # noqa: F821
 
     __table_args__ = (
         Index(
