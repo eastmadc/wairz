@@ -86,8 +86,13 @@ export default function DeviceAcquisitionPage() {
     try {
       const status = await getDeviceBridgeStatus(projectId)
       setBridgeStatus(status)
-    } catch {
-      setBridgeStatus({ connected: false, bridge_host: null, bridge_port: null, error: 'Failed to check bridge status' })
+    } catch (e) {
+      setBridgeStatus({
+        connected: false,
+        bridge_host: null,
+        bridge_port: null,
+        error: extractErrorMessage(e, 'Failed to check bridge status'),
+      })
     }
   }, [projectId])
 
