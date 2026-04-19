@@ -5,6 +5,7 @@ import ErrorBoundary from '@/components/ErrorBoundary'
 import DisclaimerDialog from '@/components/DisclaimerDialog'
 import PageLoader from '@/components/PageLoader'
 import Toaster from '@/components/Toaster'
+import ProjectRouteGuard from '@/components/ProjectRouteGuard'
 
 // Route-level code splitting. Each page becomes its own chunk, so heavy deps
 // (Monaco in ExplorePage, xterm in EmulationPage, ReactFlow in ComponentMap /
@@ -36,18 +37,25 @@ export default function App() {
           <Route path="/" element={<Navigate to="/projects" replace />} />
           <Route element={<AppLayout />}>
             <Route path="/projects" element={<ProjectsPage />} />
-            <Route path="/projects/:projectId" element={<ProjectDetailPage />} />
-            <Route path="/projects/:projectId/explore" element={<ExplorePage />} />
-            <Route path="/projects/:projectId/security" element={<SecurityScanPage />} />
-            <Route path="/projects/:projectId/findings" element={<FindingsPage />} />
-            <Route path="/projects/:projectId/map" element={<ComponentMapPage />} />
-            <Route path="/projects/:projectId/sbom" element={<SbomPage />} />
-            <Route path="/projects/:projectId/hardware-firmware" element={<HardwareFirmwarePage />} />
-            <Route path="/projects/:projectId/emulation" element={<EmulationPage />} />
-            <Route path="/projects/:projectId/fuzzing" element={<FuzzingPage />} />
-            <Route path="/projects/:projectId/compare" element={<ComparisonPage />} />
-            <Route path="/projects/:projectId/tools" element={<SecurityToolsPage />} />
-            <Route path="/projects/:projectId/device" element={<DeviceAcquisitionPage />} />
+            {/*
+              Every /projects/:projectId/* route is wrapped in
+              ProjectRouteGuard so a URL-only switch (e.g.
+              /projects/A/explore → /projects/B/explore, same component
+              tree, just new params) tears down stale store state that
+              would otherwise render into the new project.
+            */}
+            <Route path="/projects/:projectId" element={<ProjectRouteGuard><ProjectDetailPage /></ProjectRouteGuard>} />
+            <Route path="/projects/:projectId/explore" element={<ProjectRouteGuard><ExplorePage /></ProjectRouteGuard>} />
+            <Route path="/projects/:projectId/security" element={<ProjectRouteGuard><SecurityScanPage /></ProjectRouteGuard>} />
+            <Route path="/projects/:projectId/findings" element={<ProjectRouteGuard><FindingsPage /></ProjectRouteGuard>} />
+            <Route path="/projects/:projectId/map" element={<ProjectRouteGuard><ComponentMapPage /></ProjectRouteGuard>} />
+            <Route path="/projects/:projectId/sbom" element={<ProjectRouteGuard><SbomPage /></ProjectRouteGuard>} />
+            <Route path="/projects/:projectId/hardware-firmware" element={<ProjectRouteGuard><HardwareFirmwarePage /></ProjectRouteGuard>} />
+            <Route path="/projects/:projectId/emulation" element={<ProjectRouteGuard><EmulationPage /></ProjectRouteGuard>} />
+            <Route path="/projects/:projectId/fuzzing" element={<ProjectRouteGuard><FuzzingPage /></ProjectRouteGuard>} />
+            <Route path="/projects/:projectId/compare" element={<ProjectRouteGuard><ComparisonPage /></ProjectRouteGuard>} />
+            <Route path="/projects/:projectId/tools" element={<ProjectRouteGuard><SecurityToolsPage /></ProjectRouteGuard>} />
+            <Route path="/projects/:projectId/device" element={<ProjectRouteGuard><DeviceAcquisitionPage /></ProjectRouteGuard>} />
             <Route path="/help" element={<HelpPage />} />
             <Route path="*" element={<NotFoundPage />} />
           </Route>
