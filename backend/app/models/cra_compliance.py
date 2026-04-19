@@ -78,18 +78,18 @@ class CraRequirementResult(Base):
         Boolean, default=False, server_default="false"
     )
     evidence_summary: Mapped[str | None] = mapped_column(Text)
-    finding_ids: Mapped[dict] = mapped_column(
+    finding_ids: Mapped[list[str]] = mapped_column(
         JSONB, server_default="[]"
     )
-    tool_sources: Mapped[dict] = mapped_column(
+    tool_sources: Mapped[list[str]] = mapped_column(
         JSONB, server_default="[]"
     )
     manual_notes: Mapped[str | None] = mapped_column(Text)
     manual_evidence: Mapped[str | None] = mapped_column(Text)
-    related_cwes: Mapped[dict] = mapped_column(
+    related_cwes: Mapped[list[str]] = mapped_column(
         JSONB, server_default="[]"
     )
-    related_cves: Mapped[dict] = mapped_column(
+    related_cves: Mapped[list[str]] = mapped_column(
         JSONB, server_default="[]"
     )
     assessed_at: Mapped[datetime | None] = mapped_column(nullable=True)
