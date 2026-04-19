@@ -5,6 +5,30 @@ priority: high
 target: frontend/src/
 ---
 
+> **Status note 2026-04-21 (Rule-19 audit — partial ship):** V1 code-splitting is
+> shipped; V2 virtualization is partial (~50%). Do not close this intake yet.
+>
+> Shipped:
+> - **V1** route-level code-splitting — commit `914d139`
+>   (`feat(frontend): PageLoader + lazy route imports in App.tsx`). 15 `React.lazy()`
+>   imports live at `frontend/src/App.tsx` (verified via `grep -c`).
+> - **V2 partial** react-window virtualization in SbomPage — commit `bf60b53`. Three
+>   files import `react-window`:
+>   - `frontend/src/pages/SbomPage.tsx` (vulnerability list)
+>   - `frontend/src/components/sbom/VulnerabilityRowVirtual.tsx`
+>   - `frontend/src/components/findings/FindingsList.tsx` (virtualized list used
+>     internally by the Findings page)
+>
+> Remaining gap (candidate for stream β 2026-04-21 or a follow-up campaign):
+> - APK scan results, other large lists in SecurityScanPage (still use `.slice(0, 200)`
+>   per the original intake problem statement).
+> - Confirm FindingsPage.tsx actually renders `FindingsList` virtualized (it does
+>   import the virtualized component — verify end-to-end behaviour under a 10k-finding
+>   fixture).
+>
+> Retain `status: pending` until the SecurityScanPage virtualization sweep lands.
+> Companion stream (β) on 2026-04-21 may close the remaining gap this session.
+
 ## Problem
 
 ### V1. No code-splitting

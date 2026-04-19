@@ -1,3 +1,16 @@
+---
+title: "Wairz Master Plan (historical reference)"
+status: reference
+type: reference
+priority: low
+---
+
+> **Status note 2026-04-21 (Rule-19 audit):** Retyped `status: reference` so the
+> `/do` intake scanner stops listing this as actionable work. This is a
+> historical planning/context document, not a task-list intake. Current campaign
+> pickup lives in `.planning/campaigns/wairz-intake-sweep-2026-04-19.md`; per-task
+> intakes live as siblings of this file.
+
 # Wairz Master Plan
 
 > Created: 2026-04-01

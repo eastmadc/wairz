@@ -1,9 +1,27 @@
 ---
 title: "Infra: Volume Quotas, Cleanup, and PostgreSQL Backup"
-status: pending
+status: completed
 priority: high
 target: docker-compose.yml, backend/app/services/
 ---
+
+> **Status note 2026-04-21 (Rule-19 audit):** Shipped via session 198243b8 Stream Alpha
+> across 4 commits (see `.planning/campaigns/wairz-intake-sweep-2026-04-19.md` Wave 3
+> history). Live audit verified:
+> - **V1** `check_storage_quota` cron + 507 pre-upload check: commit `2440150`. Cron
+>   registered at `backend/app/workers/arq_worker.py:690`
+>   (`cron(check_storage_quota_job, minute=15)`), handler at line 578.
+> - **V2** `cleanup_tmp_dumps` cron: commit `51770af`. Cron registered at
+>   `arq_worker.py:691` (`cron(cleanup_tmp_dumps_job, hour=4, minute=0)`), handler at
+>   line 527.
+> - **V3** `pg-backup` service + backup-recovery docs: commit `5f08db1`. Service
+>   defined at `docker-compose.yml:103`.
+> - **V4** `reconcile_firmware_storage` cron (log-only drift detector): commit `50a9ca6`.
+>   Cron at `arq_worker.py:692` (`cron(reconcile_firmware_storage_job, hour=5, minute=0)`),
+>   handler at line 408.
+> - **Config knobs:** commit `3f60398` added `firmware_retention_days` + `backup_dir`
+>   to `backend/app/config.py:104,107`.
+> This intake is retained for historical reference; further changes go in new intakes.
 
 ## Problem
 
