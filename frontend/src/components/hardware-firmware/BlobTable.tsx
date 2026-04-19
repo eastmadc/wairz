@@ -1,4 +1,5 @@
-import { Fragment, type ReactNode } from 'react'
+import { Fragment, type CSSProperties, type ReactNode } from 'react'
+import { List, type RowComponentProps } from 'react-window'
 import { Badge } from '@/components/ui/badge'
 import type { HardwareFirmwareBlob } from '@/api/hardwareFirmware'
 
@@ -8,6 +9,22 @@ interface BlobTableProps {
   onSelect: (id: string) => void
   searchQuery?: string
 }
+
+/**
+ * Fixed row height for react-window.  Rows are a single line with py-1.5 and
+ * text-[11px]/text-xs, which measures ~28-30px in Chrome.  We pad to 32 so
+ * the bottom border doesn't visually fuse with the next row.
+ */
+const ROW_HEIGHT = 32
+
+/**
+ * Column template shared with the header.  Matches the 7 columns of the
+ * legacy table exactly (path, category, vendor, format, size, CVEs, signed).
+ * Path is the flex column; the trailing columns are sized to their content
+ * so the right-hand labels don't shimmy as virtualized rows recycle.
+ */
+const COLUMN_TEMPLATE =
+  'minmax(220px, 2fr) minmax(110px, 1fr) minmax(90px, 1fr) minmax(80px, 1fr) minmax(70px, 0.8fr) minmax(80px, 0.9fr) minmax(100px, 1fr)'
 
 // Exhaustive Record fallback per CLAUDE.md rule 9.
 const SIGNED_STYLE: Record<string, string> = {
@@ -96,72 +113,102 @@ export default function BlobTable({
 
   return (
     <div className="overflow-x-auto rounded-md border border-border">
-      <table className="w-full text-xs">
-        <thead>
-          <tr className="border-b border-border bg-muted/30 text-left text-muted-foreground">
-            <th className="py-2 pl-3 pr-3 font-medium">Path</th>
-            <th className="py-2 pr-3 font-medium">Category</th>
-            <th className="py-2 pr-3 font-medium">Vendor</th>
-            <th className="py-2 pr-3 font-medium">Format</th>
-            <th className="py-2 pr-3 font-medium text-right">Size</th>
-            <th className="py-2 pr-3 font-medium">CVEs</th>
-            <th className="py-2 pr-3 font-medium">Signed</th>
-          </tr>
-        </thead>
-        <tbody>
-          {blobs.map((b) => {
-            const isSelected = selectedId === b.id
-            const signedStyle =
-              SIGNED_STYLE[b.signed] ?? 'border-border text-muted-foreground'
-            return (
-              <tr
-                key={b.id}
-                onClick={() => onSelect(b.id)}
-                className={`cursor-pointer border-b border-border/50 transition-colors ${
-                  isSelected ? 'bg-accent/60' : 'hover:bg-accent/30'
-                }`}
-              >
-                <td className="py-1.5 pl-3 pr-3 font-mono text-[11px]" title={b.blob_path}>
-                  <div className="max-w-[340px] truncate">
-                    {highlightMatches(displayPath(b.blob_path), searchQuery)}
-                  </div>
-                </td>
-                <td className="py-1.5 pr-3 text-muted-foreground">{b.category}</td>
-                <td className="py-1.5 pr-3">{b.vendor ?? '—'}</td>
-                <td className="py-1.5 pr-3 font-mono text-[11px]">{b.format}</td>
-                <td className="py-1.5 pr-3 text-right tabular-nums">
-                  {formatBytes(b.file_size)}
-                </td>
-                <td className="py-1.5 pr-3">
-                  {b.cve_count > 0 ? (
-                    <Badge
-                      className={`text-[10px] text-white ${cveBadgeClass(b.max_severity)}`}
-                      title={`max severity: ${b.max_severity ?? 'unknown'}`}
-                    >
-                      {b.cve_count}
-                    </Badge>
-                  ) : (
-                    <span className="text-muted-foreground/60">—</span>
-                  )}
-                  {b.advisory_count > 0 && (
-                    <Badge
-                      className="ml-1 text-[10px] bg-amber-600 text-white"
-                      title={`${b.advisory_count} advisory flag(s)`}
-                    >
-                      ADV
-                    </Badge>
-                  )}
-                </td>
-                <td className="py-1.5 pr-3">
-                  <Badge variant="outline" className={`text-[10px] ${signedStyle}`}>
-                    {b.signed}
-                  </Badge>
-                </td>
-              </tr>
-            )
-          })}
-        </tbody>
-      </table>
+      {/* Header — CSS grid matches the row template below so columns align
+          even though the virtualized rows are <div>s, not <tr>s. */}
+      <div
+        className="grid items-center border-b border-border bg-muted/30 text-xs font-medium text-muted-foreground"
+        style={{ gridTemplateColumns: COLUMN_TEMPLATE }}
+      >
+        <div className="py-2 pl-3 pr-3">Path</div>
+        <div className="py-2 pr-3">Category</div>
+        <div className="py-2 pr-3">Vendor</div>
+        <div className="py-2 pr-3">Format</div>
+        <div className="py-2 pr-3 text-right">Size</div>
+        <div className="py-2 pr-3">CVEs</div>
+        <div className="py-2 pr-3">Signed</div>
+      </div>
+      <List
+        rowComponent={BlobRow}
+        rowCount={blobs.length}
+        rowHeight={ROW_HEIGHT}
+        rowProps={{ blobs, selectedId, onSelect, searchQuery }}
+        style={{ height: 'min(640px, calc(100vh - 360px))', minHeight: 240 }}
+      />
+    </div>
+  )
+}
+
+interface BlobRowExtraProps {
+  blobs: HardwareFirmwareBlob[]
+  selectedId: string | null
+  onSelect: (id: string) => void
+  searchQuery?: string
+}
+
+function BlobRow({
+  index,
+  style,
+  blobs,
+  selectedId,
+  onSelect,
+  searchQuery,
+}: RowComponentProps<BlobRowExtraProps>) {
+  const b = blobs[index]
+  const isSelected = selectedId === b.id
+  const signedStyle =
+    SIGNED_STYLE[b.signed] ?? 'border-border text-muted-foreground'
+
+  // react-window provides absolute positioning via `style`; we overlay the
+  // grid on top of that so row cells align with the header columns.
+  const rowStyle: CSSProperties = {
+    ...style,
+    gridTemplateColumns: COLUMN_TEMPLATE,
+  }
+
+  return (
+    <div
+      style={rowStyle}
+      onClick={() => onSelect(b.id)}
+      className={`grid cursor-pointer items-center border-b border-border/50 text-xs transition-colors ${
+        isSelected ? 'bg-accent/60' : 'hover:bg-accent/30'
+      }`}
+    >
+      <div className="py-1.5 pl-3 pr-3 font-mono text-[11px]" title={b.blob_path}>
+        <div className="truncate">
+          {highlightMatches(displayPath(b.blob_path), searchQuery)}
+        </div>
+      </div>
+      <div className="py-1.5 pr-3 text-muted-foreground truncate">{b.category}</div>
+      <div className="py-1.5 pr-3 truncate">{b.vendor ?? '—'}</div>
+      <div className="py-1.5 pr-3 font-mono text-[11px] truncate">{b.format}</div>
+      <div className="py-1.5 pr-3 text-right tabular-nums">
+        {formatBytes(b.file_size)}
+      </div>
+      <div className="py-1.5 pr-3">
+        {b.cve_count > 0 ? (
+          <Badge
+            className={`text-[10px] text-white ${cveBadgeClass(b.max_severity)}`}
+            title={`max severity: ${b.max_severity ?? 'unknown'}`}
+          >
+            {b.cve_count}
+          </Badge>
+        ) : (
+          <span className="text-muted-foreground/60">—</span>
+        )}
+        {b.advisory_count > 0 && (
+          <Badge
+            className="ml-1 text-[10px] bg-amber-600 text-white"
+            title={`${b.advisory_count} advisory flag(s)`}
+          >
+            ADV
+          </Badge>
+        )}
+      </div>
+      <div className="py-1.5 pr-3">
+        <Badge variant="outline" className={`text-[10px] ${signedStyle}`}>
+          {b.signed}
+        </Badge>
+      </div>
     </div>
   )
 }
