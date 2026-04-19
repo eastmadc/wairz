@@ -141,6 +141,18 @@
         "pattern": "git checkout -b feat/",
         "filePattern": "{.planning/prompts/**/*.md,.planning/fleet/inputs/**/*.md,.planning/fleet/outputs/**/*.md}",
         "message": "Learned from intake-sweep sessions 435cb5c2+198243b8 (CLAUDE.md Rule #23 refined by Wave-3 evidence): git checkout -b feat/{branch} ALONE is insufficient under shared on-disk checkout -- alpha and gamma saw 4 cross-stream commit-sweep incidents across 14 commits when they only used branch-checkout. Beta had 0 sweeps in 4 commits AFTER running git worktree add .worktrees/stream-{name} -b feat/stream-{name}-{date} and operating inside that path. Each parallel sub-agent prompt MUST issue git worktree add (not just git checkout -b) and operate inside .worktrees/<stream>/. The Fleet harness isolation: worktree sentinel is a no-op at the working-tree level."
+      },
+      {
+        "name": "auto-phase5-no-private-scan-cross-module",
+        "pattern": "from app\\.services\\.security_audit_service import[^)]*_scan_(credentials|crypto_material|shadow)",
+        "filePattern": "backend/app/**/*.py",
+        "message": "Learned from intake-sweep session 93a4948d Phase 5 (backend-private-api-and-circular-imports P1): do not import the private _scan_credentials / _scan_crypto_material / _scan_shadow helpers from security_audit_service across module boundaries. Use the public dispatcher: `from app.services.security_audit_service import run_scan_subset; run_scan_subset(root, ['credentials','crypto_material','shadow'], findings)`. The private helpers are intentionally internal; the public API hides signature changes and the SCANNERS registry keeps the set of available checks single-sourced."
+      },
+      {
+        "name": "auto-phase5-cache-use-services-cache-helpers",
+        "pattern": "delete\\(AnalysisCache\\)\\.where\\(",
+        "filePattern": "{backend/app/services/**/*.py,backend/app/routers/**/*.py,backend/app/ai/**/*.py,backend/app/mcp_server.py}",
+        "message": "Learned from intake-sweep session 93a4948d Phase 5 (backend-cache-module-extraction-and-ttl): use app.services._cache helpers (store_cached / get_cached / exists_cached / invalidate_firmware / cleanup_older_than) instead of hand-rolling the delete-then-insert pattern against AnalysisCache. The helpers are the canonical path \u2014 they handle firmware-wide (binary_sha256 IS NULL) keys, issue flush() so callers own commit(), and their delete-then-insert is idempotent without relying on the unique constraint. Exemptions: app/services/_cache.py itself, app/services/export_service.py and app/services/import_service.py (legitimate bulk patterns), test files."
       }
     ]
   },
@@ -203,7 +215,7 @@
     "sessions": 0,
     "campaigns": 0,
     "override": null,
-    "sessions_completed": 120
+    "sessions_completed": 121
   },
   "consent": {
     "externalActions": "session-allow"
