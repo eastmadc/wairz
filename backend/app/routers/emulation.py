@@ -671,9 +671,10 @@ async def websocket_emulation_terminal(
 
     # Connect to the container's exec instance
     import docker
+    from app.utils.docker_client import get_docker_client
 
     try:
-        client = docker.from_env()
+        client = get_docker_client()
         container = client.containers.get(session.container_id)
     except docker.errors.NotFound:
         await websocket.send_json({"type": "error", "data": "Container not found"})

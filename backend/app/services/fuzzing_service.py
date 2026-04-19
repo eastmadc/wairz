@@ -23,6 +23,7 @@ from app.config import get_settings
 from app.models.firmware import Firmware
 from app.models.fuzzing import FuzzingCampaign, FuzzingCrash
 from app.services.analysis_service import check_binary_protections
+from app.utils.docker_client import get_docker_client
 from app.utils.sandbox import validate_path
 
 logger = logging.getLogger(__name__)
@@ -87,7 +88,7 @@ class FuzzingService:
         self._settings = get_settings()
 
     def _get_docker_client(self) -> docker.DockerClient:
-        return docker.from_env()
+        return get_docker_client()
 
     @staticmethod
     async def _emit_event(project_id: UUID, status: str, message: str = "", extra: dict | None = None) -> None:
