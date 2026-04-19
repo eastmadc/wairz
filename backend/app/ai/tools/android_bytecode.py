@@ -214,20 +214,15 @@ async def _get_cached_bytecode_result(
     context: ToolContext,
     apk_sha256: str,
 ) -> dict | None:
-    """Check AnalysisCache for existing bytecode scan results."""
-    from sqlalchemy import select
-    from app.models.analysis_cache import AnalysisCache
+    """Check the bytecode_scan cache for existing results."""
+    from app.services import _cache
 
-    stmt = select(AnalysisCache.result).where(
-        AnalysisCache.firmware_id == context.firmware_id,
-        AnalysisCache.binary_sha256 == apk_sha256,
-        AnalysisCache.operation == "bytecode_scan",
+    return await _cache.get_cached(
+        context.db,
+        context.firmware_id,
+        "bytecode_scan",
+        binary_sha256=apk_sha256,
     )
-    result = await context.db.execute(stmt)
-    row = result.scalars().first()
-    if row is not None and isinstance(row, dict):
-        return row
-    return None
 
 
 async def _cache_bytecode_result(
@@ -236,29 +231,18 @@ async def _cache_bytecode_result(
     apk_sha256: str,
     result: dict,
 ) -> None:
-    """Store bytecode scan results in AnalysisCache."""
-    from sqlalchemy import delete
-    from app.models.analysis_cache import AnalysisCache
+    """Store bytecode scan results (delete-then-insert upsert)."""
+    from app.services import _cache
 
     rel_path = os.path.relpath(apk_path, context.extracted_path)
-
-    # Upsert: delete existing then insert
-    await context.db.execute(
-        delete(AnalysisCache).where(
-            AnalysisCache.firmware_id == context.firmware_id,
-            AnalysisCache.binary_sha256 == apk_sha256,
-            AnalysisCache.operation == "bytecode_scan",
-        )
-    )
-    cache_entry = AnalysisCache(
-        firmware_id=context.firmware_id,
-        binary_path=rel_path,
+    await _cache.store_cached(
+        context.db,
+        context.firmware_id,
+        "bytecode_scan",
+        result,
         binary_sha256=apk_sha256,
-        operation="bytecode_scan",
-        result=result,
+        binary_path=rel_path,
     )
-    context.db.add(cache_entry)
-    await context.db.flush()
 
 
 # ---------------------------------------------------------------------------
