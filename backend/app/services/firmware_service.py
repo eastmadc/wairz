@@ -222,36 +222,10 @@ def _extract_archive(archive_path: str, output_dir: str) -> None:
         with tarfile.open(archive_path) as tf:
             tf.extractall(output_dir, filter=_firmware_tar_filter)
     elif zipfile.is_zipfile(archive_path):
-        with zipfile.ZipFile(archive_path, "r") as zf:
-            for info in zf.infolist():
-                target = os.path.realpath(os.path.join(output_dir, info.filename))
-                if not target.startswith(os.path.realpath(output_dir) + os.sep) and target != os.path.realpath(output_dir):
-                    raise ValueError(f"Path traversal detected in archive: {info.filename}")
-            # Zip bomb prevention: check declared sizes before extracting
-            settings = get_settings()
-            total_uncompressed = sum(i.file_size for i in zf.infolist())
-            entry_count = len(zf.infolist())
-            archive_size = os.path.getsize(archive_path)
-            max_bytes = settings.max_extraction_size_mb * 1024 * 1024
-            if total_uncompressed > max_bytes:
-                raise ValueError(
-                    f"Zip bomb detected: declared uncompressed size "
-                    f"({total_uncompressed // (1024*1024)}MB) exceeds limit "
-                    f"({settings.max_extraction_size_mb}MB)"
-                )
-            if entry_count > settings.max_extraction_files:
-                raise ValueError(
-                    f"Zip bomb detected: entry count ({entry_count}) "
-                    f"exceeds limit ({settings.max_extraction_files})"
-                )
-            if archive_size > 0 and total_uncompressed > 0:
-                ratio = total_uncompressed / archive_size
-                if ratio > settings.max_compression_ratio:
-                    raise ValueError(
-                        f"Zip bomb detected: compression ratio ({ratio:.1f}:1) "
-                        f"exceeds limit ({settings.max_compression_ratio}:1)"
-                    )
-            zf.extractall(output_dir)
+        from app.workers.safe_extract import safe_extract_zip
+        settings = get_settings()
+        max_bytes = settings.max_extraction_size_mb * 1024 * 1024
+        safe_extract_zip(archive_path, output_dir, max_size=max_bytes)
     else:
         raise ValueError(
             "Unsupported archive format. Please upload a .tar.gz, .tar, or .zip file."
@@ -282,18 +256,33 @@ class FirmwareService:
         )
         os.makedirs(firmware_dir, exist_ok=True)
 
-        # Stream file to disk while computing SHA256
+        # Stream file to disk while computing SHA256.
+        # Enforce MAX_UPLOAD_SIZE_MB mid-transfer so oversized uploads abort
+        # before filling the disk (B.1.c).
         raw_filename = file.filename or "firmware.bin"
         filename = _sanitize_filename(raw_filename)
         storage_path = os.path.join(firmware_dir, filename)
         sha256_hash = hashlib.sha256()
         file_size = 0
+        max_bytes = self.settings.max_upload_size_mb * 1024 * 1024
 
         async with aiofiles.open(storage_path, "wb") as out_file:
             while chunk := await file.read(8192):
                 sha256_hash.update(chunk)
                 await out_file.write(chunk)
                 file_size += len(chunk)
+                if file_size > max_bytes:
+                    # Clean up the partial file before raising
+                    try:
+                        os.remove(storage_path)
+                    except OSError:
+                        pass
+                    from fastapi import HTTPException
+                    raise HTTPException(
+                        413,
+                        f"Upload exceeds MAX_UPLOAD_SIZE_MB "
+                        f"({self.settings.max_upload_size_mb} MB limit).",
+                    )
 
         # Tarball detection: .tar.gz, .tar, .tgz files containing a rootfs
         # are extracted directly (same path as rootfs ZIPs). This supports

@@ -247,24 +247,14 @@ def _extract_tar_safe(tar_path: str, out_dir: str) -> None:
 
 
 def _extract_zip_safe(zip_path: str, out_dir: str) -> None:
-    """Extract a zip archive, rejecting absolute paths and parent traversal."""
-    real_dest = os.path.realpath(out_dir)
-    with _zipfile.ZipFile(zip_path, "r") as zf:
-        for name in zf.namelist():
-            # Reject absolute paths and drive letters
-            clean = name.lstrip("/")
-            if os.path.isabs(clean):
-                continue
-            dest_resolved = os.path.realpath(os.path.join(out_dir, clean))
-            if not (
-                dest_resolved == real_dest
-                or dest_resolved.startswith(real_dest + os.sep)
-            ):
-                continue
-            try:
-                zf.extract(name, out_dir)
-            except Exception:
-                continue
+    """Extract a zip archive with zipslip, bomb, and symlink defences.
+
+    Delegates to ``safe_extract_zip`` which enforces all three checks:
+    per-entry realpath containment, running uncompressed-size cap (4 GiB),
+    and rejection of Unix-symlink entries.
+    """
+    from app.workers.safe_extract import safe_extract_zip
+    safe_extract_zip(zip_path, out_dir)
 
 
 # Known vendor-encrypted container magics — first 16 bytes.
