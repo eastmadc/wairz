@@ -35,7 +35,7 @@ Then read this file fully before doing anything else in this session.
 - Docker socket-based sidecar launch for QEMU emulation, AFL++ fuzzing, FirmAE system-mode.
 - Host-side UART bridge (port 9999) and device acquisition bridge (port 9998).
 - Redis-backed arq job queue + SSE event bus (polling fallback if Redis is down).
-- 21 learned rules codified in CLAUDE.md, surfaced in `context/conventions.md` Verify Checklist.
+- 22 learned rules codified in CLAUDE.md, surfaced in `context/conventions.md` Verify Checklist.
 - Backend + frontend host ports bound to 127.0.0.1 by default (LAN-exposure mitigation for the unauthenticated `/ws` WebSocket, session 59045370 commit 10872d6).
 - Postgres + FirmAE passwords parameterized via env vars with backward-compatible defaults (session 59045370 commit 906cfe2).
 - `analysis_cache.operation` widened to VARCHAR(512) via alembic 1f6c72decc84 (session 59045370 commit e3053b6).
