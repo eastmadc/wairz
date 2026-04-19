@@ -1,4 +1,4 @@
-import apiClient from './client'
+import apiClient, { appendApiKey } from './client'
 import type {
   EmulationSession,
   EmulationStartRequest,
@@ -89,7 +89,9 @@ export function buildEmulationTerminalURL(
 ): string {
   const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
   const host = window.location.host
-  return `${proto}//${host}/api/v1/projects/${projectId}/emulation/${sessionId}/terminal`
+  return appendApiKey(
+    `${proto}//${host}/api/v1/projects/${projectId}/emulation/${sessionId}/terminal`,
+  )
 }
 
 // ── Emulation Presets ──
