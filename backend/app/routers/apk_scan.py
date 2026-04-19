@@ -239,21 +239,16 @@ async def scan_apk_manifest_endpoint(
     abs_apk_path = _find_apk_in_firmware(extracted_path, apk_path)
 
     # Check cache first
-    import hashlib
-    from app.models.analysis_cache import AnalysisCache
+    from app.services import _cache
 
     loop = asyncio.get_event_loop()
     sha256 = await loop.run_in_executor(None, _compute_sha256, abs_apk_path)
 
-    stmt = select(AnalysisCache.result).where(
-        AnalysisCache.firmware_id == firmware_id,
-        AnalysisCache.binary_sha256 == sha256,
-        AnalysisCache.operation == "manifest_scan",
+    cached = await _cache.get_cached(
+        db, firmware_id, "manifest_scan", binary_sha256=sha256,
     )
-    cache_result = await db.execute(stmt)
-    cached = cache_result.scalars().first()
 
-    if cached and isinstance(cached, dict):
+    if cached:
         resp = _build_manifest_response(cached)
         resp.from_cache = True
         # Apply severity threshold filtering to cached results too
@@ -306,23 +301,14 @@ async def scan_apk_manifest_endpoint(
 
     # Cache result
     try:
-        from sqlalchemy import delete
-
-        await db.execute(
-            delete(AnalysisCache).where(
-                AnalysisCache.firmware_id == firmware_id,
-                AnalysisCache.binary_sha256 == sha256,
-                AnalysisCache.operation == "manifest_scan",
-            )
-        )
-        cache_entry = AnalysisCache(
-            firmware_id=firmware_id,
-            binary_path=rel_path,
+        await _cache.store_cached(
+            db,
+            firmware_id,
+            "manifest_scan",
+            result,
             binary_sha256=sha256,
-            operation="manifest_scan",
-            result=result,
+            binary_path=rel_path,
         )
-        db.add(cache_entry)
         await db.commit()
     except Exception as exc:
         logger.warning("Failed to cache manifest result: %s", exc)
@@ -522,24 +508,16 @@ async def scan_apk_bytecode_endpoint(
     abs_apk_path = _find_apk_in_firmware(extracted_path, apk_path)
 
     # Check cache first
-    import hashlib
-    from app.models.analysis_cache import AnalysisCache
-
     loop = asyncio.get_event_loop()
     sha256 = await loop.run_in_executor(
         None, _compute_sha256, abs_apk_path
     )
 
-    # Check cache
-    stmt = select(AnalysisCache.result).where(
-        AnalysisCache.firmware_id == firmware_id,
-        AnalysisCache.binary_sha256 == sha256,
-        AnalysisCache.operation == "bytecode_scan",
+    cached = await _cache.get_cached(
+        db, firmware_id, "bytecode_scan", binary_sha256=sha256,
     )
-    cache_result = await db.execute(stmt)
-    cached = cache_result.scalars().first()
 
-    if cached and isinstance(cached, dict):
+    if cached:
         cached["from_cache"] = True
         resp = BytecodeScanResponse(**cached)
         if min_severity.lower() != "info" or min_confidence.lower() != "low":
@@ -576,24 +554,15 @@ async def scan_apk_bytecode_endpoint(
 
     # Cache result
     try:
-        from sqlalchemy import delete
-
         rel_path = os.path.relpath(abs_apk_path, extracted_path)
-        await db.execute(
-            delete(AnalysisCache).where(
-                AnalysisCache.firmware_id == firmware_id,
-                AnalysisCache.binary_sha256 == sha256,
-                AnalysisCache.operation == "bytecode_scan",
-            )
-        )
-        cache_entry = AnalysisCache(
-            firmware_id=firmware_id,
-            binary_path=rel_path,
+        await _cache.store_cached(
+            db,
+            firmware_id,
+            "bytecode_scan",
+            result,
             binary_sha256=sha256,
-            operation="bytecode_scan",
-            result=result,
+            binary_path=rel_path,
         )
-        db.add(cache_entry)
         await db.commit()
     except Exception as exc:
         logger.warning("Failed to cache bytecode result: %s", exc)
