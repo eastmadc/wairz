@@ -33,6 +33,7 @@ from app.services.emulation_constants import (
     _validate_kernel_file,
 )
 from app.services.emulation_preset_service import EmulationPresetService
+from app.services.kernel_service import KernelService
 from app.utils.docker_client import get_docker_client
 from app.utils.sandbox import validate_path
 
@@ -697,8 +698,6 @@ echo "Symlink repair: pass1=$PASS1 pass2=$PASS2 pass3=$PASS3"
         Checks the kernel service sidecar metadata and convention-based
         naming (<kernel>.initrd).
         """
-        from app.services.kernel_service import KernelService
-
         if not kernel_path:
             return None
 
@@ -1188,8 +1187,6 @@ echo "Symlink repair: pass1=$PASS1 pass2=$PASS2 pass3=$PASS3"
         2. Kernel extracted from the firmware during unpacking
         3. Pre-built kernels in emulation_kernel_dir (matching architecture)
         """
-        from app.services.kernel_service import KernelService
-
         kernel_dir = self._settings.emulation_kernel_dir
 
         # 1) User-specified kernel from the kernel management system

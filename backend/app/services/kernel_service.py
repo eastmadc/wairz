@@ -19,6 +19,7 @@ import aiofiles
 import httpx
 
 from app.config import get_settings
+from app.services.emulation_constants import _validate_kernel_file
 
 logger = logging.getLogger(__name__)
 
@@ -319,9 +320,6 @@ class KernelService:
 
         Returns the kernel info dict on success, raises ValueError on failure.
         """
-        # Import here to avoid circular dependency at module level
-        from app.services.emulation_service import _validate_kernel_file
-
         # --- URL validation ---
         _validate_download_url(url)
 
