@@ -528,10 +528,23 @@ class FuzzingService:
                     shlex.quote(arg) for arg in shlex.split(str(arguments))
                 )
 
-            # Launch AFL++ in background
+            # Launch AFL++ in background.
+            # Write the command to a script file via put_archive so AFL's
+            # arguments never pass through a second shell expansion layer.
+            # This eliminates the double-shell injection vector where
+            # single-quote characters in afl_cmd (e.g. from binary_path)
+            # would break the outer sh -c '...' wrapper.
+            run_script_content = (
+                "#!/bin/sh\n"
+                f"{afl_cmd}\n"
+            ).encode()
+            self._write_file_to_container(
+                container, "/opt/fuzzing/run.sh", run_script_content
+            )
+            container.exec_run(["chmod", "+x", "/opt/fuzzing/run.sh"])
             container.exec_run([
                 "sh", "-c",
-                f"nohup sh -c '{afl_cmd}' > /opt/fuzzing/afl.log 2>&1 & echo $! > /opt/fuzzing/afl.pid"
+                "nohup /opt/fuzzing/run.sh > /opt/fuzzing/afl.log 2>&1 & echo $! > /opt/fuzzing/afl.pid"
             ])
 
             campaign.container_id = container.id
@@ -824,25 +837,36 @@ class FuzzingService:
             }
             gdb_arch, gdb_endian = GDB_ARCH_MAP.get(arch, ("arm", "little"))
 
-            gdb_cmd = (
-                f"timeout 30 sh -c '"
+            # Build the GDB triage script as a file via put_archive to avoid
+            # the double-shell injection vector.  The original form wrapped the
+            # entire multi-command pipeline in `timeout 30 sh -c '...'`; any
+            # single-quote in binary_in_firmware or crash_path would break the
+            # outer quoting.  Writing to a file and executing it collapses to
+            # a single shell level.
+            gdb_script_content = (
+                "#!/bin/sh\n"
                 f"QEMU_LD_PREFIX={ld_prefix} "
                 f"{qemu_bin} -g {gdb_port} /firmware/{binary_in_firmware} "
-                f"< {crash_path} &"
-                f" sleep 1 &&"
-                f" gdb-multiarch -batch"
-                f" -ex \"set confirm off\""
-                f" -ex \"set pagination off\""
-                f" -ex \"set architecture {gdb_arch}\""
-                f" -ex \"set endian {gdb_endian}\""
-                f" -ex \"target remote :{gdb_port}\""
-                f" -ex \"continue\""
-                f" -ex \"bt\""
-                f" -ex \"info registers\""
-                f" /firmware/{binary_in_firmware}"
-                f"'"
+                f"< {crash_path} &\n"
+                f"sleep 1\n"
+                f"gdb-multiarch -batch"
+                f" -ex 'set confirm off'"
+                f" -ex 'set pagination off'"
+                f" -ex 'set architecture {gdb_arch}'"
+                f" -ex 'set endian {gdb_endian}'"
+                f" -ex 'target remote :{gdb_port}'"
+                f" -ex 'continue'"
+                f" -ex 'bt'"
+                f" -ex 'info registers'"
+                f" /firmware/{binary_in_firmware}\n"
+            ).encode()
+            self._write_file_to_container(
+                container, "/opt/fuzzing/triage_gdb.sh", gdb_script_content
             )
-            gdb_result = container.exec_run(["sh", "-c", gdb_cmd], demux=True)
+            container.exec_run(["chmod", "+x", "/opt/fuzzing/triage_gdb.sh"])
+            gdb_result = container.exec_run(
+                ["timeout", "30", "/opt/fuzzing/triage_gdb.sh"], demux=True
+            )
             gdb_stdout = (gdb_result.output[0] or b"").decode("utf-8", errors="replace")
             gdb_stderr = (gdb_result.output[1] or b"").decode("utf-8", errors="replace")
 
