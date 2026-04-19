@@ -1,8 +1,20 @@
 # APK Scan Deep Linking — Fix Required
 
 **Priority:** Medium
-**Status:** Completed
+**Status:** completed
 **Created:** 2026-04-15
+**Completed:** 2026-04-19
+**Completed In:** wave3-stream-gamma verify-only (Rule-19 close-out)
+
+## Verification (wave3-stream-gamma)
+
+Confirmed wired end-to-end:
+- `frontend/src/components/findings/FindingDetail.tsx:73-75` — emits `tab=apk-scan&apk=<path>&finding=<rule>&line=<n>` URL from Findings page.
+- `frontend/src/pages/SecurityScanPage.tsx:40-42` — reads URL params and passes `initialApk`, `initialFinding` into `<ApkScanTab>`.
+- `frontend/src/components/apk-scan/ApkScanTab.tsx:101-106, 219-220, 386-393` — `initialApkHandled` ref guards one-shot `setSelectedApk(initialApk)` + `loadCachedResults(initialApk)` via `setTimeout(0)` so React has committed the state before the cache fetch.
+- `frontend/src/components/apk-scan/SecurityScanResults.tsx:377-398` — `deepLinkHandled` ref guards one-shot finding match (by `title` OR `ruleId`), auto-expands the finding's group + the finding itself, then `scrollIntoView({ behavior: 'smooth', block: 'center' })`.
+
+All 4 "What Deep Linking Should Do" bullets met. No code change this session.
 
 ## Current State
 
