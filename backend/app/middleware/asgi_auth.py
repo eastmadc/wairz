@@ -39,6 +39,8 @@ from app.config import get_settings
 _EXEMPT_HTTP_PATHS: frozenset[str] = frozenset({
     "/health",
     "/health/deep",
+    "/ready",
+    "/metrics",
     "/api/v1/health",
 })
 
