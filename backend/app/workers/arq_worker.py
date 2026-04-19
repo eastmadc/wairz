@@ -341,6 +341,60 @@ async def sync_kernel_vulns_job(ctx: dict) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Cron: cleanup_emulation_expired (Phase 3 / O1)
+# ---------------------------------------------------------------------------
+
+async def cleanup_emulation_expired_job(ctx: dict) -> dict:
+    """Reap emulation containers whose DB session exceeded ``emulation_timeout_minutes``.
+
+    Delegates to :meth:`EmulationService.cleanup_expired`, which iterates
+    ``EmulationSession`` rows with ``status='running'`` and calls
+    ``stop_session`` on each row whose ``started_at`` is older than the
+    configured timeout. Fail-soft — a docker-daemon blip must not crash
+    the arq worker.
+    """
+    from app.services.emulation_service import EmulationService
+
+    async with async_session_factory() as db:
+        try:
+            svc = EmulationService(db)
+            reaped = await svc.cleanup_expired()
+            await db.commit()
+            logger.info("cleanup_emulation_expired: reaped=%s", reaped)
+            return {"status": "ok", "reaped": reaped}
+        except Exception as exc:  # noqa: BLE001
+            await db.rollback()
+            logger.exception("cleanup_emulation_expired failed: %s", exc)
+            return {"status": "error", "error": str(exc)}
+
+
+# ---------------------------------------------------------------------------
+# Cron: cleanup_fuzzing_orphans (Phase 3 / O1)
+# ---------------------------------------------------------------------------
+
+async def cleanup_fuzzing_orphans_job(ctx: dict) -> dict:
+    """Reconcile fuzzing DB rows with live containers every 30 min.
+
+    Delegates to :meth:`FuzzingService.cleanup_orphans`, which handles both
+    sides of the reconciliation (DB-says-running-but-container-gone AND
+    container-exists-but-DB-is-terminal). Fail-soft.
+    """
+    from app.services.fuzzing_service import FuzzingService
+
+    async with async_session_factory() as db:
+        try:
+            svc = FuzzingService(db)
+            result = await svc.cleanup_orphans()
+            await db.commit()
+            logger.info("cleanup_fuzzing_orphans: %s", result)
+            return {"status": "ok", **result}
+        except Exception as exc:  # noqa: BLE001
+            await db.rollback()
+            logger.exception("cleanup_fuzzing_orphans failed: %s", exc)
+            return {"status": "error", "error": str(exc)}
+
+
+# ---------------------------------------------------------------------------
 # arq WorkerSettings — discovered by ``arq app.workers.arq_worker.WorkerSettings``
 # ---------------------------------------------------------------------------
 
@@ -353,13 +407,22 @@ class WorkerSettings:
         run_vulnerability_scan_job,
         run_yara_scan_job,
         sync_kernel_vulns_job,
+        cleanup_emulation_expired_job,
+        cleanup_fuzzing_orphans_job,
     ]
 
-    # Daily cron at 03:00 UTC: refresh the kernel-subsystem CVE index from
-    # kernel.org's vulns.git feed.  Fail-soft — the sync job swallows
-    # exceptions and returns a status dict.
+    # Scheduled cron jobs. Phase 3 / O1 adds the two cleanup reapers.
+    #   - sync_kernel_vulns_job         : daily 03:00 UTC (Tier 5 CVE feed)
+    #   - cleanup_emulation_expired_job : every 30 min (timeout-based reap)
+    #   - cleanup_fuzzing_orphans_job   : every 30 min, offset 15 min (DB<->container)
+    # Staggering the two 30-min reapers prevents them from contending for
+    # the same arq worker slot on a busy host. ``unique=True`` (the arq
+    # default) guarantees single execution across multiple worker
+    # processes.
     cron_jobs = [
         cron(sync_kernel_vulns_job, hour=3, minute=0),
+        cron(cleanup_emulation_expired_job, minute={5, 35}),
+        cron(cleanup_fuzzing_orphans_job, minute={20, 50}),
     ]
 
     redis_settings = get_redis_settings()

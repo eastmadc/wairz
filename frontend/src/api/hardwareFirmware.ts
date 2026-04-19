@@ -1,4 +1,5 @@
 import apiClient from './client'
+import { apiUrl } from './config'
 
 export interface HardwareFirmwareBlob {
   id: string
@@ -200,7 +201,7 @@ export function buildBlobDownloadUrl(
   blobId: string,
   firmwareId?: string | null,
 ): string {
-  const base = `/api/v1/projects/${projectId}/hardware-firmware/${blobId}/download`
+  const base = apiUrl(`/api/v1/projects/${projectId}/hardware-firmware/${blobId}/download`)
   return firmwareId
     ? `${base}?firmware_id=${encodeURIComponent(firmwareId)}`
     : base

@@ -1,6 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-
-const API_BASE = import.meta.env.VITE_API_URL || ''
+import { apiUrl } from '@/api/config'
 
 export interface EventStreamOptions {
   /** Event types to subscribe to. Omit to receive all types. */
@@ -45,7 +44,7 @@ export function useEventStream<T = Record<string, unknown>>(
       return
     }
 
-    let url = `${API_BASE}/api/v1/projects/${projectId}/events`
+    let url = apiUrl(`/api/v1/projects/${projectId}/events`)
     if (typesKey) {
       url += `?types=${encodeURIComponent(typesKey)}`
     }
