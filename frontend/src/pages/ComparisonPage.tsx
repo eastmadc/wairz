@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, type CSSProperties } from 'react'
 import { useParams } from 'react-router-dom'
 import {
   GitCompareArrows,
@@ -16,6 +16,7 @@ import {
   Code,
   Download,
 } from 'lucide-react'
+import { List, type RowComponentProps } from 'react-window'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -24,6 +25,20 @@ import { diffFirmware, diffBinary, diffTextFile, diffInstructions, diffDecompila
 import { formatFileSize } from '@/utils/format'
 import { extractErrorMessage } from '@/utils/error'
 import type { FirmwareDiff, BinaryDiff, TextDiff, InstructionDiff, DecompilationDiff, FileDiffEntry } from '@/types'
+
+/**
+ * Fixed row height for the virtualized file-diff table.  Rows are one line
+ * of py-1.5 + text-xs content; ~28-30px measured, padded to 32 to avoid
+ * fused borders on recycled rows.
+ */
+const FILE_DIFF_ROW_HEIGHT = 32
+
+/**
+ * Column template shared between the header and each virtualized row so
+ * the (path, status, sizeA, sizeB, delta, sha) columns stay aligned.
+ */
+const FILE_DIFF_COLUMN_TEMPLATE =
+  'minmax(260px, 2.4fr) 96px 80px 80px 64px minmax(160px, 1fr)'
 
 type Tab = 'files' | 'binaries' | 'binary-detail' | 'text-diff'
 
@@ -384,70 +399,40 @@ export default function ComparisonPage() {
                   <p className="text-xs text-muted-foreground mb-2">Results truncated to 500 entries per category</p>
                 )}
                 <div className="overflow-x-auto">
-                  <table className="w-full text-xs">
-                    <thead>
-                      <tr className="border-b text-left text-muted-foreground">
-                        <th className="pb-2 pr-3 font-medium">Path</th>
-                        <th className="pb-2 pr-3 font-medium w-24">Status</th>
-                        <th className="pb-2 pr-3 font-medium w-20 text-right">Size A</th>
-                        <th className="pb-2 pr-3 font-medium w-20 text-right">Size B</th>
-                        <th className="pb-2 pr-3 font-medium w-16 text-right">Delta</th>
-                        <th className="pb-2 font-medium w-40">SHA256</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {filteredEntries.slice(0, 500).map((entry, i) => {
-                        const delta = entry.size_a != null && entry.size_b != null && entry.size_a > 0
-                          ? ((entry.size_b - entry.size_a) / entry.size_a * 100)
-                          : null
-                        return (
-                          <tr key={i} className="border-b border-border/30 hover:bg-muted/50">
-                            <td className="py-1.5 pr-3 font-mono truncate max-w-[400px]">
-                              <button
-                                type="button"
-                                className="text-left hover:underline hover:text-primary truncate block max-w-full"
-                                onClick={() => handleTextDiff(entry.path)}
-                                title="View text diff"
-                              >
-                                {entry.path}
-                              </button>
-                            </td>
-                            <td className="py-1.5 pr-3">
-                              <StatusBadge status={entry.status} />
-                            </td>
-                            <td className="py-1.5 pr-3 text-right">
-                              {entry.size_a != null ? formatFileSize(entry.size_a) : '-'}
-                            </td>
-                            <td className="py-1.5 pr-3 text-right">
-                              {entry.size_b != null ? formatFileSize(entry.size_b) : '-'}
-                            </td>
-                            <td className="py-1.5 pr-3 text-right">
-                              {delta != null ? (
-                                <span className={delta > 0 ? 'text-green-600' : delta < 0 ? 'text-red-600' : ''}>
-                                  {delta > 0 ? '+' : ''}{delta.toFixed(1)}%
-                                </span>
-                              ) : '-'}
-                            </td>
-                            <td className="py-1.5 font-mono text-muted-foreground">
-                              {entry.hash_a && entry.hash_b && entry.hash_a !== entry.hash_b ? (
-                                <span title={`A: ${entry.hash_a}\nB: ${entry.hash_b}`}>
-                                  {entry.hash_a.slice(0, 8)}&rarr;{entry.hash_b.slice(0, 8)}
-                                </span>
-                              ) : entry.hash_a ? (
-                                <span title={entry.hash_a}>{entry.hash_a.slice(0, 8)}</span>
-                              ) : entry.hash_b ? (
-                                <span title={entry.hash_b}>{entry.hash_b.slice(0, 8)}</span>
-                              ) : '-'}
-                            </td>
-                          </tr>
-                        )
-                      })}
-                    </tbody>
-                  </table>
-                  {filteredEntries.length > 500 && (
-                    <p className="text-xs text-muted-foreground mt-2">
-                      Showing first 500 of {filteredEntries.length} entries
+                  {filteredEntries.length === 0 ? (
+                    <p className="py-6 text-center text-xs text-muted-foreground">
+                      No entries match the current filter.
                     </p>
+                  ) : (
+                    <div className="rounded-md border border-border">
+                      {/* Header — CSS grid shares gridTemplateColumns with
+                          each row so columns stay aligned through
+                          virtualization. */}
+                      <div
+                        className="grid items-center border-b text-xs text-muted-foreground"
+                        style={{ gridTemplateColumns: FILE_DIFF_COLUMN_TEMPLATE }}
+                      >
+                        <div className="pb-2 pt-2 pr-3 pl-3 font-medium">Path</div>
+                        <div className="pb-2 pt-2 pr-3 font-medium">Status</div>
+                        <div className="pb-2 pt-2 pr-3 font-medium text-right">Size A</div>
+                        <div className="pb-2 pt-2 pr-3 font-medium text-right">Size B</div>
+                        <div className="pb-2 pt-2 pr-3 font-medium text-right">Delta</div>
+                        <div className="pb-2 pt-2 pr-3 font-medium">SHA256</div>
+                      </div>
+                      <List
+                        rowComponent={FileDiffRow}
+                        rowCount={filteredEntries.length}
+                        rowHeight={FILE_DIFF_ROW_HEIGHT}
+                        rowProps={{
+                          entries: filteredEntries,
+                          onTextDiff: handleTextDiff,
+                        }}
+                        style={{
+                          height: 'min(640px, calc(100vh - 360px))',
+                          minHeight: 240,
+                        }}
+                      />
+                    </div>
                   )}
                 </div>
               </CardContent>
@@ -1015,5 +1000,80 @@ function StatusBadge({ status }: { status: string }) {
     <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium ${c.color}`}>
       {c.label}
     </span>
+  )
+}
+
+interface FileDiffRowExtraProps {
+  entries: FileDiffEntry[]
+  onTextDiff: (path: string) => void
+}
+
+function FileDiffRow({
+  index,
+  style,
+  entries,
+  onTextDiff,
+}: RowComponentProps<FileDiffRowExtraProps>) {
+  const entry = entries[index]
+  const delta =
+    entry.size_a != null && entry.size_b != null && entry.size_a > 0
+      ? ((entry.size_b - entry.size_a) / entry.size_a) * 100
+      : null
+
+  // react-window provides absolute positioning via `style`; overlay the
+  // grid on top so row cells align with the div-grid header columns.
+  const rowStyle: CSSProperties = {
+    ...style,
+    gridTemplateColumns: FILE_DIFF_COLUMN_TEMPLATE,
+  }
+
+  return (
+    <div
+      style={rowStyle}
+      className="grid items-center border-b border-border/30 text-xs hover:bg-muted/50"
+    >
+      <div className="py-1.5 pl-3 pr-3 font-mono">
+        <button
+          type="button"
+          className="block w-full truncate text-left hover:text-primary hover:underline"
+          onClick={() => onTextDiff(entry.path)}
+          title="View text diff"
+        >
+          {entry.path}
+        </button>
+      </div>
+      <div className="py-1.5 pr-3">
+        <StatusBadge status={entry.status} />
+      </div>
+      <div className="py-1.5 pr-3 text-right">
+        {entry.size_a != null ? formatFileSize(entry.size_a) : '-'}
+      </div>
+      <div className="py-1.5 pr-3 text-right">
+        {entry.size_b != null ? formatFileSize(entry.size_b) : '-'}
+      </div>
+      <div className="py-1.5 pr-3 text-right">
+        {delta != null ? (
+          <span className={delta > 0 ? 'text-green-600' : delta < 0 ? 'text-red-600' : ''}>
+            {delta > 0 ? '+' : ''}
+            {delta.toFixed(1)}%
+          </span>
+        ) : (
+          '-'
+        )}
+      </div>
+      <div className="py-1.5 pr-3 font-mono text-muted-foreground">
+        {entry.hash_a && entry.hash_b && entry.hash_a !== entry.hash_b ? (
+          <span title={`A: ${entry.hash_a}\nB: ${entry.hash_b}`}>
+            {entry.hash_a.slice(0, 8)}&rarr;{entry.hash_b.slice(0, 8)}
+          </span>
+        ) : entry.hash_a ? (
+          <span title={entry.hash_a}>{entry.hash_a.slice(0, 8)}</span>
+        ) : entry.hash_b ? (
+          <span title={entry.hash_b}>{entry.hash_b.slice(0, 8)}</span>
+        ) : (
+          '-'
+        )}
+      </div>
+    </div>
   )
 }
