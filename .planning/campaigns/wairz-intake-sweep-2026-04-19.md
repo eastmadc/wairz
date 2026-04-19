@@ -86,34 +86,56 @@ Clear the entire `.planning/intake/` backlog of 20 pending items by decomposing 
 
 ## Active Context
 
-**Current phase:** 1 → **COMPLETE** — advance to Phase 2 (Data / schema) in next daemon-chained session.
-**Current sub-step:** Final commit pending (health-deep regression fix + campaign/daemon artefacts).
+**Current phase:** 2 COMPLETE · 3 (1/3) · 4 (2/3) · 6 (1/3) — cross-phase dispatch overrode the phase-serial plan. Remaining 11 intake items can clear in 2-3 more sessions.
+**Current sub-step:** session 435cb5c2 end-of-session (Wave 1+2 landed, artefacts pending commit).
 
 **Session history:**
-- 2026-04-19 (session 69f004fe): campaign created. Wave 1 shipped `ab09e1c` (safe_extract) + `de3f6bd` (B.1.a/b/c auth-hardening). All 8 Wave-1 verification items PASS: no-key→401, good-key→200, /health→200, /health/deep→200, DPCS10 canary=260, slowapi 100/min default triggers 429 at 101st request (99×200 + 11×429 observed), rate-limit decorators at firmware.py:76 "5/min" + events.py:35 "10/min", streaming upload-size guard live at firmware_service.py:260-284. Backend + worker rebuilt with slowapi baked in. Wave 2 dispatched (Stream B fuzzing shell injection + Stream D docker-socket-proxy).
+- 2026-04-19 (session 69f004fe): campaign created. Phase 1 shipped (5 commits). 8/8 verification items PASS.
+- 2026-04-19 (session 435cb5c2): **Wave 1+2 cross-phase dispatch — 28 commits, 6 intakes closed.**
+  - Wave 1 (3 parallel streams in isolated worktrees):
+    - Stream Alpha (GROUP A bundled): 8 commits `9ef0924..4cc5354` — D1 findings.source backfill+NOT NULL, D2 FirmwareDetailResponse extraction_dir, D3 CRA JSONB retype, I1 CHECK constraints on 8 enum-likes, I2 UNIQUE firmware+sbom_components + dedup, I3 indexes, I4 Project back_populates + cascade, test_schemas ORM↔Pydantic alignment. Alembic head `123cc2c5463a`. 9/9 new schema tests pass. Rule 19 caught: D1 backfill was 0-row no-op; D2 was 1 field not 2 (device_metadata already present); 10 duplicate firmware rows deduped (test data); 2 intake allowlists widened to match live DB.
+    - Stream Beta (GROUP B.1): 5 commits `8994dcb..3063283` — pagination schema + utility, paged sbom/attack_surface/security_audit/projects/findings endpoints, frontend api-client Page-envelope unwrap. Live probe confirmed OOM risk REAL: one firmware has 180,048 vuln rows. Acceptance grep 0 unbounded `scalars().all()` hits.
+    - Stream Gamma (GROUP D.3): 2 direct commits `914d139..bf60b53` + 2 cross-attributed in `f614c43` — PageLoader + lazy App.tsx routes, react-window virtualization for SbomPage + FindingsList. Bundle: **1 chunk → 73 chunks, 455KB → 119KB gzip on /projects (74% reduction)**. Rule-17 canary caught `tsc --noEmit` silent-pass with tsconfig references; corrected to `tsc -b --force`.
+  - Wave 2 (3 parallel streams):
+    - Stream Delta (infra cleanup+migration+observability): 7 commits `a4e9eb8..daa7ecf` — structlog JSON logging + prometheus-fastapi-instrumentator + /ready alias + /metrics endpoint, arq cron jobs (sync_kernel@03:00, cleanup_emulation@:05/:35, cleanup_fuzzing@:20/:50), FuzzingService.cleanup_orphans reconciliation, one-shot migrator service + stripped alembic from backend/worker entrypoints (migration race fixed), uvicorn/arq logger reroute through JSON handler. 10/10 verification PASS. Migrator `Exited (0)`, alembic_version = 1 row.
+    - Stream Epsilon (LATTE LLM taint): 4 commits `cbeb8fd..06b80b8` — YAML sink+source dictionaries, `scan_taint_analysis` + `deep_dive_taint_analysis` MCP tools (LATTE-style prompt composers), registered in `create_tool_registry`, 39/39 unit tests pass. **MCP tool count 170 → 172.** Rule 19: pyyaml already present; DVRF fixture declined for unit tests (integration target). Zero Anthropic SDK, zero API keys — follows existing MCP pattern (tools return prompt strings; Claude client reasons).
+    - Stream Zeta (frontend api-client hardening): 2 direct commits `bfbfa91`, `a01236f` + 1 cross-attributed in `e8548fd` — axios request/response interceptors with auth+error toasts + dedupe, apiUrl() helper + API_BASE migration across 8 files, p-limit chunking for bulkResolve. Added sonner + p-limit deps. Rule 19: SecurityScanPage hard-code already patched; A2 VITE_API_KEY rotation already handled by existing getApiKey interceptor.
 
-**Procedural note:** checkpoint stash was created AFTER the campaign file write — campaign file + daemon.json ended up inside stash@{0}. Recovered via `git stash pop` once Stream C notified. Future phases: stash BEFORE creating untracked campaign artefacts.
+**Wave-level anti-patterns observed 3× this session (see `.planning/knowledge/wairz-intake-sweep-wave12-antipatterns.md`):** `isolation: "worktree"` + `worktreePath: ok` sentinel in Fleet dispatch does NOT provide working-tree isolation. Agents share the on-disk checkout; concurrent commits race on shared files. Wave 1 Alpha+Gamma, Wave 2 Delta+Zeta, Wave 2 Epsilon+Zeta all showed cross-stream file sweeps. Content was always correct (no lost work) but commit attribution was scrambled. Strict `git add <paths>` discipline alone is insufficient — harness-level mitigation (true worktree checkouts OR per-stream `git checkout -b`) is required for future waves.
+
+**Post-session verification (HEAD = 06b80b8):**
+- /health 200 · /ready 200 · /health/deep all-4-ok · /metrics 200 (Prom text)
+- Auth matrix: noauth=401 · auth-GET=200
+- Alembic head `123cc2c5463a` · DPCS10 canary = 260 · MCP tools = 172 · arq cron jobs = 3 · migrator Exited(0)
+- Acceptance grep: 0 unbounded `scalars().all()` in routers
 
 ## Continuation State
 
-**Phase 1:** COMPLETE as of 29dba35 (session 69f004fe). Full end-condition battery PASS. 5 commits shipped: ab09e1c (safe_extract), de3f6bd (auth B.1.a/b/c), e443def (fuzzing shell-inj), bac49ea (docker-socket-proxy), 29dba35 (health-fix + campaign artefacts).
+**Phases status after 435cb5c2:**
+- Phase 1: COMPLETE (69f004fe, 5 commits)
+- Phase 2: **COMPLETE** (435cb5c2, 13 commits — schema-drift, constraints, pagination)
+- Phase 3: **1/3** (435cb5c2 Delta — cleanup-migration-observability). Remaining: `infra-secrets-and-auth-defaults` (partial), `infra-volumes-quotas-and-backup`.
+- Phase 4: **2/3** (435cb5c2 Gamma + Zeta — code-split, virtualize, api-client hardening). Remaining: `frontend-store-isolation-and-types`.
+- Phase 5: 0/3 (serial refactor — next dedicated session). Items: cache-module-extraction, private-api + circular-imports, god-class decomposition.
+- Phase 6: **1/3** (435cb5c2 Epsilon — LATTE taint). Remaining: `apk-scan-deep-linking`, `feature-android-hardware-firmware-detection`.
+- Phase 7: 0 (maintenance sweep at campaign end).
 
-**Next session (Phase 2 — Data / schema) pickup order:**
-1. Read this campaign file + `.planning/knowledge/handoff-2026-04-19-session-698549d4-end.md`.
-2. Phase 2 scope = 3 streams, fleet-parallel possible:
-   - `.planning/intake/data-schema-drift-findings-firmware-cra.md` — column/enum drift between model and migrations.
-   - `.planning/intake/data-constraints-and-backpop.md` — CHECK + UNIQUE constraints + SQLAlchemy `back_populates` audit.
-   - `.planning/intake/data-pagination-list-endpoints.md` — wrap sbom/attack_surface/security_audit list endpoints with limit/offset/total metadata.
-3. Per-stream dispatch prompt template: see Phase 1 streams A/B/C/D as the shape — full context injection (CLAUDE.md, predecessor handoff), intake file reference, verification battery with file:line targets, HANDOFF output to `.planning/fleet/outputs/stream-*-2026-04-19.md`.
-4. Phase 2 end-condition table above already lists the 3 required checks. Rebuild backend+worker once after the 3 streams merge.
-5. Mark Phase 2 complete, advance to Phase 3 (Infra).
+**Next session pickup order:**
+1. Read this campaign file + `.planning/knowledge/handoff-2026-04-19-session-435cb5c2-end.md` + `.planning/knowledge/wairz-intake-sweep-wave12-antipatterns.md`.
+2. Dispatch options (user preference from 435cb5c2 — cross-phase file-disjoint):
+   - **Wave 3 candidate** (3 parallel, file-disjoint): `infra-volumes-quotas-and-backup` + `apk-scan-deep-linking` + `frontend-store-isolation-and-types`.
+   - **Phase 5 serial session**: cache-module-extraction → private-api + circular-imports → god-class decomposition. Ordering matters; do NOT parallelise.
+   - **Phase 6 parallel**: `feature-android-hardware-firmware-detection` (C.1 Adreno+WCNSS) alongside any other file-disjoint item.
+3. **Apply Wave 2 harness lessons:** if Fleet agents will touch overlapping file surfaces (frontend api/, backend routers/, etc.), instruct each agent to `git checkout -b feat/stream-{name}-{date}` BEFORE any writes, and have orchestrator merge sequentially. Accept that `isolation: "worktree"` alone does not isolate working trees.
+4. End-condition batteries from campaign table remain canonical.
 
 **Active streams this session:** none at handoff.
 
 **Continuation-state checkpoint refs:**
-- checkpoint-phase-1: stash@{0} dropped after successful completion — no rollback artefact needed.
-- checkpoint-phase-2: (next session should stash BEFORE writing any campaign updates; Phase 1 procedural note preserved in Session history above.)
+- checkpoint-wave12: `06b80b8` is the post-Wave-12 baseline. Rollback to `abe15e0` for full session revert (28 commits). Individual commits can be `git revert`ed in reverse dependency order (alembic migrations last — reverse-order required for rev chain).
 
 **Blocking issues:** none.
 
-**Reset instructions:** if a Phase 2 stream fails hard, `git checkout clean-history && git reset --hard 29dba35` rolls back to post-Phase-1. Individual Phase 2 commits can be reverted in reverse order if Phase 2 as a whole fails.
+**Reset instructions:** if next-session work fails, `git checkout clean-history && git reset --hard 06b80b8` to the post-Wave-12 baseline, OR `git reset --hard abe15e0` to pre-session baseline (drops all 28 Wave 1+2 commits — last resort).
+
+<!-- session-end: 2026-04-19T session 435cb5c2 -->
