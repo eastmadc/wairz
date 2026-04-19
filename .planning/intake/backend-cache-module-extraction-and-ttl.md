@@ -1,8 +1,54 @@
 ---
 title: "Backend: Extract Shared Cache Module + Add TTL Cleanup"
-status: pending
+status: completed
 priority: high
 target: backend/app/services/, backend/app/workers/
+completed_at: 2026-04-19
+completed_via: "session 93a4948d — commits d100595..618ee09 (10 call sites migrated, cron + tests shipped)"
+---
+
+## Status: Completed 2026-04-19 (session 93a4948d)
+
+### What shipped (13 commits `d100595..2a27175`)
+
+| Commit | Scope |
+|---|---|
+| `d100595` | `backend/app/services/_cache.py` — 5 helpers (get_cached, exists_cached, store_cached, invalidate_firmware, cleanup_older_than); `analysis_cache_retention_days` in Settings |
+| `5808555` | ghidra_service.py — 3 sites (existence probe, get, upsert) |
+| `b5f2432` | cwe_checker_service.py — 2 sites (fixes missing delete-then-insert bug) |
+| `1b84726` | jadx_service.py — 3 sites |
+| `909101c` | mobsfscan_service.py — 2 sites |
+| `b5212f0` | firmware_metadata_service.py — 2 sites (firmware-wide NULL key) |
+| `b5f3a78` | routers/apk_scan.py + ai/tools/android_bytecode.py — 4 sites |
+| `404b9c8` | routers/component_map.py + ai/tools/filesystem.py — 4 sites (**scope widening: intake missed these**) |
+| `1744fad` | mcp_server.py save_code_cleanup — 1 site (**scope widening: intake missed this**) |
+| `618ee09` | arq_worker.py cleanup_analysis_cache_job cron + test_cache_module.py 15 unit tests |
+| `835dd70` | mobsfscan.py hoist _cache import to module level |
+
+### Intake scope vs. delivered scope
+
+Intake listed **7 call sites**. Scope-widening grep found **3 additional**: `ai/tools/filesystem.py` (component_map), `routers/component_map.py`, `mcp_server.py` save_code_cleanup — all same pattern. Delivered = **10 sites migrated**.
+
+Two bulk-pattern sites (`services/export_service.py`, `services/import_service.py`) left alone — they iterate/bulk-insert rather than the "fetch-or-store by key" pattern the intake targets. Not an accidental gap.
+
+### Acceptance criteria (audit result)
+
+| Criterion | Status |
+|---|---|
+| `grep -rn 'AnalysisCache' backend/app/services backend/app/routers backend/app/ai/tools \| grep -v _cache.py` returns only imports & docstrings | ✓ (2 bulk-pattern files in services/ + GhidraAnalysisCache class name are legitimate residuals) |
+| All 7 (+ 3 extra) call sites use `get_cached` / `store_cached` | ✓ |
+| `backend/tests/test_cache_module.py` covers: set-then-get, idempotent re-store, invalidate_firmware, cleanup_older_than, exists_cached | ✓ (15 test methods across 5 test classes) |
+| Cron job runs successfully and deletes old rows | ✓ (live smoke: `{status:ok, retention_days:30, deleted:0}`) |
+| Retention config (`analysis_cache_retention_days`) honored | ✓ (default 30, wired through) |
+
+### Related intake note
+
+`data-analysis-cache-operation-varchar-fix` prerequisite: already shipped in session `59045370` (alembic `1f6c72decc84` — VARCHAR(100) → VARCHAR(512) for JADX cache keys). No additional work.
+
+---
+
+## Original specification (preserved for reference)
+
 ---
 
 ## Problem
