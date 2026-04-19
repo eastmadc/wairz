@@ -495,35 +495,48 @@ async def _extract_android_ota(firmware_path: str, extraction_dir: str) -> str:
     log_lines: list[str] = []
 
     if _zipfile.is_zipfile(firmware_path):
-        with _zipfile.ZipFile(firmware_path, "r") as zf:
-            names = zf.namelist()
+        from app.workers.safe_extract import safe_extract_zip as _safe_extract_zip
 
-            if "payload.bin" in names:
-                payload_path = os.path.join(extraction_dir, "payload.bin")
-                zf.extract("payload.bin", extraction_dir)
-                log_lines.append("Found payload.bin (A/B OTA)")
-                if shutil.which("payload-dumper-go"):
-                    partitions_dir = os.path.join(extraction_dir, "partitions")
-                    os.makedirs(partitions_dir, exist_ok=True)
-                    proc = await asyncio.create_subprocess_exec(
-                        "payload-dumper-go", "-o", partitions_dir, payload_path,
-                        stdout=asyncio.subprocess.PIPE,
-                        stderr=asyncio.subprocess.STDOUT,
-                    )
-                    try:
-                        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=600)
-                        log_lines.append(stdout.decode(errors="replace")[:2000])
-                    except asyncio.TimeoutError:
-                        proc.kill()
-                        log_lines.append("payload-dumper-go timed out")
-                    os.remove(payload_path)
-                else:
-                    log_lines.append("payload-dumper-go not installed, skipping payload.bin")
+        with _zipfile.ZipFile(firmware_path, "r") as _zf_probe:
+            names = _zf_probe.namelist()
+
+        if "payload.bin" in names:
+            payload_path = os.path.join(extraction_dir, "payload.bin")
+            # Extract only payload.bin through the safe helper so all three
+            # defences (zipslip, bomb, symlink-attr) apply.
+            _safe_extract_zip(
+                firmware_path,
+                extraction_dir,
+                entry_filter=lambda n: n == "payload.bin",
+            )
+            log_lines.append("Found payload.bin (A/B OTA)")
+            if shutil.which("payload-dumper-go"):
+                partitions_dir = os.path.join(extraction_dir, "partitions")
+                os.makedirs(partitions_dir, exist_ok=True)
+                proc = await asyncio.create_subprocess_exec(
+                    "payload-dumper-go", "-o", partitions_dir, payload_path,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.STDOUT,
+                )
+                try:
+                    stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=600)
+                    log_lines.append(stdout.decode(errors="replace")[:2000])
+                except asyncio.TimeoutError:
+                    proc.kill()
+                    log_lines.append("payload-dumper-go timed out")
+                os.remove(payload_path)
             else:
-                for name in names:
-                    if name.endswith(".img") or name.endswith(".bin"):
-                        zf.extract(name, extraction_dir)
-                        log_lines.append(f"Extracted {name}")
+                log_lines.append("payload-dumper-go not installed, skipping payload.bin")
+        else:
+            # Extract only .img and .bin partition images.
+            _safe_extract_zip(
+                firmware_path,
+                extraction_dir,
+                entry_filter=lambda n: n.endswith(".img") or n.endswith(".bin"),
+            )
+            for name in names:
+                if name.endswith(".img") or name.endswith(".bin"):
+                    log_lines.append(f"Extracted {name}")
     else:
         import shutil
         dest = os.path.join(extraction_dir, os.path.basename(firmware_path))
