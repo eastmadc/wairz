@@ -45,6 +45,32 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.analysis_cache import AnalysisCache
 
 
+async def exists_cached(
+    db: AsyncSession,
+    firmware_id: UUID,
+    operation: str,
+    *,
+    binary_sha256: str | None = None,
+) -> bool:
+    """Return ``True`` if a cache row exists for this key.
+
+    Cheaper than :func:`get_cached` when the caller only needs a presence
+    probe (e.g., "has this binary already been analysed?") — selects
+    ``id`` instead of the full JSONB ``result`` blob.
+    """
+    conditions = [
+        AnalysisCache.firmware_id == firmware_id,
+        AnalysisCache.operation == operation,
+    ]
+    if binary_sha256 is not None:
+        conditions.append(AnalysisCache.binary_sha256 == binary_sha256)
+    else:
+        conditions.append(AnalysisCache.binary_sha256.is_(None))
+
+    stmt = select(AnalysisCache.id).where(*conditions).limit(1)
+    return (await db.execute(stmt)).scalar_one_or_none() is not None
+
+
 async def get_cached(
     db: AsyncSession,
     firmware_id: UUID,
