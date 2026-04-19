@@ -24,7 +24,7 @@ services:
     env_file:
       - .env
     environment:
-      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-wairz}:${POSTGRES_PASSWORD:-wairz}@postgres:5432/${POSTGRES_DB:-wairz}
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-wairz}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required. Set it in .env (see .env.example)}@postgres:5432/${POSTGRES_DB:-wairz}
     entrypoint: ["sh", "-c", ".venv/bin/python -m alembic upgrade head"]
     depends_on:
       postgres:
@@ -78,7 +78,7 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-wairz}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-wairz}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required. Set it in .env (see .env.example)}
       POSTGRES_DB: ${POSTGRES_DB:-wairz}
     ports:
       - "127.0.0.1:${POSTGRES_HOST_PORT:-5432}:5432"
@@ -133,7 +133,7 @@ services:
     env_file:
       - .env
     environment:
-      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-wairz}:${POSTGRES_PASSWORD:-wairz}@postgres:5432/${POSTGRES_DB:-wairz}
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-wairz}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required. Set it in .env (see .env.example)}@postgres:5432/${POSTGRES_DB:-wairz}
       REDIS_URL: redis://redis:6379/0
       STORAGE_ROOT: /data/firmware
       GHIDRA_INSTALL_DIR: /opt/ghidra
@@ -175,7 +175,10 @@ services:
         max-size: "50m"
         max-file: "5"
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:8000/health || exit 1"]
+      # Poll /ready (lightweight liveness) for the Docker healthcheck tick;
+      # /health remains the deep surface called by operators/monitoring for
+      # full subsystem status. /ready added in commit 566637a.
+      test: ["CMD-SHELL", "curl -sf http://localhost:8000/ready || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -193,7 +196,7 @@ services:
     env_file:
       - .env
     environment:
-      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-wairz}:${POSTGRES_PASSWORD:-wairz}@postgres:5432/${POSTGRES_DB:-wairz}
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-wairz}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required. Set it in .env (see .env.example)}@postgres:5432/${POSTGRES_DB:-wairz}
       REDIS_URL: redis://redis:6379/0
       STORAGE_ROOT: /data/firmware
       GHIDRA_INSTALL_DIR: /opt/ghidra
@@ -276,7 +279,7 @@ services:
     networks:
       - emulation_net
     environment:
-      - POSTGRES_PASSWORD=${FIRMAE_DB_PASSWORD:-firmae}
+      - POSTGRES_PASSWORD=${FIRMAE_DB_PASSWORD:?FIRMAE_DB_PASSWORD is required. Set it in .env (see .env.example)}
     deploy:
       resources:
         limits:
