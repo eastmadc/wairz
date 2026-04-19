@@ -1,9 +1,25 @@
 ---
 title: "Frontend: Store Isolation, Project-ID Guards, Device Types"
-status: pending
+status: completed
 priority: high
 target: frontend/src/stores/, frontend/src/pages/, frontend/src/types/
 ---
+
+> **Status note 2026-04-21 (Rule-19 audit):** Shipped via session 198243b8 Stream Beta
+> (see `.planning/campaigns/wairz-intake-sweep-2026-04-19.md` Wave 3 history). Live
+> audit verified:
+> - **S1 + S2** `currentProjectId` check-before-commit discipline + `ProjectRouteGuard`
+>   — commits `72ec063` (store guards) and `9bcf379` (ProjectRouteGuard component +
+>   route wrap). `frontend/src/stores/vulnerabilityStore.ts` (13 guard-checks at
+>   lines 77, 90, 92, 103, 119, 126, 133, 139, 145, 151, 163, 179); `explorerStore.ts`
+>   (guard at line 117 + check pattern documented at line 76-82); `projectStore.ts:30`
+>   tracks `currentProjectId`. `ProjectRouteGuard` wraps 12 project routes in
+>   `frontend/src/App.tsx:47-58`.
+> - **S3** DeviceAcquisitionPage `as any` casts eliminated — commit `7a3fd8d`
+>   (`type device BROM surface end-to-end (backend + frontend)`). 0 `as any` hits in
+>   `DeviceAcquisitionPage.tsx`; BROM fields now typed in `frontend/src/types/device.ts`
+>   (`mode`, `available`, `error` at lines 29-31; `chipset` at line 50).
+> This intake is retained for historical reference; further changes go in new intakes.
 
 ## Problem
 
