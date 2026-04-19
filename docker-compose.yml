@@ -404,7 +404,13 @@ services:
     depends_on:
       - backend
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO /dev/null http://localhost:3000/ || exit 1"]
+      # Use explicit IPv4 127.0.0.1 not localhost: the nginx:alpine base
+      # image resolves localhost to ::1 first (IPv6) but nginx only
+      # listens on 0.0.0.0:3000 (IPv4). wget -qO /dev/null localhost:3000
+      # silently fails the IPv6 probe and the container reports
+      # (unhealthy) even though the site is actually serving. Matches
+      # the fix already applied to backend at line 232.
+      test: ["CMD-SHELL", "wget -qO /dev/null http://127.0.0.1:3000/ || exit 1"]
       interval: 30s
       timeout: 5s
       retries: 3
