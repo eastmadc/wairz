@@ -1,12 +1,26 @@
 ---
 title: "Feature: LATTE-Style LLM Binary Taint Analysis (Two MCP Tools)"
-status: pending
+status: completed
 priority: high
 target: backend/app/ai/tools/, backend/app/ai/__init__.py
 depends_on: none
 estimated_sessions: 1-2
 source: Ouroboros interview seed_61966b02ef35 (2026-04-17) + Citadel research-fleet-wairz-next-campaigns
 ---
+
+> **Status note 2026-04-21 (Rule-19 audit):** Shipped via session 435cb5c2 Stream
+> Epsilon across 3 commits (see `.planning/campaigns/wairz-intake-sweep-2026-04-19.md`
+> Phase 6 history). Live audit verified:
+> - YAML sink + source dictionaries: commit `cbeb8fd`
+>   (`backend/app/ai/tools/_taint_sinks.yaml`, `_taint_sources.yaml`).
+> - Both MCP tools implemented: commit `c434959`. `backend/app/ai/tools/taint_llm.py`
+>   exists (32763 bytes); handlers at line 504 (`_handle_scan_taint_analysis`) and
+>   line 624 (`_handle_deep_dive_taint_analysis`); registration at lines 798 and 853.
+> - Registered in `create_tool_registry`: commit `180c25f`
+>   (`backend/app/ai/__init__.py:19` imports `register_taint_llm_tools`, line 48
+>   calls it).
+> - Unit tests: commit `06b80b8` (YAML loaders, ranking, confidence gate, prompts).
+> This intake is retained for historical reference; further changes go in new intakes.
 
 ## Overview
 
