@@ -2,8 +2,9 @@
 
 Provides an MCP tool for running the full decompilation → SAST pipeline:
 JADX decompiles the APK to Java/Kotlin source, then mobsfscan performs
-pattern-based static analysis.  Results are cached via AnalysisCache
-and findings persisted to the project findings database via flush().
+pattern-based static analysis.  Results are cached in the
+``analysis_cache`` table via :mod:`app.services._cache`, and findings
+persisted to the project findings database via flush().
 
 The pipeline enforces a 3-minute total timeout budget shared across
 both phases (JADX decompilation + mobsfscan scanning).
