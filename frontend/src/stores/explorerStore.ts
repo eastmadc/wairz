@@ -71,6 +71,15 @@ interface ExplorerState {
   selectedDocumentId: string | null
   documentDirty: boolean
   documentContent: string | null
+  /**
+   * Project id the store is hydrated for. Async actions capture their
+   * projectId at entry, set this, and check `get().currentProjectId === projectId`
+   * after every `await` before committing. Prevents stale-project-data races
+   * when a user navigates /projects/A → /projects/B while an A-scoped
+   * listDirectory / readFile is still in flight. Cleared by `reset()` and
+   * by `ProjectRouteGuard` on route change.
+   */
+  currentProjectId: string | null
 }
 
 interface ExplorerActions {
@@ -105,6 +114,7 @@ const initialState: ExplorerState = {
   selectedDocumentId: null,
   documentDirty: false,
   documentContent: null,
+  currentProjectId: null,
 }
 
 export const useExplorerStore = create<ExplorerState & ExplorerActions>(
@@ -112,10 +122,11 @@ export const useExplorerStore = create<ExplorerState & ExplorerActions>(
     ...initialState,
 
     loadRootDirectory: async (projectId) => {
-      set({ treeError: null })
+      set({ treeError: null, currentProjectId: projectId })
       try {
         const fwId = useProjectStore.getState().selectedFirmwareId || undefined
         const listing = await listDirectory(projectId, '', fwId)
+        if (get().currentProjectId !== projectId) return
         const nodes = listing.entries.map((entry) => {
           const id = `/${entry.name}`
           const node: TreeNode = {
@@ -137,19 +148,25 @@ export const useExplorerStore = create<ExplorerState & ExplorerActions>(
           if (a.fileType !== 'directory' && b.fileType === 'directory') return 1
           return a.name.localeCompare(b.name)
         })
-        set({ treeData: nodes })
+        if (get().currentProjectId === projectId) {
+          set({ treeData: nodes })
+        }
       } catch (e) {
-        set({
-          treeError:
-            e instanceof Error ? e.message : 'Failed to load directory',
-        })
+        if (get().currentProjectId === projectId) {
+          set({
+            treeError:
+              e instanceof Error ? e.message : 'Failed to load directory',
+          })
+        }
       }
     },
 
     loadDirectory: async (projectId, path) => {
+      if (get().currentProjectId === null) set({ currentProjectId: projectId })
       try {
         const fwId = useProjectStore.getState().selectedFirmwareId || undefined
         const listing = await listDirectory(projectId, path, fwId)
+        if (get().currentProjectId !== projectId) return
         const children = listing.entries.map((entry) => {
           const id = `${path}/${entry.name}`
           const node: TreeNode = {
@@ -170,6 +187,7 @@ export const useExplorerStore = create<ExplorerState & ExplorerActions>(
           if (a.fileType !== 'directory' && b.fileType === 'directory') return 1
           return a.name.localeCompare(b.name)
         })
+        if (get().currentProjectId !== projectId) return
         set((state) => ({
           treeData: updateNodeInTree(state.treeData, path, (node) => ({
             ...node,
@@ -177,6 +195,7 @@ export const useExplorerStore = create<ExplorerState & ExplorerActions>(
           })),
         }))
       } catch {
+        if (get().currentProjectId !== projectId) return
         // On error, remove placeholder so user can retry by collapsing/expanding
         set((state) => ({
           treeData: updateNodeInTree(state.treeData, path, (node) => ({
@@ -188,6 +207,7 @@ export const useExplorerStore = create<ExplorerState & ExplorerActions>(
     },
 
     selectFile: async (projectId, node) => {
+      if (get().currentProjectId === null) set({ currentProjectId: projectId })
       set({
         selectedPath: node.id,
         selectedNode: node,
@@ -200,11 +220,14 @@ export const useExplorerStore = create<ExplorerState & ExplorerActions>(
         documentContent: null,
       })
 
+      const stillCurrent = () =>
+        get().currentProjectId === projectId && get().selectedPath === node.id
+
       // Fetch file info first to determine if binary
       try {
         const fwId = useProjectStore.getState().selectedFirmwareId || undefined
         const info = await getFileInfo(projectId, node.id, fwId)
-        if (get().selectedPath !== node.id) return
+        if (!stillCurrent()) return
         set({ fileInfo: info, infoLoading: false })
 
         // If binary, skip content fetch — HexViewer manages its own data
@@ -213,7 +236,7 @@ export const useExplorerStore = create<ExplorerState & ExplorerActions>(
           return
         }
       } catch {
-        if (get().selectedPath !== node.id) return
+        if (!stillCurrent()) return
         set({ infoLoading: false })
       }
 
@@ -221,11 +244,11 @@ export const useExplorerStore = create<ExplorerState & ExplorerActions>(
       try {
         const fwId = useProjectStore.getState().selectedFirmwareId || undefined
         const content = await readFile(projectId, node.id, undefined, undefined, undefined, fwId)
-        if (get().selectedPath === node.id) {
+        if (stillCurrent()) {
           set({ fileContent: content, contentLoading: false })
         }
       } catch {
-        if (get().selectedPath === node.id) {
+        if (stillCurrent()) {
           set({ contentLoading: false })
         }
       }
@@ -309,16 +332,22 @@ export const useExplorerStore = create<ExplorerState & ExplorerActions>(
     clearPendingLine: () => set({ pendingLine: null }),
 
     loadDocuments: async (projectId) => {
+      if (get().currentProjectId === null) set({ currentProjectId: projectId })
       set({ documentsLoading: true })
       try {
         const docs = await listDocuments(projectId)
-        set({ documents: docs, documentsLoading: false })
+        if (get().currentProjectId === projectId) {
+          set({ documents: docs, documentsLoading: false })
+        }
       } catch {
-        set({ documentsLoading: false })
+        if (get().currentProjectId === projectId) {
+          set({ documentsLoading: false })
+        }
       }
     },
 
     selectDocument: async (projectId, document) => {
+      if (get().currentProjectId === null) set({ currentProjectId: projectId })
       set({
         selectedDocumentId: document.id,
         selectedPath: null,
@@ -331,9 +360,12 @@ export const useExplorerStore = create<ExplorerState & ExplorerActions>(
         documentContent: null,
       })
 
+      const stillCurrent = () =>
+        get().currentProjectId === projectId && get().selectedDocumentId === document.id
+
       try {
         const result = await readDocumentContent(projectId, document.id)
-        if (get().selectedDocumentId === document.id) {
+        if (stillCurrent()) {
           set({
             fileContent: {
               content: result.content,
@@ -345,7 +377,7 @@ export const useExplorerStore = create<ExplorerState & ExplorerActions>(
           })
         }
       } catch {
-        if (get().selectedDocumentId === document.id) {
+        if (stillCurrent()) {
           set({ contentLoading: false })
         }
       }
@@ -356,10 +388,15 @@ export const useExplorerStore = create<ExplorerState & ExplorerActions>(
     },
 
     saveDocument: async (projectId) => {
+      if (get().currentProjectId === null) set({ currentProjectId: projectId })
       const { selectedDocumentId, documentContent } = get()
       if (!selectedDocumentId || documentContent === null) return
       try {
         const updated = await updateDocumentContent(projectId, selectedDocumentId, documentContent)
+        if (
+          get().currentProjectId !== projectId
+          || get().selectedDocumentId !== selectedDocumentId
+        ) return
         set({
           documentDirty: false,
           fileContent: {
@@ -379,10 +416,13 @@ export const useExplorerStore = create<ExplorerState & ExplorerActions>(
     },
 
     createNote: async (projectId, title) => {
+      if (get().currentProjectId === null) set({ currentProjectId: projectId })
       try {
         const doc = await apiCreateNote(projectId, title)
+        if (get().currentProjectId !== projectId) return
         // Reload documents list then select the new note
         const docs = await listDocuments(projectId)
+        if (get().currentProjectId !== projectId) return
         set({ documents: docs })
         // Select the new document
         get().selectDocument(projectId, doc)
