@@ -458,9 +458,12 @@ class EmulationService:
             "/firmware/lib32", "/firmware/usr/lib32",
         ]
         for d in bin_dirs:
-            container.exec_run(
-                ["sh", "-c", f"[ -d {d} ] && chmod -R +x {d} 2>/dev/null || true"]
-            )
+            # Use argv-list form with test + chmod to avoid any shell
+            # interpolation. The test command returns 0 only when d exists;
+            # non-zero exit from exec_run is intentionally ignored here.
+            test_result = container.exec_run(["test", "-d", d])
+            if test_result.exit_code == 0:
+                container.exec_run(["chmod", "-R", "+x", d])
 
         # Generic symlink restoration script.
         # Binwalk corruption patterns:
@@ -1377,10 +1380,15 @@ echo "Symlink repair: pass1=$PASS1 pass2=$PASS2 pass3=$PASS3"
                 sysroot = get_sysroot_path(arch)
                 ld_prefix = f"QEMU_LD_PREFIX={sysroot} " if sysroot and not is_static else ""
 
+                # Apply shlex.quote to the binary path so filenames with
+                # spaces, quotes, or other shell metacharacters don't break
+                # the single-shell expansion here.  `command` is user-
+                # supplied exec intent (by design) and is kept as-is.
+                quoted_binary = shlex.quote((session.binary_path or "").lstrip("/"))
                 exec_cmd = [
                     "timeout", str(timeout),
                     "sh", "-c",
-                    f"{ld_prefix}{env_prefix}/usr/bin/{qemu_bin} /firmware/{(session.binary_path or '').lstrip('/')} {command}",
+                    f"{ld_prefix}{env_prefix}/usr/bin/{qemu_bin} /firmware/{quoted_binary} {command}",
                 ]
             else:
                 # Standard firmware rootfs mode: chroot
