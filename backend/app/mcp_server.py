@@ -38,9 +38,9 @@ from app.ai import create_tool_registry
 from app.ai.system_prompt import build_system_prompt
 from app.ai.tool_registry import ToolContext, ToolRegistry
 from app.config import get_settings
-from app.models.analysis_cache import AnalysisCache
 from app.models.firmware import Firmware
 from app.models.project import Project
+from app.services import _cache
 from app.utils.hashing import compute_file_sha256
 from app.utils.sandbox import validate_path
 
@@ -169,27 +169,14 @@ async def _handle_save_code_cleanup(
 
     operation = f"code_cleanup:{function_name}"
 
-    # Check if an entry already exists and update it, or create a new one
-    stmt = select(AnalysisCache).where(
-        AnalysisCache.firmware_id == context.firmware_id,
-        AnalysisCache.binary_sha256 == binary_sha256,
-        AnalysisCache.operation == operation,
-    ).limit(1)
-    existing = (await context.db.execute(stmt)).scalar_one_or_none()
-
-    if existing:
-        existing.result = {"cleaned_code": cleaned_code}
-    else:
-        entry = AnalysisCache(
-            firmware_id=context.firmware_id,
-            binary_path=full_path,
-            binary_sha256=binary_sha256,
-            operation=operation,
-            result={"cleaned_code": cleaned_code},
-        )
-        context.db.add(entry)
-
-    await context.db.flush()
+    await _cache.store_cached(
+        context.db,
+        context.firmware_id,
+        operation,
+        {"cleaned_code": cleaned_code},
+        binary_sha256=binary_sha256,
+        binary_path=full_path,
+    )
     return f"Saved cleaned code for {function_name} in {binary_path_arg}."
 
 
