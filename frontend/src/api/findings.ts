@@ -1,6 +1,20 @@
 import apiClient from './client'
 import type { Finding, FindingCreate, FindingUpdate } from '@/types'
 
+// Backend ``list_findings`` now returns a Page envelope.  ``listFindings()``
+// still returns ``Finding[]`` to keep every caller working; ``listFindingsPage()``
+// exposes the full ``{ items, total, offset, limit }`` for new consumers.
+interface PageEnvelope<T> {
+  items: T[]
+  total: number
+  offset: number
+  limit: number
+}
+
+function unwrap<T>(data: PageEnvelope<T> | T[]): T[] {
+  return Array.isArray(data) ? data : (data?.items ?? [])
+}
+
 export interface SecurityAuditResult {
   status: string
   checks_run: number
@@ -84,9 +98,20 @@ export async function runYaraScan(
 
 export async function listFindings(
   projectId: string,
-  params?: { severity?: string; status?: string; source?: string; firmware_id?: string },
+  params?: { severity?: string; status?: string; source?: string; firmware_id?: string; limit?: number; offset?: number },
 ): Promise<Finding[]> {
-  const { data } = await apiClient.get<Finding[]>(
+  const { data } = await apiClient.get<PageEnvelope<Finding> | Finding[]>(
+    `/projects/${projectId}/findings`,
+    { params },
+  )
+  return unwrap(data)
+}
+
+export async function listFindingsPage(
+  projectId: string,
+  params?: { severity?: string; status?: string; source?: string; firmware_id?: string; limit?: number; offset?: number },
+): Promise<PageEnvelope<Finding>> {
+  const { data } = await apiClient.get<PageEnvelope<Finding>>(
     `/projects/${projectId}/findings`,
     { params },
   )

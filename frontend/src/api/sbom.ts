@@ -8,6 +8,22 @@ import type {
   VulnerabilityScanResult,
 } from '@/types'
 
+// Backend list endpoints return a Page envelope
+// ``{ items, total, offset, limit }``.  ``getSbomComponents`` and
+// ``getVulnerabilities`` keep their existing ``T[]`` return shape so
+// every caller keeps working; new ``*Page`` variants expose the full
+// envelope for any consumer that wants the total.
+interface PageEnvelope<T> {
+  items: T[]
+  total: number
+  offset: number
+  limit: number
+}
+
+function unwrap<T>(data: PageEnvelope<T> | T[]): T[] {
+  return Array.isArray(data) ? data : (data?.items ?? [])
+}
+
 export async function generateSbom(
   projectId: string,
   forceRescan = false,
@@ -23,9 +39,20 @@ export async function generateSbom(
 
 export async function getSbomComponents(
   projectId: string,
-  filters?: { type?: string; name?: string; firmware_id?: string },
+  filters?: { type?: string; name?: string; firmware_id?: string; limit?: number; offset?: number },
 ): Promise<SbomComponent[]> {
-  const { data } = await apiClient.get<SbomComponent[]>(
+  const { data } = await apiClient.get<PageEnvelope<SbomComponent> | SbomComponent[]>(
+    `/projects/${projectId}/sbom`,
+    { params: filters },
+  )
+  return unwrap(data)
+}
+
+export async function getSbomComponentsPage(
+  projectId: string,
+  filters?: { type?: string; name?: string; firmware_id?: string; limit?: number; offset?: number },
+): Promise<PageEnvelope<SbomComponent>> {
+  const { data } = await apiClient.get<PageEnvelope<SbomComponent>>(
     `/projects/${projectId}/sbom`,
     { params: filters },
   )
@@ -61,7 +88,18 @@ export async function getVulnerabilities(
   projectId: string,
   filters?: { severity?: string; component_id?: string; cve_id?: string; resolution_status?: string; limit?: number; offset?: number; firmware_id?: string },
 ): Promise<SbomVulnerability[]> {
-  const { data } = await apiClient.get<SbomVulnerability[]>(
+  const { data } = await apiClient.get<PageEnvelope<SbomVulnerability> | SbomVulnerability[]>(
+    `/projects/${projectId}/sbom/vulnerabilities`,
+    { params: filters },
+  )
+  return unwrap(data)
+}
+
+export async function getVulnerabilitiesPage(
+  projectId: string,
+  filters?: { severity?: string; component_id?: string; cve_id?: string; resolution_status?: string; limit?: number; offset?: number; firmware_id?: string },
+): Promise<PageEnvelope<SbomVulnerability>> {
+  const { data } = await apiClient.get<PageEnvelope<SbomVulnerability>>(
     `/projects/${projectId}/sbom/vulnerabilities`,
     { params: filters },
   )

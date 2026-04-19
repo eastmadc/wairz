@@ -1,5 +1,19 @@
 import apiClient from './client'
 
+// Backend ``list_attack_surface_entries`` now returns a Page envelope.
+// ``getAttackSurface()`` still returns ``AttackSurfaceEntry[]`` for
+// backward-compat; ``getAttackSurfacePage()`` exposes the full envelope.
+interface PageEnvelope<T> {
+  items: T[]
+  total: number
+  offset: number
+  limit: number
+}
+
+function unwrap<T>(data: PageEnvelope<T> | T[]): T[] {
+  return Array.isArray(data) ? data : (data?.items ?? [])
+}
+
 export interface AttackSurfaceEntry {
   id: string
   project_id: string
@@ -37,9 +51,20 @@ export interface AttackSurfaceScanResponse {
 
 export async function getAttackSurface(
   projectId: string,
-  params?: { min_score?: number; firmware_id?: string },
+  params?: { min_score?: number; firmware_id?: string; limit?: number; offset?: number },
 ): Promise<AttackSurfaceEntry[]> {
-  const { data } = await apiClient.get<AttackSurfaceEntry[]>(
+  const { data } = await apiClient.get<PageEnvelope<AttackSurfaceEntry> | AttackSurfaceEntry[]>(
+    `/projects/${projectId}/attack-surface`,
+    { params },
+  )
+  return unwrap(data)
+}
+
+export async function getAttackSurfacePage(
+  projectId: string,
+  params?: { min_score?: number; firmware_id?: string; limit?: number; offset?: number },
+): Promise<PageEnvelope<AttackSurfaceEntry>> {
+  const { data } = await apiClient.get<PageEnvelope<AttackSurfaceEntry>>(
     `/projects/${projectId}/attack-surface`,
     { params },
   )
