@@ -13,6 +13,12 @@ from starlette.requests import Request
 from app.config import get_settings
 from app.logging_config import configure_logging
 from app.middleware.asgi_auth import APIKeyASGIMiddleware
+
+# Structured JSON logging (Phase 3 / O3) — configure at module import so
+# uvicorn's own startup lines (``Waiting for application startup``, ``Uvicorn
+# running on ...``) are also emitted as JSON. The lifespan hook is too late:
+# uvicorn emits its boot lines before ASGI lifespan starts.
+configure_logging(level=os.environ.get("LOG_LEVEL", "INFO"))
 from app.rate_limit import limiter  # shared rate-limiter instance (B.1.b)
 from app.routers import analysis, apk_scan, attack_surface, comparison, compliance, component_map, cra_compliance, device, documents, emulation, events, export_import, files, findings, firmware, fuzzing, hardware_firmware, health, kernels, projects, sbom, security_audit, terminal, tools, uart
 from app.routers.terminal import system_ws_router as _system_ws_router
@@ -24,10 +30,6 @@ from app.utils.sandbox import PathTraversalError
 async def lifespan(app: FastAPI):
     import sys
     settings = get_settings()
-
-    # Structured JSON logging (Phase 3 / O3). Safe to call repeatedly but only
-    # wired here so the backend process emits JSON from the first log line.
-    configure_logging(level=os.environ.get("LOG_LEVEL", "INFO"))
 
     os.makedirs(settings.storage_root, exist_ok=True)
     os.makedirs(settings.emulation_kernel_dir, exist_ok=True)

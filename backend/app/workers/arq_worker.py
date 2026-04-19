@@ -16,8 +16,14 @@ from sqlalchemy import select
 
 from app.config import get_settings
 from app.database import async_session_factory
+from app.logging_config import configure_logging
 from app.models.firmware import Firmware
 from app.models.project import Project
+
+# Route worker logs through structlog JSON pipeline (Phase 3 / O3). Called at
+# import time so arq's own boot-phase logs (connection, registered functions)
+# come out as JSON rather than plain text.
+configure_logging(level=os.environ.get("LOG_LEVEL", "INFO"))
 
 logger = logging.getLogger(__name__)
 
