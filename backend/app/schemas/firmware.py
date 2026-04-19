@@ -46,6 +46,7 @@ class FirmwareDetailResponse(BaseModel):
     endianness: str | None
     os_info: str | None
     extracted_path: str | None = None
+    extraction_dir: str | None = None
     kernel_path: str | None
     version_label: str | None = None
     unpack_log: str | None
