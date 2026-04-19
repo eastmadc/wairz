@@ -1,9 +1,27 @@
 ---
 title: "Frontend: Harden API Client (Auth, API_BASE, Bulk Ops)"
-status: pending
+status: completed
 priority: high
 target: frontend/src/api/
 ---
+
+> **Status note 2026-04-21 (Rule-19 audit):** Shipped via session 435cb5c2 Stream Zeta +
+> session 198243b8 (see `.planning/campaigns/wairz-intake-sweep-2026-04-19.md` Phase 3/5
+> history). Live audit verified:
+> - **A1 + A2** axios interceptors — commit `bfbfa91`. Request interceptor at
+>   `frontend/src/api/client.ts:37`; response interceptor at line 68 with toast-dedup
+>   helper + 401/403/5xx handling.
+> - **A3** `apiUrl()` helper at `frontend/src/api/config.ts:17` — consumed by
+>   `api/files.ts`, `api/hardwareFirmware.ts`, `api/emulation.ts`, `api/documents.ts`
+>   for all URL construction.
+> - **A4** `bulkResolve` bounded via `p-limit`: commit `a01236f`. `pLimit` imported at
+>   `frontend/src/stores/vulnerabilityStore.ts:2`, applied at line 152.
+> - **Dependencies:** `frontend/package.json` declares `p-limit ^3.1.0` (line 26) and
+>   `sonner ^1.7.4` (line 35).
+> - **Wave-1 follow-ups** extended API timeouts across 6 endpoints (commits
+>   `cb4530d` → `e3e0dc0`) and preserved real error messages (commits `b437095`,
+>   `974a9f5`, `ad9f524`, `237422c`).
+> This intake is retained for historical reference; further changes go in new intakes.
 
 ## Problem
 
