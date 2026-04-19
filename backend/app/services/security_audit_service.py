@@ -15,6 +15,7 @@ import re
 import stat
 from collections import Counter
 from dataclasses import dataclass, field
+from typing import Callable
 
 logger = logging.getLogger(__name__)
 
@@ -950,6 +951,43 @@ _SECURITY_CHECKS = [
     ("shellcheck", _scan_shellcheck),
     ("bandit", _scan_bandit),
 ]
+
+#: Scanner callable: ``(root, findings) -> None`` (mutates findings list).
+ScannerFn = Callable[[str, list[SecurityFinding]], None]
+
+#: Public scanner registry — lookup-by-name dispatch for callers that
+#: only want a subset of checks (e.g. ``assessment_service`` runs
+#: credentials + shadow + crypto_material but not setuid/init/...).
+#: Keeping the canonical list ``_SECURITY_CHECKS`` as source of truth
+#: means a scanner added to the registry above is automatically
+#: subset-dispatchable without a second mapping to maintain.
+SCANNERS: dict[str, ScannerFn] = dict(_SECURITY_CHECKS)
+
+
+def run_scan_subset(
+    root: str,
+    scanner_names: list[str],
+    findings: list[SecurityFinding] | None = None,
+) -> list[SecurityFinding]:
+    """Run a subset of security scanners against ``root`` by name.
+
+    Public entry point for services that want part of the audit without
+    depending on the private ``_scan_*`` implementations. Appends to
+    ``findings`` if supplied (matches the per-scanner mutation pattern)
+    or returns a fresh list. Raises ``KeyError`` on an unknown scanner
+    name — callers supply names from a known set.
+
+    Example::
+
+        findings: list[SecurityFinding] = []
+        run_scan_subset(root, ["credentials", "crypto_material", "shadow"], findings)
+    """
+    if findings is None:
+        findings = []
+    for name in scanner_names:
+        scanner = SCANNERS[name]  # intentionally KeyError on typo
+        scanner(root, findings)
+    return findings
 
 
 def _run_checks_against_root(root: str, result: ScanResult) -> None:

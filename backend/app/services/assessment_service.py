@@ -272,9 +272,7 @@ class AssessmentService:
         """Scan for hardcoded credentials and crypto material."""
         from app.services.security_audit_service import (
             SecurityFinding,
-            _scan_credentials,
-            _scan_crypto_material,
-            _scan_shadow,
+            run_scan_subset,
         )
 
         findings: list[SecurityFinding] = []
@@ -282,16 +280,11 @@ class AssessmentService:
 
         # Phase 3b: iterate every detection root so scatter-zip siblings
         # and raw-image partitions get scanned in one pass.
+        scanners = ["credentials", "shadow", "crypto_material"]
         roots = await self._resolve_detection_roots()
         for root in roots:
             await loop.run_in_executor(
-                None, _scan_credentials, root, findings
-            )
-            await loop.run_in_executor(
-                None, _scan_shadow, root, findings
-            )
-            await loop.run_in_executor(
-                None, _scan_crypto_material, root, findings
+                None, run_scan_subset, root, scanners, findings
             )
 
         created = 0
