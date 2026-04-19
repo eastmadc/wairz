@@ -18,11 +18,10 @@ import tempfile
 import uuid
 from typing import Any
 
-from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
-from app.models.analysis_cache import AnalysisCache
+from app.services import _cache
 from app.utils.hashing import compute_file_sha256
 
 logger = logging.getLogger(__name__)
@@ -259,17 +258,12 @@ class JadxDecompilationCache:
         db: AsyncSession,
     ) -> bool:
         """Check if JADX decompilation has been completed for this APK."""
-        stmt = (
-            select(AnalysisCache.id)
-            .where(
-                AnalysisCache.firmware_id == firmware_id,
-                AnalysisCache.binary_sha256 == apk_sha256,
-                AnalysisCache.operation == "jadx_decompilation",
-            )
-            .limit(1)
+        return await _cache.exists_cached(
+            db,
+            firmware_id,
+            "jadx_decompilation",
+            binary_sha256=apk_sha256,
         )
-        result = await db.execute(stmt)
-        return result.scalar_one_or_none() is not None
 
     async def _get_cached(
         self,
@@ -279,16 +273,9 @@ class JadxDecompilationCache:
         db: AsyncSession,
     ) -> dict | None:
         """Retrieve a cached result by operation key."""
-        stmt = select(AnalysisCache.result).where(
-            AnalysisCache.firmware_id == firmware_id,
-            AnalysisCache.binary_sha256 == apk_sha256,
-            AnalysisCache.operation == operation,
+        return await _cache.get_cached(
+            db, firmware_id, operation, binary_sha256=apk_sha256,
         )
-        result = await db.execute(stmt)
-        row = result.scalars().first()
-        if row is not None and isinstance(row, dict):
-            return row
-        return None
 
     async def _store_cached(
         self,
@@ -299,23 +286,15 @@ class JadxDecompilationCache:
         result_data: dict,
         db: AsyncSession,
     ) -> None:
-        """Store a result in the cache (delete-then-insert for idempotency)."""
-        await db.execute(
-            delete(AnalysisCache).where(
-                AnalysisCache.firmware_id == firmware_id,
-                AnalysisCache.binary_sha256 == apk_sha256,
-                AnalysisCache.operation == operation,
-            )
-        )
-        cache_entry = AnalysisCache(
-            firmware_id=firmware_id,
-            binary_path=apk_path,
+        """Store a result in the cache (delete-then-insert upsert)."""
+        await _cache.store_cached(
+            db,
+            firmware_id,
+            operation,
+            result_data,
             binary_sha256=apk_sha256,
-            operation=operation,
-            result=result_data,
+            binary_path=apk_path,
         )
-        db.add(cache_entry)
-        await db.flush()
 
     async def _run_decompilation(
         self,
