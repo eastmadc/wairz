@@ -14,6 +14,7 @@ import uuid
 from fastapi import APIRouter, Query, Request
 from fastapi.responses import StreamingResponse
 
+from app.rate_limit import limiter
 from app.services.event_service import event_service
 
 logger = logging.getLogger(__name__)
@@ -31,6 +32,7 @@ KEEPALIVE_INTERVAL = 15
 
 
 @router.get("")
+@limiter.limit("10/minute")
 async def stream_events(
     request: Request,
     project_id: uuid.UUID,

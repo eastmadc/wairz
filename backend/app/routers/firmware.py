@@ -3,7 +3,7 @@ import logging
 import os
 import uuid
 
-from fastapi import APIRouter, Depends, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, Form, HTTPException, Request, UploadFile
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -18,6 +18,7 @@ from app.schemas.firmware import (
     FirmwareUploadResponse,
 )
 from app.config import get_settings
+from app.rate_limit import limiter
 from app.services.firmware_metadata_service import FirmwareMetadataService
 from app.services.firmware_paths import get_detection_roots
 from app.services.firmware_service import FirmwareService
@@ -72,7 +73,9 @@ def get_firmware_service(db: AsyncSession = Depends(get_db)) -> FirmwareService:
 
 
 @router.post("", response_model=FirmwareUploadResponse, status_code=201)
+@limiter.limit("5/minute")
 async def upload_firmware(
+    request: Request,
     project_id: uuid.UUID,
     file: UploadFile,
     version_label: str | None = Form(None),
