@@ -31,7 +31,8 @@ import { useVulnerabilityStore } from '@/stores/vulnerabilityStore'
 import { useShallow } from 'zustand/react/shallow'
 import { useProjectStore } from '@/stores/projectStore'
 import FirmwareSelector from '@/components/projects/FirmwareSelector'
-import VulnerabilityRow from '@/components/sbom/VulnerabilityRow'
+import VulnerabilityRowVirtual, { COLUMN_TEMPLATE } from '@/components/sbom/VulnerabilityRowVirtual'
+import { List, useDynamicRowHeight } from 'react-window'
 import type {
   SbomComponent,
   SbomVulnerability,
@@ -1087,52 +1088,18 @@ function VulnerabilitiesTab({ projectId, vulnerabilities }: {
         </div>
       ) : (
         <>
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-border text-left text-xs text-muted-foreground">
-                <th className="py-2 pr-2 w-8" onClick={(e) => e.stopPropagation()}>
-                  <input
-                    type="checkbox"
-                    checked={sortedVulns.length > 0 && selectedIds.size === sortedVulns.length}
-                    ref={(el) => { if (el) el.indeterminate = selectedIds.size > 0 && selectedIds.size < sortedVulns.length }}
-                    onChange={toggleSelectAll}
-                    className="h-3.5 w-3.5 rounded border-border accent-primary cursor-pointer"
-                  />
-                </th>
-                <th className="py-2 pr-2 w-6"></th>
-                <th className="py-2 pr-4 font-medium cursor-pointer select-none hover:text-foreground" onClick={() => handleSort('cve')}>
-                  <span className="inline-flex items-center gap-1">CVE <SortIcon column="cve" /></span>
-                </th>
-                <th className="py-2 pr-4 font-medium cursor-pointer select-none hover:text-foreground" onClick={() => handleSort('component')}>
-                  <span className="inline-flex items-center gap-1">Component <SortIcon column="component" /></span>
-                </th>
-                <th className="py-2 pr-4 font-medium cursor-pointer select-none hover:text-foreground" onClick={() => handleSort('cvss')}>
-                  <span className="inline-flex items-center gap-1">CVSS <SortIcon column="cvss" /></span>
-                </th>
-                <th className="py-2 pr-4 font-medium cursor-pointer select-none hover:text-foreground" onClick={() => handleSort('severity')}>
-                  <span className="inline-flex items-center gap-1">Severity <SortIcon column="severity" /></span>
-                </th>
-                <th className="py-2 pr-4 font-medium">Status</th>
-                <th className="py-2 pr-4 font-medium">Description</th>
-              </tr>
-            </thead>
-            <tbody>
-              {sortedVulns.map((v, idx) => (
-                <VulnerabilityRow
-                  key={v.id}
-                  vuln={v}
-                  isSelected={selectedIds.has(v.id)}
-                  isExpanded={expandedRows.has(v.id)}
-                  isFocused={focusedIndex === idx}
-                  onToggleSelect={() => toggleSelected(v.id)}
-                  onToggleExpand={() => toggleExpand(v.id)}
-                  onResolve={(status, justification) => onResolve(v.id, status, justification)}
-                />
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <VirtualizedVulnTable
+          sortedVulns={sortedVulns}
+          selectedIds={selectedIds}
+          expandedRows={expandedRows}
+          focusedIndex={focusedIndex}
+          toggleSelected={toggleSelected}
+          toggleExpand={toggleExpand}
+          onResolve={onResolve}
+          toggleSelectAll={toggleSelectAll}
+          handleSort={handleSort}
+          SortIcon={SortIcon}
+        />
 
         {hasMore && (
           <div className="flex justify-center py-4">
@@ -1144,6 +1111,98 @@ function VulnerabilitiesTab({ projectId, vulnerabilities }: {
         )}
         </>
       )}
+    </div>
+  )
+}
+
+/**
+ * Virtualized vulnerability table. Splits out of the main component to keep
+ * hook ordering tidy (useDynamicRowHeight has an internal ResizeObserver
+ * lifecycle we want bound to this subtree's mount).
+ *
+ * Rows self-measure via useDynamicRowHeight because the expanded-detail panel
+ * has variable height (description wrapping, VEX buttons, justification input).
+ */
+interface VirtualizedVulnTableProps {
+  sortedVulns: SbomVulnerability[]
+  selectedIds: Set<string>
+  expandedRows: Set<string>
+  focusedIndex: number
+  toggleSelected: (id: string) => void
+  toggleExpand: (id: string) => void
+  onResolve: (vulnId: string, status: VulnerabilityResolutionStatus, justification?: string) => void
+  toggleSelectAll: () => void
+  handleSort: (col: SortColumn) => void
+  SortIcon: React.ComponentType<{ column: SortColumn }>
+}
+
+function VirtualizedVulnTable({
+  sortedVulns,
+  selectedIds,
+  expandedRows,
+  focusedIndex,
+  toggleSelected,
+  toggleExpand,
+  onResolve,
+  toggleSelectAll,
+  handleSort,
+  SortIcon,
+}: VirtualizedVulnTableProps) {
+  // Re-measure when expansion state flips (expanded panel adds ~150-300px).
+  const rowHeight = useDynamicRowHeight({
+    defaultRowHeight: 40,
+    key: [...expandedRows].sort().join(','),
+  })
+
+  return (
+    <div className="flex flex-col" style={{ minHeight: 400 }}>
+      {/* Header row — mirrors COLUMN_TEMPLATE from VulnerabilityRowVirtual */}
+      <div
+        className="grid items-center gap-0 border-b border-border text-left text-xs text-muted-foreground sticky top-0 z-10 bg-background"
+        style={{ gridTemplateColumns: COLUMN_TEMPLATE }}
+      >
+        <div className="py-2 pr-2" onClick={(e) => e.stopPropagation()}>
+          <input
+            type="checkbox"
+            checked={sortedVulns.length > 0 && selectedIds.size === sortedVulns.length}
+            ref={(el) => { if (el) el.indeterminate = selectedIds.size > 0 && selectedIds.size < sortedVulns.length }}
+            onChange={toggleSelectAll}
+            className="h-3.5 w-3.5 rounded border-border accent-primary cursor-pointer"
+          />
+        </div>
+        <div className="py-2 pr-2"></div>
+        <div className="py-2 pr-4 font-medium cursor-pointer select-none hover:text-foreground" onClick={() => handleSort('cve')}>
+          <span className="inline-flex items-center gap-1">CVE <SortIcon column="cve" /></span>
+        </div>
+        <div className="py-2 pr-4 font-medium cursor-pointer select-none hover:text-foreground" onClick={() => handleSort('component')}>
+          <span className="inline-flex items-center gap-1">Component <SortIcon column="component" /></span>
+        </div>
+        <div className="py-2 pr-4 font-medium cursor-pointer select-none hover:text-foreground" onClick={() => handleSort('cvss')}>
+          <span className="inline-flex items-center gap-1">CVSS <SortIcon column="cvss" /></span>
+        </div>
+        <div className="py-2 pr-4 font-medium cursor-pointer select-none hover:text-foreground" onClick={() => handleSort('severity')}>
+          <span className="inline-flex items-center gap-1">Severity <SortIcon column="severity" /></span>
+        </div>
+        <div className="py-2 pr-4 font-medium">Status</div>
+        <div className="py-2 pr-4 font-medium">Description</div>
+      </div>
+
+      {/* Virtualized body — fixed viewport height; only rows inside it render. */}
+      <List
+        rowComponent={VulnerabilityRowVirtual}
+        rowCount={sortedVulns.length}
+        rowHeight={rowHeight}
+        rowProps={{
+          vulns: sortedVulns,
+          selectedIds,
+          expandedRows,
+          focusedIndex,
+          onToggleSelect: toggleSelected,
+          onToggleExpand: toggleExpand,
+          onResolve,
+        }}
+        style={{ height: 'calc(100vh - 420px)', minHeight: 300 }}
+      />
     </div>
   )
 }
