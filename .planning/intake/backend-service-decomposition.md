@@ -13,6 +13,14 @@ target: backend/app/services/
 > 2026-04-20 summary for the next-session pickup prompt. Table in
 > "Problem" below still reflects the intake-time measurements; see
 > campaign file for current numbers.
+>
+> **Status note 2026-04-21 (Rule-19 audit):** Still pending — retained as partial.
+> Stream γ of the 2026-04-21 parallel-audit session is attempting the
+> `manifest_checks.py` split in worktree
+> `.worktrees/stream-gamma` on branch `feat/stream-gamma-manifest-checks-split-2026-04-21`.
+> If γ lands the 8-file split this session, flip priority 1 to done and re-scope this
+> intake to "4 remaining services." Priorities 2-5 (`security_audit_service.py`,
+> `sbom_service.py`, `mobsfscan_service.py`, `emulation_service.py`) remain queued.
 
 ## Problem
 
