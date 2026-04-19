@@ -7,11 +7,14 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
+from app.models.finding import Finding
 from app.models.firmware import Firmware
 from app.models.project import Project
 from app.schemas.finding import FindingCreate, FindingResponse, FindingUpdate
+from app.schemas.pagination import Page
 from app.services.finding_service import FindingService
 from app.services.report_service import generate_markdown_report, generate_pdf_report
+from app.utils.pagination import paginate_query
 
 router = APIRouter(
     prefix="/api/v1/projects/{project_id}/findings",
@@ -39,7 +42,7 @@ async def create_finding(
     return finding
 
 
-@router.get("", response_model=list[FindingResponse])
+@router.get("", response_model=Page[FindingResponse])
 async def list_findings(
     project_id: uuid.UUID,
     severity: str | None = Query(None),
@@ -50,11 +53,24 @@ async def list_findings(
     offset: int = Query(0, ge=0, description="Number of results to skip"),
     db: AsyncSession = Depends(get_db),
 ):
+    """List findings for a project (paged)."""
     await _get_project_or_404(project_id, db)
-    svc = FindingService(db)
-    return await svc.list_by_project(
-        project_id, severity=severity, status=status, source=source,
-        firmware_id=firmware_id, limit=limit, offset=offset,
+    stmt = select(Finding).where(Finding.project_id == project_id)
+    if severity:
+        stmt = stmt.where(Finding.severity == severity)
+    if status:
+        stmt = stmt.where(Finding.status == status)
+    if source:
+        stmt = stmt.where(Finding.source == source)
+    if firmware_id:
+        stmt = stmt.where(Finding.firmware_id == firmware_id)
+    stmt = stmt.order_by(Finding.created_at.desc())
+    items, total = await paginate_query(db, stmt, offset=offset, limit=limit)
+    return Page[FindingResponse](
+        items=[FindingResponse.model_validate(f) for f in items],
+        total=total,
+        offset=offset,
+        limit=limit,
     )
 
 

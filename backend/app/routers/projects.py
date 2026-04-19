@@ -7,6 +7,7 @@ from sqlalchemy.orm import selectinload
 
 from app.database import get_db
 from app.models.project import Project
+from app.schemas.pagination import Page
 from app.schemas.project import (
     ProjectCreate,
     ProjectListResponse,
@@ -14,6 +15,7 @@ from app.schemas.project import (
     ProjectUpdate,
 )
 from app.services.document_service import DocumentService
+from app.utils.pagination import paginate_query
 
 router = APIRouter(prefix="/api/v1/projects", tags=["projects"])
 
@@ -70,16 +72,20 @@ async def create_project(data: ProjectCreate, db: AsyncSession = Depends(get_db)
     return project
 
 
-@router.get("", response_model=list[ProjectListResponse])
+@router.get("", response_model=Page[ProjectListResponse])
 async def list_projects(
     limit: int = Query(100, ge=1, le=1000, description="Maximum results to return"),
     offset: int = Query(0, ge=0, description="Number of results to skip"),
     db: AsyncSession = Depends(get_db),
 ):
-    result = await db.execute(
-        select(Project).order_by(Project.created_at.desc()).limit(limit).offset(offset)
+    stmt = select(Project).order_by(Project.created_at.desc())
+    items, total = await paginate_query(db, stmt, offset=offset, limit=limit)
+    return Page[ProjectListResponse](
+        items=[ProjectListResponse.model_validate(p) for p in items],
+        total=total,
+        offset=offset,
+        limit=limit,
     )
-    return result.scalars().all()
 
 
 @router.get("/{project_id}", response_model=ProjectResponse)
