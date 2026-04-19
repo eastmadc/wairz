@@ -31,9 +31,12 @@ Read in order:
        #3 Rule-19 caught 4 stale intake premises.
 
   3. .planning/knowledge/wairz-intake-sweep-wave12-patterns.md
-     — 6 successful patterns + 3 candidate Learned Rules (#23/#24/#25).
+     — 6 successful patterns. The 3 former candidate rules have been
+       PROMOTED to Learned Rules #23/#24/#25 in CLAUDE.md (this session).
 
-  4. CLAUDE.md rules 1-22 canonical.
+  4. CLAUDE.md rules 1-25 canonical (with Rules #23/#24/#25 NEW this
+     session — parallel-dispatch branch isolation, tsc -b --force
+     requirement, multi-sub-task commit granularity).
 
   5. Predecessor handoff: .planning/knowledge/handoff-2026-04-19-session-69f004fe-end.md
 
