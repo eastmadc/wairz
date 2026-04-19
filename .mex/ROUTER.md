@@ -16,7 +16,7 @@ edges:
     condition: when adding, modifying, or debugging MCP tool handlers
   - target: patterns/INDEX.md
     condition: when starting a task — check the pattern index for a matching pattern file
-last_updated: 2026-04-17
+last_updated: 2026-04-19
 ---
 
 # Session Bootstrap
@@ -36,25 +36,31 @@ Then read this file fully before doing anything else in this session.
 - Host-side UART bridge (port 9999) and device acquisition bridge (port 9998).
 - Redis-backed arq job queue + SSE event bus (polling fallback if Redis is down).
 - 22 learned rules codified in CLAUDE.md, surfaced in `context/conventions.md` Verify Checklist.
-- Backend + frontend host ports bound to 127.0.0.1 by default (LAN-exposure mitigation for the unauthenticated `/ws` WebSocket, session 59045370 commit 10872d6).
+- Backend + frontend host ports bound to 127.0.0.1 by default (A.1 mitigation, session 59045370 commit 10872d6). Override file `docker-compose.override.yml` (gitignored) re-exposes them on 0.0.0.0 alongside a dev API_KEY for operator browser access.
+- **B.1 shipped (session 698549d4 commit 3d8aa10):** `APIKeyASGIMiddleware` covers http + websocket scopes. `/ws` terminal + `/{session_id}/terminal` emulation proxy both require `X-API-Key` header OR `api_key` query param; close code 4401 on auth fail. Frontend carries the key via per-request axios interceptor + query param on WS URLs. nginx index.html has explicit `Cache-Control: no-cache`; `/assets/*` has `immutable`. Dockerfile `ARG VITE_API_KEY` bakes the key into the static bundle at build time. B.1.a/b/c (require-api-key gate, slowapi rate limit, streaming upload-size) still pending.
 - Postgres + FirmAE passwords parameterized via env vars with backward-compatible defaults (session 59045370 commit 906cfe2).
 - `analysis_cache.operation` widened to VARCHAR(512) via alembic 1f6c72decc84 (session 59045370 commit e3053b6).
 - Binwalk3 escape-symlink artifact cleanup in the unpack fallback chain (session 59045370 commit 90ed79c) — prevents the "extraction succeeded but only a symlink exists" bug that surfaced on the PowerPack firmware.
+- `MAX_STANDALONE_BINARY_MB = 512` (session 59045370 commit ad29b23) — raises the bare-metal-as-standalone-binary cap from the old hardcoded 10 MB so 268 MB medical firmware (PowerPack) and typical automotive/IoT raw blobs analyse as standalone binaries. Env-overridable.
+- `useFirmwareList` hook + projectStore action invalidation (session 59045370 commit 97c7c7a) — 10 pages migrated; dedup'd the multi-caller `listFirmware` pattern.
+- `cwe_checker` AsyncSession-safety fix (session 59045370 commit b9f625a) — serialised batch; AST-based async-subprocess linter wired into `lint.yml`.
+- `/health/deep` endpoint (db + redis + docker socket + storage) — session 59045370 commit 3d14736.
 
 **Not yet built (per intake queue):**
-- Android hardware firmware detection (modem/TEE/Wi-Fi/GPU/DSP/drivers) — campaign planned.
+- Android hardware firmware detection (modem/TEE/Wi-Fi/GPU/DSP/drivers) — campaign planned (Option C.1/2/3).
 - APK deep-linking scan.
-- Backend decomposition of god-class services, shared cache module extraction, circular-import break-up.
-- Schema drift fixes (findings/firmware/CRA), CHECK/UNIQUE constraints, pagination on unbounded list endpoints.
-- Frontend code splitting + list virtualisation, `useFirmwareList` hook dedup, store isolation + project-id guards.
+- Backend decomposition of god-class services, shared cache module extraction, circular-import break-up (Option G).
+- Schema drift fixes (findings/firmware/CRA), CHECK/UNIQUE constraints, pagination on unbounded list endpoints (Option E).
+- Frontend code splitting + list virtualisation, store isolation + project-id guards.
 - Docker socket proxy, volume quotas + postgres backup.
+- B.1.a require-API-key-or-bail, B.1.b slowapi rate limit, B.1.c streaming upload-size check.
+- LATTE-style LLM binary taint analysis MCP tools (Option F).
+- arq cron for orphan emulation/fuzzing container reaping (Option D).
 
 **Known issues:**
-- `cwe_checker` tool shares an AsyncSession across `asyncio.gather` (fix queued as `backend-cwe-checker-session-fix`).
-- Double-shell injection risk in fuzzing service at `fuzzing_service.py:532` and `:827` (queued as `security-fuzzing-shell-injection`).
-- Android OTA/ZIP extraction needs hardening — per-entry realpath + symlink-escape checks missing (queued as `security-android-unpack-hardening`).
-- WebSocket endpoints bypass `BaseHTTPMiddleware`-based auth; `/ws` is unauthenticated (queued as `security-auth-hardening`). A.1 loopback bind is a network-layer mitigation; pure-ASGI middleware is the real fix.
-- Raw bare-metal firmware >10 MB (medical/automotive) with no recognisable container falls outside the standalone-binary copy path (`_STANDALONE_BINARY_MAX` in `unpack.py:771`). User may want to analyse a 268 MB raw blob; current code refuses past the limit.
+- Double-shell injection risk in fuzzing service at `fuzzing_service.py:532,827` + missing `shlex.quote` on `emulation_service.py:1383` (Option B.2, queued as `security-fuzzing-shell-injection`).
+- Android OTA/ZIP extraction needs hardening — per-entry realpath + symlink-escape checks missing; symlink external_attr mode never checked (Option B.3, queued as `security-android-unpack-hardening`).
+- Frontend container Docker healthcheck reports `unhealthy` because `wget -qO /dev/null http://localhost:3000/` resolves `localhost` to `::1` (IPv6) but nginx listens only on IPv4. Trivial Dockerfile fix (change to `127.0.0.1`); app serves HTTP 200 correctly.
 
 ## Routing Table
 
