@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.models.sbom import SbomComponent, SbomVulnerability
 from app.routers.deps import resolve_firmware as _resolve_firmware
+from app.schemas.pagination import Page
 from app.schemas.sbom import (
     SbomComponentResponse,
     SbomGenerateResponse,
@@ -27,6 +28,7 @@ from app.schemas.sbom import (
 )
 from app.services.sbom_service import SbomService
 from app.services.vulnerability_service import VulnerabilityService
+from app.utils.pagination import paginate_query_rows
 
 router = APIRouter(
     prefix="/api/v1/projects/{project_id}/sbom",
@@ -34,14 +36,12 @@ router = APIRouter(
 )
 
 
-async def _get_components_with_vuln_counts(
-    db: AsyncSession,
+def _components_with_vuln_counts_stmt(
     firmware_id: uuid.UUID,
     type_filter: str | None = None,
     name_filter: str | None = None,
-) -> list[SbomComponentResponse]:
-    """Load SBOM components with vulnerability counts."""
-    # Subquery for vulnerability counts
+):
+    """Build the composite SELECT for components + per-component vuln count."""
     vuln_count_sq = (
         select(
             SbomVulnerability.component_id,
@@ -63,9 +63,10 @@ async def _get_components_with_vuln_counts(
     if name_filter:
         stmt = stmt.where(SbomComponent.name.ilike(f"%{name_filter}%"))
 
-    result = await db.execute(stmt)
-    rows = result.all()
+    return stmt
 
+
+def _rows_to_component_responses(rows) -> list[SbomComponentResponse]:
     responses = []
     for row in rows:
         comp = row[0]
@@ -74,6 +75,23 @@ async def _get_components_with_vuln_counts(
         resp.vulnerability_count = vuln_count
         responses.append(resp)
     return responses
+
+
+async def _get_components_with_vuln_counts(
+    db: AsyncSession,
+    firmware_id: uuid.UUID,
+    type_filter: str | None = None,
+    name_filter: str | None = None,
+) -> list[SbomComponentResponse]:
+    """Load SBOM components with vulnerability counts (full set).
+
+    Used by the /generate and /export code paths that legitimately need
+    every component to build a complete SBOM document.
+    """
+    stmt = _components_with_vuln_counts_stmt(firmware_id, type_filter, name_filter)
+    result = await db.execute(stmt)
+    rows = result.all()  # bounded: full SBOM required for generate/export doc
+    return _rows_to_component_responses(rows)
 
 
 @router.post("/generate", response_model=SbomGenerateResponse)
@@ -187,16 +205,23 @@ async def generate_sbom(
     )
 
 
-@router.get("", response_model=list[SbomComponentResponse])
+@router.get("", response_model=Page[SbomComponentResponse])
 async def list_sbom_components(
     type: str | None = Query(None, description="Filter by component type"),
     name: str | None = Query(None, description="Filter by component name (partial match)"),
+    limit: int = Query(100, ge=1, le=1000, description="Maximum results to return"),
+    offset: int = Query(0, ge=0, description="Number of results to skip"),
     firmware=Depends(_resolve_firmware),
     db: AsyncSession = Depends(get_db),
 ):
-    """List SBOM components for a project's firmware."""
-    return await _get_components_with_vuln_counts(
-        db, firmware.id, type_filter=type, name_filter=name
+    """List SBOM components for a project's firmware (paged)."""
+    stmt = _components_with_vuln_counts_stmt(firmware.id, type, name)
+    rows, total = await paginate_query_rows(db, stmt, offset=offset, limit=limit)
+    return Page[SbomComponentResponse](
+        items=_rows_to_component_responses(rows),
+        total=total,
+        offset=offset,
+        limit=limit,
     )
 
 
@@ -209,7 +234,7 @@ async def export_sbom(
     """Export SBOM in CycloneDX JSON, SPDX 2.3 JSON, or CycloneDX VEX JSON format."""
     stmt = select(SbomComponent).where(SbomComponent.firmware_id == firmware.id)
     result = await db.execute(stmt)
-    components = result.scalars().all()
+    components = result.scalars().all()  # bounded: full SBOM required to build export doc
 
     if not components:
         raise HTTPException(404, "No SBOM generated yet. Run POST /generate first.")
@@ -352,7 +377,7 @@ async def scan_vulnerabilities(
 
 
 @router.get(
-    "/vulnerabilities", response_model=list[SbomVulnerabilityResponse]
+    "/vulnerabilities", response_model=Page[SbomVulnerabilityResponse]
 )
 async def list_vulnerabilities(
     severity: str | None = Query(None, description="Filter by severity"),
@@ -368,7 +393,7 @@ async def list_vulnerabilities(
     firmware=Depends(_resolve_firmware),
     db: AsyncSession = Depends(get_db),
 ):
-    """List vulnerability matches for this firmware's SBOM."""
+    """List vulnerability matches for this firmware's SBOM (paged)."""
     stmt = (
         select(SbomVulnerability, SbomComponent.name, SbomComponent.version)
         .join(
@@ -390,10 +415,7 @@ async def list_vulnerabilities(
             SbomVulnerability.resolution_status == resolution_status
         )
 
-    stmt = stmt.limit(limit).offset(offset)
-
-    result = await db.execute(stmt)
-    rows = result.all()
+    rows, total = await paginate_query_rows(db, stmt, offset=offset, limit=limit)
 
     responses = []
     for vuln, comp_name, comp_version in rows:
@@ -402,7 +424,12 @@ async def list_vulnerabilities(
         resp.component_version = comp_version
         responses.append(resp)
 
-    return responses
+    return Page[SbomVulnerabilityResponse](
+        items=responses,
+        total=total,
+        offset=offset,
+        limit=limit,
+    )
 
 
 @router.patch(
@@ -488,7 +515,7 @@ async def push_to_dependency_track(
     # Build CycloneDX JSON from components
     stmt = select(SbomComponent).where(SbomComponent.firmware_id == firmware.id)
     result = await db.execute(stmt)
-    components = result.scalars().all()
+    components = result.scalars().all()  # bounded: full SBOM required for Dependency-Track push
 
     if not components:
         raise HTTPException(404, "No SBOM generated yet. Run POST /generate first.")
