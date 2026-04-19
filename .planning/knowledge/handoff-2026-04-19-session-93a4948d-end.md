@@ -196,6 +196,57 @@ Entry points:
 
 The daemon-chained path: SessionStart hook → detect campaign → resume archon → load campaign Continuation State → present Options A.3 / E / D for user selection → execute.
 
+## Bug-fix session variant (alternative starter prompt)
+
+Use this instead of the Phase-5 prompt at the top if the next session is
+for bug fixes rather than planned campaign work:
+
+```
+Bug-fix session. Campaign wairz-intake-sweep-2026-04-19 is still active
+(Phase 5 2/3 complete) but paused — do NOT dispatch Phase 5 work.
+
+Post-session HEAD from predecessor = 8413da9. /learn added 2 quality
+rules (harness.json 21 → 23). All services healthy, gates green
+(see verification block in handoff-2026-04-19-session-93a4948d-end.md).
+
+I will describe the bug. Before I do:
+  1. Run the verification gate at the top of the predecessor handoff
+     to confirm nothing drifted since 8413da9.
+  2. If a HAR / stack trace / screenshot is referenced, ask me for the
+     path or for me to paste the relevant slice. Do NOT invent bug
+     context.
+  3. Route through /systematic-debugging skill if the bug isn't a
+     trivial one-line fix — 4-phase observe/hypothesize/verify/fix
+     protocol with emergency stop after 2 failed fix attempts.
+  4. Apply Rule #8 rebuild discipline: if the fix touches
+     backend/app/**/*.py it needs docker compose up -d --build
+     backend worker before ANY verification (Rule #1 — not restart).
+     Exception: pure-Python edits on a non-class-shape symbol can
+     iterate via docker cp + exec per Rule #20.
+  5. Rule #25 commit discipline: one commit per independently-
+     verifiable fix. Don't bundle unrelated bugs in one commit.
+
+Known punch-list items from predecessor handoff (may or may not match
+what I'm about to describe):
+  - Frontend healthcheck (unhealthy) — pre-existing IPv6/IPv4 mismatch
+    in `wget -qO /dev/null http://localhost:3000/`. Dockerfile fix:
+    swap `localhost` for `127.0.0.1`. ~5 min.
+  - .mex/ROUTER.md Current Project State drift — says "22 learned
+    rules" (actually 25 in CLAUDE.md); "Not yet built" lists shipped
+    items. ~10 min doc hygiene.
+  - Stale AnalysisCache docstrings in mobsfscan/jadx/android_bytecode
+    (session 93a4948d anti-pattern #5) — docstrings reference the old
+    model name post-_cache migration. ~5 min.
+  - pg-backup first-run sanity — `ls ./backups/wairz_*.dump` should
+    show ≥1 file by now (started pg-backup ~2+ hours ago). Verify;
+    if empty, debug the pg-backup container logs.
+  - 37 function-local `from app.services.*` imports remain (Phase 5
+    P3 deferred). Not a bug per se, but flagged by static analysis.
+
+None of the above have reported user-impact; they're hygiene threads.
+Real user-reported bugs take precedence. Ask me what to fix.
+```
+
 ## Learnings worth extracting via /learn (post-session)
 
 Three patterns discovered this session deserve knowledge-base capture:
