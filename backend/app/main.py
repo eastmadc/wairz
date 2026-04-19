@@ -183,12 +183,15 @@ async def health_deep():
     except Exception as exc:
         checks["redis"] = {"ok": False, "error": str(exc)[:200]}
 
-    # Docker socket presence — cheap stat, no privileged op
-    docker_sock = "/var/run/docker.sock"
-    checks["docker"] = {
-        "ok": os.path.exists(docker_sock),
-        **({} if os.path.exists(docker_sock) else {"error": "socket missing"}),
-    }
+    # Docker daemon reachable via the socket proxy — read-only containers.list call
+    # verifies both DOCKER_HOST connectivity and the proxy's CONTAINERS=1 allowlist.
+    try:
+        from app.utils.docker_client import get_docker_client
+        client = get_docker_client()
+        client.containers.list(limit=1)
+        checks["docker"] = {"ok": True}
+    except Exception as exc:
+        checks["docker"] = {"ok": False, "error": str(exc)[:200]}
 
     # Storage root
     checks["storage"] = {
