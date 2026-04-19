@@ -153,6 +153,12 @@
         "pattern": "delete\\(AnalysisCache\\)\\.where\\(",
         "filePattern": "{backend/app/services/**/*.py,backend/app/routers/**/*.py,backend/app/ai/**/*.py,backend/app/mcp_server.py}",
         "message": "Learned from intake-sweep session 93a4948d Phase 5 (backend-cache-module-extraction-and-ttl): use app.services._cache helpers (store_cached / get_cached / exists_cached / invalidate_firmware / cleanup_older_than) instead of hand-rolling the delete-then-insert pattern against AnalysisCache. The helpers are the canonical path \u2014 they handle firmware-wide (binary_sha256 IS NULL) keys, issue flush() so callers own commit(), and their delete-then-insert is idempotent without relying on the unique constraint. Exemptions: app/services/_cache.py itself, app/services/export_service.py and app/services/import_service.py (legitimate bulk patterns), test files."
+      },
+      {
+        "name": "auto-frontend-rebuild-not-restart",
+        "pattern": "docker\\s+compose\\s+restart\\s+frontend\\b",
+        "filePattern": "{.planning/**/*.md,CLAUDE.md,.mex/**/*.md}",
+        "message": "Learned from intake-sweep session 93a4948d (CLAUDE.md Rule #26): `docker compose restart frontend` reuses the stale image \u2014 the baked-in `/usr/share/nginx/html/dist` does NOT pick up code changes under `frontend/src/**`. Use `docker compose up -d --build frontend` instead. Session 93a4948d incident: a TypeError thrown in Sidebar.tsx from `projects.map(...)` traced to a frontend container built before Zeta's `unwrap()` helper landed; `projectStore.fetchProjects` was getting `{items:[...]}` from the new backend Page-envelope response, but the pre-Zeta bundle returned that raw to the store. Companion to Rule #8 (backend+worker rebuild discipline)."
       }
     ]
   },
