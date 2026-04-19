@@ -4,17 +4,16 @@ import asyncio
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.models.analysis_cache import AnalysisCache
 from app.routers.deps import resolve_firmware as _resolve_firmware
 from app.schemas.component_map import (
     ComponentEdgeResponse,
     ComponentGraphResponse,
     ComponentNodeResponse,
 )
+from app.services import _cache
 from app.services.component_map_service import ComponentMapService
 
 router = APIRouter(
@@ -33,22 +32,18 @@ async def get_component_map(
     The result is cached per firmware — first call may take 10-25 seconds
     while subsequent calls return instantly.
     """
-    # Check cache first
-    stmt = select(AnalysisCache).where(
-        AnalysisCache.firmware_id == firmware.id,
-        AnalysisCache.operation == "component_map",
-    ).limit(1)
-    result = await db.execute(stmt)
-    cached = result.scalar_one_or_none()
+    # Check cache first (firmware-wide entry; binary_sha256 IS NULL)
+    cached = await _cache.get_cached(
+        db, firmware.id, "component_map",
+    )
 
-    if cached and cached.result:
-        data = cached.result
+    if cached:
         return ComponentGraphResponse(
-            nodes=[ComponentNodeResponse(**n) for n in data["nodes"]],
-            edges=[ComponentEdgeResponse(**e) for e in data["edges"]],
-            node_count=len(data["nodes"]),
-            edge_count=len(data["edges"]),
-            truncated=data.get("truncated", False),
+            nodes=[ComponentNodeResponse(**n) for n in cached["nodes"]],
+            edges=[ComponentEdgeResponse(**e) for e in cached["edges"]],
+            node_count=len(cached["nodes"]),
+            edge_count=len(cached["edges"]),
+            truncated=cached.get("truncated", False),
         )
 
     # Build graph (CPU-bound, run in thread) — Phase 3b: multi-root
@@ -77,13 +72,12 @@ async def get_component_map(
 
     # Store in cache (only if we found components — avoid caching empty results)
     if nodes_data:
-        cache_entry = AnalysisCache(
-            firmware_id=firmware.id,
-            operation="component_map",
-            result={"nodes": nodes_data, "edges": edges_data, "truncated": graph.truncated},
+        await _cache.store_cached(
+            db,
+            firmware.id,
+            "component_map",
+            {"nodes": nodes_data, "edges": edges_data, "truncated": graph.truncated},
         )
-        db.add(cache_entry)
-        await db.flush()
 
     return ComponentGraphResponse(
         nodes=[ComponentNodeResponse(**n) for n in nodes_data],
