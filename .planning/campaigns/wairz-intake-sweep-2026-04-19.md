@@ -121,13 +121,17 @@ Clear the entire `.planning/intake/` backlog of 20 pending items by decomposing 
 - Phase 7: 0 (maintenance sweep at campaign end).
 
 **Next session pickup order:**
-1. Read this campaign file + `.planning/knowledge/handoff-2026-04-19-session-435cb5c2-end.md` + `.planning/knowledge/wairz-intake-sweep-wave12-antipatterns.md`.
-2. Dispatch options (user preference from 435cb5c2 — cross-phase file-disjoint):
-   - **Wave 3 candidate** (3 parallel, file-disjoint): `infra-volumes-quotas-and-backup` + `apk-scan-deep-linking` + `frontend-store-isolation-and-types`.
-   - **Phase 5 serial session**: cache-module-extraction → private-api + circular-imports → god-class decomposition. Ordering matters; do NOT parallelise.
-   - **Phase 6 parallel**: `feature-android-hardware-firmware-detection` (C.1 Adreno+WCNSS) alongside any other file-disjoint item.
-3. **Apply Wave 2 harness lessons:** if Fleet agents will touch overlapping file surfaces (frontend api/, backend routers/, etc.), instruct each agent to `git checkout -b feat/stream-{name}-{date}` BEFORE any writes, and have orchestrator merge sequentially. Accept that `isolation: "worktree"` alone does not isolate working trees.
-4. End-condition batteries from campaign table remain canonical.
+1. Read this campaign file + `.planning/knowledge/handoff-2026-04-19-session-435cb5c2-end.md` + `.planning/knowledge/wairz-intake-sweep-wave12-antipatterns.md` + `.planning/prompts/next-session-wave3-2026-04-XX.md` (the ready-to-paste Wave 3 starter prompt).
+2. **Wave 3 recommended plan (Option B, deep-researched 2026-04-19 post-Wave-2):** 3 parallel streams per-branch-isolated, expected yield 5+ intakes/session.
+   - **Stream α** — Infra bundled (SERIAL within, both touch docker-compose.yml): `infra-secrets-and-auth-defaults` finish-partial + `infra-volumes-quotas-and-backup`. Build storage-quota + pg_dump cron on top of Delta's arq cron. DO NOT regress docker-socket-proxy from Phase 1.
+   - **Stream β** — `frontend-store-isolation-and-types` (S1 store reset race + S2 project-id guard + S3 DeviceAcquisitionPage `as any` removal). ~400 LOC surface; tsc `-b --force` only.
+   - **Stream γ** — Phase 7 maintenance sweep (batched): apk-scan-deep-linking Rule-19 verify (body says completed, YAML header pending; confirm & mark), 5 stale security-* intake close-outs, 4 harness.json quality rules (bypass protect-files hook carefully — ask Dustin first), frontend healthcheck → /ready, fix wairz-mcp --list-tools CLI.
+3. **Alternative dispatch:**
+   - **Phase 5 serial session** (dedicated): cache-module-extraction → private-api + circular-imports (8+ inline `from app.services import X` workarounds; 70 cross-imports baseline) → god-class decomposition (8 services > 1000 LOC; target <800). Ordering matters; do NOT parallelise.
+   - **Phase 6 HW-firmware spin-out**: `feature-android-hardware-firmware-detection` is a 5-phase / ~6-session campaign. Recommend creating `.planning/campaigns/android-hw-firmware.md` and treating as its own work stream.
+4. **CRITICAL dispatch discipline (Wave-2 anti-pattern #1):** every Wave 3 sub-agent MUST run `git checkout -b feat/stream-{name}-2026-04-XX` FIRST, before any file write. `isolation: "worktree"` + `worktreePath: "ok"` does NOT isolate working trees (3 cross-stream sweeps in 6 streams = 50% hit rate observed this session). Orchestrator merges branches sequentially after all streams complete.
+5. End-condition batteries from campaign table remain canonical. Global `/health/deep` + DPCS10 canary + auth matrix in every stream's verification regardless of scope.
+6. Remaining inventory audit: 8-10 actionable items depending on apk-scan Rule-19 outcome; quick-wins Q4 is Phase-5-blocked; next-session-plan.md is stale documentation, not an action item.
 
 **Active streams this session:** none at handoff.
 
