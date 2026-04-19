@@ -35,6 +35,15 @@ export async function getDeviceInfo(
   return data
 }
 
+// startDump() kicks off an ADB dump via the device bridge. The trigger
+// call itself is typically fast, but when the bridge is slow to
+// enumerate partitions or the device is mid-reboot the initial POST can
+// stall past the default axios 30 s and surface a fake "failed to
+// start dump" while the bridge eventually succeeds and the actual dump
+// begins. 5 min matches the HASH_SCAN_TIMEOUT tier used by findings.ts
+// for hashlookup-style bridge calls (b437095).
+const DEVICE_BRIDGE_TIMEOUT = 300_000
+
 export async function startDump(
   projectId: string,
   deviceId: string,
@@ -43,6 +52,7 @@ export async function startDump(
   const { data } = await apiClient.post<DumpStatus>(
     `/projects/${projectId}/device/dump`,
     { device_id: deviceId, partitions },
+    { timeout: DEVICE_BRIDGE_TIMEOUT },
   )
   return data
 }
