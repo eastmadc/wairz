@@ -2,10 +2,8 @@ import asyncio
 import os
 from collections import Counter
 
-from sqlalchemy import select
-
 from app.ai.tool_registry import ToolContext, ToolRegistry
-from app.models.analysis_cache import AnalysisCache
+from app.services import _cache
 from app.services.component_map_service import ComponentMapService
 from app.utils.sandbox import safe_walk
 
@@ -195,16 +193,13 @@ async def _handle_find_files_by_type(input: dict, context: ToolContext) -> str:
 
 async def _handle_get_component_map(input: dict, context: ToolContext) -> str:
     """Return a text summary of the firmware component dependency graph."""
-    # Try cached graph first
-    stmt = select(AnalysisCache).where(
-        AnalysisCache.firmware_id == context.firmware_id,
-        AnalysisCache.operation == "component_map",
-    ).limit(1)
-    result = await context.db.execute(stmt)
-    cached = result.scalar_one_or_none()
+    # Firmware-wide cache entry (binary_sha256 IS NULL)
+    cached = await _cache.get_cached(
+        context.db, context.firmware_id, "component_map",
+    )
 
-    if cached and cached.result:
-        data = cached.result
+    if cached:
+        data = cached
     else:
         # Build graph (CPU-bound) — Phase 3b: multi-root
         extra = [
@@ -229,16 +224,13 @@ async def _handle_get_component_map(input: dict, context: ToolContext) -> str:
             "truncated": graph.truncated,
         }
 
-        # Cache the result
-        cache_entry = AnalysisCache(
-            firmware_id=context.firmware_id,
-            operation="component_map",
-            result={**data, "nodes": [
-                {**n, "metadata": {}} for n in data["nodes"]
-            ]},
+        # Cache the result (idempotent upsert)
+        await _cache.store_cached(
+            context.db,
+            context.firmware_id,
+            "component_map",
+            {**data, "nodes": [{**n, "metadata": {}} for n in data["nodes"]]},
         )
-        context.db.add(cache_entry)
-        await context.db.flush()
 
     nodes = data["nodes"]
     edges = data["edges"]
