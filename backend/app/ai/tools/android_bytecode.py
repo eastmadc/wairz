@@ -2,8 +2,9 @@
 
 Provides an MCP tool for scanning APK DEX bytecode for insecure API
 usage patterns using Androguard's analysis framework. Results are
-cached via AnalysisCache (SHA256-keyed) and findings persisted to
-the project findings database via flush().
+cached in the ``analysis_cache`` table (SHA256-keyed) via
+:mod:`app.services._cache`, and findings persisted to the project
+findings database via flush().
 """
 
 from __future__ import annotations
@@ -206,7 +207,7 @@ async def _handle_scan_apk_bytecode(input: dict, context: ToolContext) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Cache helpers (AnalysisCache pattern)
+# Cache helpers (thin wrappers over app.services._cache)
 # ---------------------------------------------------------------------------
 
 

@@ -318,7 +318,7 @@ class WairzRunner:
         """Normalize a pre-existing raw scan result without re-scanning.
 
         Useful for offline comparison when a previously cached scan
-        result is available (e.g., from the AnalysisCache table).
+        result is available (e.g., from the ``analysis_cache`` table).
 
         Parameters
         ----------
