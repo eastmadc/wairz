@@ -16,7 +16,7 @@ edges:
     condition: when adding, modifying, or debugging MCP tool handlers
   - target: patterns/INDEX.md
     condition: when starting a task — check the pattern index for a matching pattern file
-last_updated: 2026-04-19
+last_updated: 2026-04-20
 ---
 
 # Session Bootstrap
@@ -35,7 +35,7 @@ Then read this file fully before doing anything else in this session.
 - Docker socket-based sidecar launch for QEMU emulation, AFL++ fuzzing, FirmAE system-mode.
 - Host-side UART bridge (port 9999) and device acquisition bridge (port 9998).
 - Redis-backed arq job queue + SSE event bus (polling fallback if Redis is down).
-- 22 learned rules codified in CLAUDE.md, surfaced in `context/conventions.md` Verify Checklist.
+- 26 learned rules codified in CLAUDE.md, surfaced in `context/conventions.md` Verify Checklist (last addition: Rule #26 frontend rebuild discipline, session 2cb2cca).
 - Backend + frontend host ports bound to 127.0.0.1 by default (A.1 mitigation, session 59045370 commit 10872d6). Override file `docker-compose.override.yml` (gitignored) re-exposes them on 0.0.0.0 alongside a dev API_KEY for operator browser access.
 - **B.1 shipped (session 698549d4 commit 3d8aa10):** `APIKeyASGIMiddleware` covers http + websocket scopes. `/ws` terminal + `/{session_id}/terminal` emulation proxy both require `X-API-Key` header OR `api_key` query param; close code 4401 on auth fail. Frontend carries the key via per-request axios interceptor + query param on WS URLs. nginx index.html has explicit `Cache-Control: no-cache`; `/assets/*` has `immutable`. Dockerfile `ARG VITE_API_KEY` bakes the key into the static bundle at build time. B.1.a/b/c (require-api-key gate, slowapi rate limit, streaming upload-size) still pending.
 - Postgres + FirmAE passwords parameterized via env vars with backward-compatible defaults (session 59045370 commit 906cfe2).
@@ -46,21 +46,29 @@ Then read this file fully before doing anything else in this session.
 - `cwe_checker` AsyncSession-safety fix (session 59045370 commit b9f625a) — serialised batch; AST-based async-subprocess linter wired into `lint.yml`.
 - `/health/deep` endpoint (db + redis + docker socket + storage) — session 59045370 commit 3d14736.
 
+**Recently shipped (post-2026-04-19 session cluster):**
+- Docker socket proxy (`wairz-docker-proxy-1`), volume quotas + pg-backup sidecar (2440150/51770af/5f08db1/50a9ca6/3f60398). Storage quotas → 507 pre-upload, cleanup/reconcile crons in arq.
+- Shared cache module extraction: `app.services._cache` + migration of ghidra/cwe/jadx/mobsfscan/firmware_metadata/apk_scan/component_map/save_code_cleanup cache access (d100595 → 909101c). `kernel_service↔emulation_service` circular import broken (68ecb64). Phase 5 cache refactor shipped 2/3 parts; Phase 5 god-class decomposition (manifest_checks, security_audit, …) still pending.
+- Frontend store isolation + `ProjectRouteGuard` project-id guards (72ec063, 9bcf379).
+- Frontend store device-type tightening (rolled into same cluster).
+- Pagination envelopes on `/projects`, `/findings`, `/attack-surface`, and others (session 435cb5c2 Stream Beta; frontend `unwrap(data)` helper in 3063283; Rule #26 born from stale-bundle incident 2cb2cca).
+- Page-envelope `useFirmwareList` hook migration for 10 frontend pages (97c7c7a).
+
 **Not yet built (per intake queue):**
 - Android hardware firmware detection (modem/TEE/Wi-Fi/GPU/DSP/drivers) — campaign planned (Option C.1/2/3).
 - APK deep-linking scan.
-- Backend decomposition of god-class services, shared cache module extraction, circular-import break-up (Option G).
-- Schema drift fixes (findings/firmware/CRA), CHECK/UNIQUE constraints, pagination on unbounded list endpoints (Option E).
-- Frontend code splitting + list virtualisation, store isolation + project-id guards.
-- Docker socket proxy, volume quotas + postgres backup.
+- Backend decomposition of god-class services — partial. Phase 5 part 1 (manifest_checks 2589 LOC → subpackage) IN PROGRESS in the active campaign; parts 2-5 (security_audit_service, mobsfscan orchestration, ghidra, androguard) still pending (Option G).
+- Schema drift fixes (findings/firmware/CRA), CHECK/UNIQUE constraints, pagination on the *remaining* unbounded list endpoints (Option E).
+- Frontend code splitting + list virtualisation (store isolation + project-id guards → shipped, see above).
 - B.1.a require-API-key-or-bail, B.1.b slowapi rate limit, B.1.c streaming upload-size check.
 - LATTE-style LLM binary taint analysis MCP tools (Option F).
 - arq cron for orphan emulation/fuzzing container reaping (Option D).
+- Bucket-A + Bucket-B frontend timeout/catch-swallow follow-ups — IN PROGRESS (Wave 1 of active campaign).
 
 **Known issues:**
 - Double-shell injection risk in fuzzing service at `fuzzing_service.py:532,827` + missing `shlex.quote` on `emulation_service.py:1383` (Option B.2, queued as `security-fuzzing-shell-injection`).
 - Android OTA/ZIP extraction needs hardening — per-entry realpath + symlink-escape checks missing; symlink external_attr mode never checked (Option B.3, queued as `security-android-unpack-hardening`).
-- Frontend container Docker healthcheck reports `unhealthy` because `wget -qO /dev/null http://localhost:3000/` resolves `localhost` to `::1` (IPv6) but nginx listens only on IPv4. Trivial Dockerfile fix (change to `127.0.0.1`); app serves HTTP 200 correctly.
+- Frontend container Docker healthcheck → **fixed in active campaign Wave 1 γ1**: `docker-compose.yml` now probes `http://127.0.0.1:3000/` (IPv4). Pending frontend container recreate as part of Wave 1 merge to flip the status to `(healthy)`.
 
 ## Routing Table
 
