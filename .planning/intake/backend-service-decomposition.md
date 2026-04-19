@@ -5,6 +5,15 @@ priority: high
 target: backend/app/services/
 ---
 
+> **Status note (2026-04-20):** unchanged — no part shipped yet.
+> Attempted in session 2026-04-20 but deferred: `manifest_checks.py`
+> has grown to **2589 LOC** (from the 2263 measured at intake time),
+> and the full 8-file split requires a dedicated focused session.
+> See `.planning/campaigns/wairz-intake-sweep-2026-04-19.md` § Session
+> 2026-04-20 summary for the next-session pickup prompt. Table in
+> "Problem" below still reflects the intake-time measurements; see
+> campaign file for current numbers.
+
 ## Problem
 
 Five services are oversized and mix multiple responsibilities:

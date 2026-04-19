@@ -160,3 +160,99 @@ Clear the entire `.planning/intake/` backlog of 20 pending items by decomposing 
 <!-- session-end: 2026-04-19T19:18:15.812Z -->
 
 <!-- session-end: 2026-04-19T20:07:35.888Z -->
+
+<!-- session-end: 2026-04-19T21:35:44.290Z -->
+
+<!-- session-end: 2026-04-20 session {current} — Wave 1 close, Wave 2 deferred -->
+
+## Session 2026-04-20 summary (Wave 1 completion + Wave 2 deferral)
+
+**Shipped in this session (HEAD = 50ed62c, +15 commits atop 4970448):**
+
+Wave 1 Stream α — 6 API-client timeout extensions (commits cb4530d, e61aae0, 8ac05b5, e3e0dc0, d2b487a, d2025db; merged via c348222). Endpoints: uefi-scan, vulnerabilities/scan, hardware-firmware/cve-match, attack-surface/scan, cra/auto-populate, device/dump. Each endpoint now has an explicit `{ timeout: SECURITY_SCAN_TIMEOUT (600_000) }` or `{ timeout: DEVICE_BRIDGE_TIMEOUT (300_000) }` override matching the findings.ts pattern from b437095.
+
+Wave 1 Stream β — 3 frontend catch-swallow fixes (commits ad9f524, 974a9f5, 237422c; merged via d0523a8). DeviceAcquisitionPage bridge-poll → `catch (e)` + extractErrorMessage; ComparisonPage handleInstrDiff + handleDecompDiff → extractErrorMessage; CraChecklistTab loadAssessments + loadAssessment → silent fallback retained but `catch (e)` + console.warn for ops visibility (judgment-call site).
+
+Wave 1 Stream γ — 3-item hygiene cluster (commits c837167, 9d8dd6b, 7368c7b; merged via 50ed62c). γ1: frontend healthcheck probes `127.0.0.1:3000` instead of `localhost:3000` (IPv6/IPv4 mismatch fix — container now reports healthy). γ2: 5 files' docstrings rewritten to reference `analysis_cache` table / `app.services._cache` module instead of stale `AnalysisCache` class name (anti-pattern #5 in phase-5-cache-refactor). γ3: `.mex/ROUTER.md` Current Project State re-synced (22→26 rules; shipped items demoted from "Not yet built" to new "Recently shipped" section). γ4: pg-backup verified — 34 MB dump at `./backups/wairz_20260419_190757.dump`, container sleeping 24h (no commit, verification only).
+
+**Post-merge invariants:**
+- mcp_tools = 172, cron_jobs = 7, alembic head = 123cc2c5463a (unchanged)
+- Backend + frontend both report (healthy)
+- Frontend bundle verified: all 6 Stream α endpoints compile with `{timeout:VAR}` at call site; Stream β console.warn for CraChecklistTab visible in bundle
+
+**Wave 2 (Phase 5 part 1 — manifest_checks split) — DEFERRED:**
+- `manifest_checks.py` measured at **2589 LOC** (intake said 2263 — it has grown). Full 8-file decomposition in one session is 2-4 h of focused work with significant risk of mid-split breakage (18 check methods, deep self.* dependencies, shared helpers `_get_manifest_attr`/`_is_true`/`_is_false_or_absent` used across many methods).
+- No partial refactor shipped — avoids leaving the Mixin in a half-split state that breaks APK scanning.
+- Single importer: `androguard_service.py:17` (`from app.services.manifest_checks import ManifestChecksMixin, ManifestFinding`); `AndroguardService(ManifestChecksMixin)` inheritance at line 447.
+- Next-session plan below.
+
+**Next session pickup prompt (Wave 2 stream δ):**
+```
+Start Phase 5 part 1 — manifest_checks god-class split. Per intake
+backend-service-decomposition.md, convert ManifestChecksMixin (2589
+LOC at backend/app/services/manifest_checks.py) to composition.
+
+Shape:
+  manifest_checks/
+    __init__.py         — re-exports ManifestChecker, ManifestFinding
+    _base.py            — _MIN_SDK_* thresholds, _get_manifest_attr,
+                          _is_true, _is_false_or_absent (static helpers)
+    checker.py          — ManifestChecker class (thin public interface;
+                          composes all the below via attributes)
+    backup_and_debug.py — _check_debuggable, _check_allow_backup,
+                          _check_test_only, _check_backup_agent
+    network_security.py — _check_cleartext_traffic,
+                          _check_network_security_config,
+                          _check_trust_anchors, _check_pin_set (+NSC helpers)
+    components.py       — _check_exported_components,
+                          _check_strandhogg_v1, _check_strandhogg_v2,
+                          _check_app_links, _check_allow_task_reparenting,
+                          _check_implicit_intent_hijacking,
+                          _check_intent_scheme_hijacking
+    permissions.py      — _check_custom_permissions,
+                          _check_dangerous_permissions
+    signing.py          — _check_signing_scheme, _check_shared_user_id
+    misc.py             — _check_min_sdk
+
+Discipline (per Rule #25 + Rule #11):
+  - One commit per topic file extract (8 commits total)
+  - After EACH commit, run the 172-tool MCP invariant:
+      docker compose exec -T -e PYTHONPATH=/app -w /app backend \\
+        /app/.venv/bin/python -c "from app.ai import create_tool_registry; \\
+        print(len(create_tool_registry().get_anthropic_tools()))"
+    If != 172, revert that commit and root-cause before continuing.
+  - After the final commit, RUN a real APK scan (Rule #11 — constants
+    accessibility only surfaces at runtime). Use the DPCS10 or
+    RespArray firmware.
+  - Rule #8 rebuild (docker compose up -d --build backend worker)
+    runs ONCE at the end of the stream, not per commit.
+  - Use git worktree add (Rule #23) — branch name
+    feat/stream-delta-2026-04-21.
+
+Composition bridge to write in androguard_service.py:
+  - Remove class AndroguardService(ManifestChecksMixin) → bare class
+  - Add self.manifest_checker = ManifestChecker(self) in __init__
+  - Add a thin forwarder for each _check_* method called from
+    elsewhere in AndroguardService (grep for self._check_ in
+    androguard_service.py to find them).
+
+Acceptance:
+  - wc -l backend/app/services/manifest_checks.py → file gone
+  - ls backend/app/services/manifest_checks/ → 9 entries (8 topics +
+    __init__.py)
+  - grep -rn 'ManifestChecksMixin\|class AndroguardService(.*ManifestChecks'
+    backend/app/services → 0 hits (composition, not inheritance)
+  - 172 MCP tools invariant
+  - docker compose up -d --build backend worker + APK scan smoke test
+  - Full verification gate passes
+
+If the split hits ≥3 commit-revert cycles on the invariant, STOP and
+hand off — the intake explicitly anticipates this being multi-session.
+```
+
+**Operator action:** none required.
+
+**Blocking issues:** none.
+
+<!-- session-end: 2026-04-20 — Wave 1 (15 commits) landed; Wave 2 deferred -->
+
