@@ -71,6 +71,13 @@ export async function exportSbom(
   return data
 }
 
+// Vulnerability scan iterates every SBOM component and queries NVD (or the
+// local cache) for each PURL. On firmware with ~200 components and a cold
+// NVD cache the call routinely takes 2-5 minutes; the default axios 30 s
+// fires and surfaces a fake "scan failed". Matches SECURITY_SCAN_TIMEOUT
+// tier used in findings.ts for the other full-tree security scans.
+const SECURITY_SCAN_TIMEOUT = 600_000
+
 export async function runVulnerabilityScan(
   projectId: string,
   forceRescan = false,
@@ -79,7 +86,10 @@ export async function runVulnerabilityScan(
   const { data } = await apiClient.post<VulnerabilityScanResult>(
     `/projects/${projectId}/sbom/vulnerabilities/scan`,
     null,
-    { params: { force_rescan: forceRescan, firmware_id: firmwareId } },
+    {
+      params: { force_rescan: forceRescan, firmware_id: firmwareId },
+      timeout: SECURITY_SCAN_TIMEOUT,
+    },
   )
   return data
 }
