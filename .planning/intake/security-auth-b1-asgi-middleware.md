@@ -1,10 +1,16 @@
 ---
 title: "Security B.1: Pure-ASGI Auth Middleware (HTTP + WebSocket scopes)"
-status: pending
+status: completed
 priority: critical
 parent: security-auth-hardening.md
 target: backend/app/middleware/, backend/app/routers/terminal.py, backend/app/routers/emulation.py, backend/app/main.py, backend/app/config.py, frontend/src/api/terminal.ts, frontend/src/hooks/useTerminalWebSocket.ts, frontend/src/components/emulation/EmulationTerminal.tsx
 estimated: 2-3 hours
+completed_at: 2026-04-19
+completed_in: session 69f004fe phase 1
+shipped_commits:
+  - 3d8aa10  # feat(security): B.1 pure-ASGI auth middleware — http + websocket scopes
+  - de3f6bd  # feat(security): B.1.a/b — startup auth guard + slowapi rate limiting
+closed_by: wave3-stream-gamma (Rule-19 status-bump)
 ---
 
 ## Scope vs parent intake

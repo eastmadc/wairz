@@ -1,8 +1,13 @@
 ---
 title: "Security: Install docker-socket-proxy to Narrow Host Access"
-status: pending
+status: completed
 priority: critical
 target: docker-compose.yml, backend/app/services/, backend/app/ai/tools/
+completed_at: 2026-04-19
+completed_in: session 69f004fe phase 1
+shipped_commits:
+  - bac49ea  # feat(security): narrow Docker access via socket proxy (D.1)
+closed_by: wave3-stream-gamma (Rule-19 status-bump)
 ---
 
 ## Problem
