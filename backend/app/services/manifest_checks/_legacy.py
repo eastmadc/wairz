@@ -1,59 +1,37 @@
-"""Manifest security check methods for AndroguardService.
+"""Legacy monolithic Mixin — scheduled for decomposition.
 
-Extracted from androguard_service.py to keep file sizes manageable.
-Contains all 18 individual _check_* methods, helper methods for
-manifest attribute parsing, and the signatureOrSystem detection logic.
+This file contains the original ``ManifestChecksMixin`` and its 18
+``_check_*`` methods plus NSC helpers.  During Phase 5 part 1 of the
+backend-service-decomposition intake, methods are being extracted out
+into topic modules under ``manifest_checks/`` (``backup_and_debug.py``,
+``network_security.py``, ``components.py``, ``permissions.py``,
+``signing.py``, ``misc.py``).
 
-This module defines ManifestChecksMixin which AndroguardService inherits.
+Until the cut-over commit (step 8 of the 8-commit plan), this file
+continues to back ``AndroguardService(ManifestChecksMixin)`` inheritance
+unchanged.  Shared primitives (``ManifestFinding``, SDK thresholds, XML
+namespace, manifest-attribute helpers) live in ``_base.py`` and are
+re-imported here to avoid duplication.
 """
 
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
+import xml.etree.ElementTree as ET  # used by NSC analysis methods (MANIFEST-011)
 from typing import Any
 
+from app.services.manifest_checks._base import (
+    ManifestFinding,
+    _get_manifest_attr,
+    _is_false_or_absent,
+    _is_true,
+    _MIN_SDK_CRITICAL_THRESHOLD,
+    _MIN_SDK_SECURE_THRESHOLD,
+    _NS_ANDROID,
+    _sdk_to_android_version,
+)
+
 logger = logging.getLogger(__name__)
-
-# Minimum SDK version considered reasonably secure (Android 7.0 Nougat)
-_MIN_SDK_SECURE_THRESHOLD = 24
-# SDK below which is critically outdated (Android 4.4 KitKat)
-_MIN_SDK_CRITICAL_THRESHOLD = 19
-
-
-# ---------------------------------------------------------------------------
-# ManifestFinding dataclass (canonical definition)
-# ---------------------------------------------------------------------------
-# Re-exported by androguard_service.py for backward compatibility.
-
-@dataclass
-class ManifestFinding:
-    """A single manifest security finding."""
-
-    check_id: str
-    title: str
-    severity: str  # "critical", "high", "medium", "low", "info"
-    description: str
-    evidence: str = ""
-    cwe_ids: list[str] = field(default_factory=list)
-    confidence: str = "high"  # "high", "medium", "low"
-    suppressed: bool = False
-    suppression_reason: str = ""
-
-    def to_dict(self) -> dict[str, Any]:
-        d = {
-            "check_id": self.check_id,
-            "title": self.title,
-            "severity": self.severity,
-            "description": self.description,
-            "evidence": self.evidence,
-            "cwe_ids": self.cwe_ids,
-            "confidence": self.confidence,
-        }
-        if self.suppressed:
-            d["suppressed"] = True
-            d["suppression_reason"] = self.suppression_reason
-        return d
 
 
 class ManifestChecksMixin:
@@ -67,37 +45,11 @@ class ManifestChecksMixin:
     # Individual manifest checks
     # ------------------------------------------------------------------
 
-    @staticmethod
-    def _get_manifest_attr(apk_obj: Any, tag: str, attr: str) -> str | None:
-        """Extract a manifest attribute value via Androguard.
-
-        Returns the raw string value or None if the attribute is absent.
-        Tries both bare attribute name and full namespace URI since
-        Androguard behaviour varies by version.
-        """
-        ns = "http://schemas.android.com/apk/res/android"
-        for name in (attr, f"{{{ns}}}{attr}"):
-            try:
-                val = apk_obj.get_attribute_value(tag, name)
-                if val is not None:
-                    return str(val)
-            except Exception:
-                continue
-        return None
-
-    @staticmethod
-    def _is_true(val: str | None) -> bool:
-        """Check if a manifest attribute value represents boolean true."""
-        if val is None:
-            return False
-        return val.lower() in ("true", "0xffffffff", "-1")
-
-    @staticmethod
-    def _is_false_or_absent(val: str | None) -> bool:
-        """Check if a manifest attribute is absent or explicitly false."""
-        if val is None:
-            return True
-        return val.lower() in ("false", "0x0", "0")
+    # Bind the module-level helpers as static methods so
+    # ``self._get_manifest_attr(...)`` etc. continue to work unchanged.
+    _get_manifest_attr = staticmethod(_get_manifest_attr)
+    _is_true = staticmethod(_is_true)
+    _is_false_or_absent = staticmethod(_is_false_or_absent)
 
     def _check_debuggable(
         self,
@@ -495,7 +447,9 @@ class ManifestChecksMixin:
         ("provider", "Content Provider"),
     ]
 
-    _NS_ANDROID = "http://schemas.android.com/apk/res/android"
+    # Re-exported from _base._NS_ANDROID so ``self._NS_ANDROID`` in the
+    # methods below continues to resolve without widespread edits.
+    _NS_ANDROID = _NS_ANDROID
 
     def _check_exported_components(
         self, apk_obj: Any
@@ -2570,20 +2524,6 @@ class ManifestChecksMixin:
         return findings
 
 
-# ---------------------------------------------------------------------------
-# Module-level helpers
-# ---------------------------------------------------------------------------
-
-_SDK_VERSION_MAP: dict[int, str] = {
-    1: "1.0", 2: "1.1", 3: "1.5", 4: "1.6", 5: "2.0", 6: "2.0.1",
-    7: "2.1", 8: "2.2", 9: "2.3", 10: "2.3.3", 11: "3.0", 12: "3.1",
-    13: "3.2", 14: "4.0", 15: "4.0.3", 16: "4.1", 17: "4.2", 18: "4.3",
-    19: "4.4", 20: "4.4W", 21: "5.0", 22: "5.1", 23: "6.0", 24: "7.0",
-    25: "7.1", 26: "8.0", 27: "8.1", 28: "9.0", 29: "10", 30: "11",
-    31: "12", 32: "12L", 33: "13", 34: "14", 35: "15",
-}
-
-
-def _sdk_to_android_version(sdk: int) -> str:
-    """Map an SDK API level to a human-friendly Android version string."""
-    return _SDK_VERSION_MAP.get(sdk, f"API {sdk}")
+# Module-level helpers and constants (``_SDK_VERSION_MAP``,
+# ``_sdk_to_android_version``) are defined in ``_base.py`` and imported
+# at the top of this file.
