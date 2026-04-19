@@ -659,6 +659,27 @@ async def run_server(project_id: uuid.UUID) -> None:
         )
 
 
+def _print_tool_manifest() -> None:
+    """Print a sorted manifest of all registered MCP tools.
+
+    Used by ``wairz-mcp --list-tools``. Does NOT require a project or
+    database session — registry construction only enumerates static
+    tool definitions.
+    """
+    registry = _build_tool_registry()
+    tools = registry.get_anthropic_tools()
+    total = len(tools)
+    by_name = sorted(tools, key=lambda t: t["name"])
+    print(f"# wairz-mcp tool manifest — {total} tools", file=sys.stdout)
+    for tool in by_name:
+        name = tool["name"]
+        desc = (tool.get("description") or "").strip().splitlines()[0] if tool.get("description") else ""
+        if len(desc) > 100:
+            desc = desc[:97] + "..."
+        print(f"  {name:<44s}  {desc}", file=sys.stdout)
+    print(f"\nTotal: {total} tools", file=sys.stdout)
+
+
 def main() -> None:
     """CLI entry point for the wairz-mcp command."""
     parser = argparse.ArgumentParser(
@@ -666,11 +687,23 @@ def main() -> None:
     )
     parser.add_argument(
         "--project-id",
-        required=True,
         type=str,
-        help="UUID of the project to analyze.",
+        help="UUID of the project to analyze (required unless --list-tools).",
+    )
+    parser.add_argument(
+        "--list-tools",
+        action="store_true",
+        help="Print the registered MCP tool manifest and exit. "
+             "Does not require --project-id or a database connection.",
     )
     args = parser.parse_args()
+
+    if args.list_tools:
+        _print_tool_manifest()
+        sys.exit(0)
+
+    if not args.project_id:
+        parser.error("--project-id is required (or pass --list-tools)")
 
     try:
         project_id = uuid.UUID(args.project_id)
