@@ -3,7 +3,7 @@
   "framework": "fastapi+react",
   "packageManager": "pip+npm",
   "typecheck": {
-    "command": "npx tsc --noEmit",
+    "command": "npx tsc -b --force",
     "perFile": true
   },
   "test": {
@@ -105,6 +105,42 @@
         "pattern": "magic\\[0x[1-9a-f][0-9a-f]{2,}",
         "filePattern": "backend/app/services/hardware_firmware/classifier.py",
         "message": "Learned from feature-classifier-patterns-mcu-kernel: The detector reads only detector._MAGIC_READ_BYTES (64) bytes into `magic`. Indexing past 0x40 (64) silently fails to match. If a new format needs a deeper header check (e.g. iMX-RT BOOT_DATA @ 0x1000), widen _MAGIC_READ_BYTES with a rationale OR route through a per-format parser in parsers/, do not add an unreachable index."
+      },
+      {
+        "name": "auto-intake-sweep-1-no-stat-docker-sock",
+        "pattern": "os\\.path\\.exists\\([^)]*docker\\.sock",
+        "filePattern": "backend/app/**/*.py",
+        "message": "Learned from intake-sweep Phase 1 (commit bac49ea, /health/deep regression 29dba35): stat-based /var/run/docker.sock presence checks fail after the docker-socket-proxy migration because the raw socket is no longer mounted. Probe via get_docker_client().containers.list(limit=1) instead -- verifies BOTH DOCKER_HOST connectivity AND the proxy CONTAINERS allowlist."
+      },
+      {
+        "name": "auto-intake-sweep-1-no-docker-from-env",
+        "pattern": "docker\\.from_env\\(\\)",
+        "filePattern": "backend/app/**/*.py",
+        "message": "Learned from intake-sweep Phase 1 Stream D (commit bac49ea -- 10 sites across 8 files migrated): use get_docker_client() from app.utils.docker_client instead of docker.from_env(). The factory honours settings.docker_host which routes through the socket proxy; direct from_env() bypasses the proxy and breaks emulation/fuzzing/terminal flows once the raw socket mount is removed."
+      },
+      {
+        "name": "auto-wave3-pydantic-extra-ignore-on-api-schemas",
+        "pattern": "extra\\s*=\\s*['\"]ignore['\"]",
+        "filePattern": "backend/app/schemas/*.py",
+        "message": "Learned from intake-sweep Wave 3 stream beta (DeviceInfo BROM bug): Pydantic extra='ignore' on API-boundary schemas silently strips fields sent by the service layer -- DeviceInfo dropped 4 BROM fields, surfacing as (dev as any).mode === undefined at runtime with zero compile-time signal. Prefer extra='forbid' (loud drift) or explicit field declarations. Use extra='allow' only for ingestion DTOs with a documented reason."
+      },
+      {
+        "name": "auto-wave3-frontend-tsc-no-noemit",
+        "pattern": "tsc\\s+--noEmit",
+        "filePattern": "{**/package.json,.github/workflows/**}",
+        "message": "Learned from intake-sweep Waves 1+2+3 (CLAUDE.md Rule #24): wairz frontend tsconfig uses files: [] + project references; tsc --noEmit exits 0 silently without descending into referenced projects (Rule #17 silent-CLI-exit instance). Use npx tsc -b --force. Rule-17 canary mandatory once per session before trusting any green typecheck output: write a known-bad .ts file, run the command, confirm it fails."
+      },
+      {
+        "name": "auto-wave3-intake-yaml-status-lowercase",
+        "pattern": "^status:\\s+(Completed|Pending|Partial|Draft|Active)\\s*$",
+        "filePattern": ".planning/intake/**/*.md",
+        "message": "Learned from intake-sweep Wave 3 stream gamma: intake YAML status: values should be lowercase (completed, pending, partial, draft, active) for close-out query coherence. Capitalised values work but break case-sensitive greps (grep -l 'status: completed' misses capital-C entries; close-out queries must use grep -li). Status-bump should land in the same commit that ships the intake's work, not wait for a maintenance-sweep."
+      },
+      {
+        "name": "auto-fleet-worktree-requires-worktree-add",
+        "pattern": "git checkout -b feat/",
+        "filePattern": "{.planning/prompts/**/*.md,.planning/fleet/inputs/**/*.md,.planning/fleet/outputs/**/*.md}",
+        "message": "Learned from intake-sweep sessions 435cb5c2+198243b8 (CLAUDE.md Rule #23 refined by Wave-3 evidence): git checkout -b feat/{branch} ALONE is insufficient under shared on-disk checkout -- alpha and gamma saw 4 cross-stream commit-sweep incidents across 14 commits when they only used branch-checkout. Beta had 0 sweeps in 4 commits AFTER running git worktree add .worktrees/stream-{name} -b feat/stream-{name}-{date} and operating inside that path. Each parallel sub-agent prompt MUST issue git worktree add (not just git checkout -b) and operate inside .worktrees/<stream>/. The Fleet harness isolation: worktree sentinel is a no-op at the working-tree level."
       }
     ]
   },
@@ -167,7 +203,7 @@
     "sessions": 0,
     "campaigns": 0,
     "override": null,
-    "sessions_completed": 119
+    "sessions_completed": 120
   },
   "consent": {
     "externalActions": "session-allow"
