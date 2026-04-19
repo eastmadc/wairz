@@ -95,6 +95,57 @@ services:
         max-size: "50m"
         max-file: "5"
 
+  # Nightly PostgreSQL backup (infra-volumes V3). ``pg_dump -Fc`` against
+  # the primary postgres service, written into ``${BACKUP_DIR:-./backups}``
+  # on the host. 30-day retention, enforced inside the container via
+  # ``find -mtime +30 -delete``. Recovery procedure documented in
+  # docs/operations/backup-recovery.md.
+  pg-backup:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PGHOST: postgres
+      PGUSER: ${POSTGRES_USER:-wairz}
+      PGPASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required. Set it in .env (see .env.example)}
+      PGDATABASE: ${POSTGRES_DB:-wairz}
+    volumes:
+      - ${BACKUP_DIR:-./backups}:/backups
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -eu
+        echo "[pg-backup] Starting daily backup loop — sleeping until 03:30 on first run"
+        # Initial delay so we don't dump immediately on `docker compose up`
+        # — gives operators time to cancel / tune before the first write.
+        sleep 300
+        while true; do
+          TIMESTAMP=$$(date +%Y%m%d_%H%M%S)
+          OUT="/backups/wairz_$$TIMESTAMP.dump"
+          echo "[pg-backup] dumping to $$OUT"
+          if pg_dump --clean --if-exists -Fc -f "$$OUT"; then
+            echo "[pg-backup] dump complete: $$(stat -c '%s bytes' "$$OUT")"
+          else
+            echo "[pg-backup] dump FAILED" >&2
+            rm -f "$$OUT"
+          fi
+          # 30-day retention: delete dumps older than 30 days.
+          find /backups -maxdepth 1 -name 'wairz_*.dump' -mtime +30 -delete
+          echo "[pg-backup] sleeping 24h"
+          sleep 86400
+        done
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
   redis:
     image: redis:7-alpine
     restart: unless-stopped
