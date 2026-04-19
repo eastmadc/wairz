@@ -1000,19 +1000,12 @@ class MobsfScanPipeline:
         apk_sha256: str,
         db: "AsyncSession",
     ) -> dict | None:
-        """Retrieve a previously cached mobsfscan result from AnalysisCache."""
-        from sqlalchemy import select
+        """Retrieve a previously cached mobsfscan result."""
+        from app.services import _cache
 
-        from app.models.analysis_cache import AnalysisCache
-
-        stmt = select(AnalysisCache.result).where(
-            AnalysisCache.firmware_id == firmware_id,
-            AnalysisCache.binary_sha256 == apk_sha256,
-            AnalysisCache.operation == _CACHE_OP,
+        return await _cache.get_cached(
+            db, firmware_id, _CACHE_OP, binary_sha256=apk_sha256,
         )
-        result = await db.execute(stmt)
-        row = result.scalars().first()
-        return row if isinstance(row, dict) else None
 
     async def _store_cached_result(
         self,
@@ -1022,27 +1015,17 @@ class MobsfScanPipeline:
         result_data: dict,
         db: "AsyncSession",
     ) -> None:
-        """Store a mobsfscan result into AnalysisCache (delete-then-insert)."""
-        from sqlalchemy import delete
+        """Store a mobsfscan result (delete-then-insert upsert)."""
+        from app.services import _cache
 
-        from app.models.analysis_cache import AnalysisCache
-
-        await db.execute(
-            delete(AnalysisCache).where(
-                AnalysisCache.firmware_id == firmware_id,
-                AnalysisCache.binary_sha256 == apk_sha256,
-                AnalysisCache.operation == _CACHE_OP,
-            )
-        )
-        cache_entry = AnalysisCache(
-            firmware_id=firmware_id,
-            binary_path=apk_path,
+        await _cache.store_cached(
+            db,
+            firmware_id,
+            _CACHE_OP,
+            result_data,
             binary_sha256=apk_sha256,
-            operation=_CACHE_OP,
-            result=result_data,
+            binary_path=apk_path,
         )
-        db.add(cache_entry)
-        await db.flush()
 
     # ------------------------------------------------------------------
     # Rebuild helpers — reconstruct dataclasses from cached dicts
