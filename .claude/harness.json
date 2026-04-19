@@ -159,6 +159,18 @@
         "pattern": "docker\\s+compose\\s+restart\\s+frontend\\b",
         "filePattern": "{.planning/**/*.md,CLAUDE.md,.mex/**/*.md}",
         "message": "Learned from intake-sweep session 93a4948d (CLAUDE.md Rule #26): `docker compose restart frontend` reuses the stale image \u2014 the baked-in `/usr/share/nginx/html/dist` does NOT pick up code changes under `frontend/src/**`. Use `docker compose up -d --build frontend` instead. Session 93a4948d incident: a TypeError thrown in Sidebar.tsx from `projects.map(...)` traced to a frontend container built before Zeta's `unwrap()` helper landed; `projectStore.fetchProjects` was getting `{items:[...]}` from the new backend Page-envelope response, but the pre-Zeta bundle returned that raw to the store. Companion to Rule #8 (backend+worker rebuild discipline)."
+      },
+      {
+        "name": "auto-frontend-fake-scan-failed-error",
+        "pattern": "errors:\\s*\\[\\s*['\\\"](Scan failed|Security audit failed|YARA scan failed)['\\\"]\\s*\\]",
+        "filePattern": "frontend/src/**/*.{ts,tsx}",
+        "message": "Learned from session 93a4948d (CLAUDE.md Rule #2x bug-fix cluster): hardcoded fake-error arrays like `errors: ['Scan failed']` inside a `catch {}` block discard the real exception. Replace with `errors: [extractErrorMessage(e, 'Operation failed')]` and bind the exception with `catch (e) { ... }`. The backend is often succeeding while the UI claims failure \u2014 root cause is almost always a swallowed axios timeout from the default 30s on a long-running scan/audit endpoint. See .planning/knowledge/wairz-intake-sweep-bug-fixes-2026-04-19-antipatterns.md anti-pattern #1."
+      },
+      {
+        "name": "auto-frontend-long-op-no-explicit-timeout",
+        "pattern": "apiClient\\.(post|get)<[^>]+>\\([^)]*`[^`]*(audit|scan|export|import|dump|auto-populate|cve-match)[^`]*`[^)]*\\)",
+        "filePattern": "frontend/src/api/**/*.ts",
+        "message": "Learned from session 93a4948d (CLAUDE.md Rule #2x bug-fix cluster): long-running endpoints (audit/scan/export/import/dump/auto-populate/cve-match) must pass `{ timeout: N }` explicitly \u2014 the axios default is 30s (client.ts:6), and the observed runtime for these paths is minutes. Match the pattern in exportImport.ts (600_000), comparison.ts (300_000), findings.ts (SECURITY_SCAN_TIMEOUT / HASH_SCAN_TIMEOUT). Otherwise axios throws `timeout of 30000ms exceeded` while the backend continues running \u2014 a user-visible lie when combined with bare `catch {}`. See .planning/knowledge/wairz-intake-sweep-bug-fixes-2026-04-19-antipatterns.md anti-pattern #2 for 6 repeat sites to fix."
       }
     ]
   },
