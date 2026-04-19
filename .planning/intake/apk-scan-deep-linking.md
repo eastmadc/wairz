@@ -1,3 +1,12 @@
+---
+title: "APK Scan Deep Linking — Fix Required"
+status: completed
+priority: medium
+created: 2026-04-15
+completed: 2026-04-19
+completed_in: wave3-stream-gamma verify-only (Rule-19 close-out)
+---
+
 # APK Scan Deep Linking — Fix Required
 
 **Priority:** Medium
@@ -5,6 +14,10 @@
 **Created:** 2026-04-15
 **Completed:** 2026-04-19
 **Completed In:** wave3-stream-gamma verify-only (Rule-19 close-out)
+
+> **Status note 2026-04-21 (Rule-19 audit):** Added YAML frontmatter so the intake
+> scanner (`^status:` regex) picks up the already-shipped state. Content was closed
+> out in session 198243b8 (commit `e1f94c3`). No code change this session.
 
 ## Verification (wave3-stream-gamma)
 

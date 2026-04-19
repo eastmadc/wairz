@@ -1,9 +1,30 @@
 ---
 title: "Infra: Cleanup Scheduler + Migration Race Fix + Observability"
-status: pending
+status: completed
 priority: high
 target: backend/app/workers/, docker-compose.yml, backend/app/main.py, backend/entrypoint.sh
 ---
+
+> **Status note 2026-04-21 (Rule-19 audit):** Shipped via session 435cb5c2 Stream Delta
+> across 7 commits (see `.planning/campaigns/wairz-intake-sweep-2026-04-19.md` Phase 4
+> history). Live audit verified:
+> - **O1** arq cron jobs for cleanup — commits `0f3e87a` (FuzzingService.cleanup_orphans
+>   DB↔container reconciliation) and `e8548fd` (arq cron jobs). Seven cron entries now
+>   registered in `backend/app/workers/arq_worker.py:687-693`:
+>   `sync_kernel_vulns`, `cleanup_emulation_expired`, `cleanup_fuzzing_orphans`,
+>   `check_storage_quota`, `cleanup_tmp_dumps`, `reconcile_firmware_storage`,
+>   `cleanup_analysis_cache`.
+> - **O2** migration race fixed via one-shot `migrator` service: commit `b8b9bd9`.
+>   `docker-compose.yml:16` defines the service; lines 211 and 269 show
+>   `migrator: condition: service_completed_successfully` gating on backend + worker.
+> - **O3** observability —
+>   - structlog + prometheus-fastapi-instrumentator deps + JSON logging config: commit
+>     `a4e9eb8` (`backend/app/logging_config.py` exists, 3346 bytes).
+>   - `/ready` + `/metrics` via health router extraction: commit `566637a`.
+>   - `backend/app/main.py:147-151` wires the `Instrumentator().instrument(app)
+>     .expose(app, endpoint="/metrics", include_in_schema=False)` pipeline.
+>   - JSON logging fixups: commits `3a167ae` and `daa7ecf`.
+> This intake is retained for historical reference; further changes go in new intakes.
 
 ## Problem
 

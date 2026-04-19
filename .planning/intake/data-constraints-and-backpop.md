@@ -1,9 +1,25 @@
 ---
 title: "Data: Add CHECK Constraints, Unique Constraints, Missing Indexes, Relationship Back-Pop"
-status: pending
+status: completed
 priority: high
 target: backend/app/models/, backend/alembic/versions/
 ---
+
+> **Status note 2026-04-21 (Rule-19 audit):** Shipped via session 435cb5c2 Phase 2 Stream
+> Alpha (see `.planning/campaigns/wairz-intake-sweep-2026-04-19.md` Phase 2 history).
+> Live audit verified:
+> - **I1** CHECK constraints on 8 enum-like columns: commit `abb4a8e` (alembic
+>   `54c8864fbe0c_add_enum_check_constraints.py`).
+> - **I2** UNIQUE constraints (`uq_firmware_project_sha256`,
+>   `uq_sbom_components_firmware_name_version_cpe`): commit `128adca` (alembic
+>   `ca95e2723392_dedup_firmware_and_add_unique_.py`).
+> - **I3** missing indexes on `attack_surface.firmware_id` + `emulation.container_id`:
+>   commit `dc76c67` (alembic `123cc2c5463a_add_missing_indexes_attack_surface_.py`).
+> - **I4** Project `back_populates` for emulation_sessions / emulation_presets /
+>   uart_sessions / fuzzing_campaigns / attack_surface_entries: verified in
+>   `backend/app/models/project.py` (10 back_populates entries).
+> - ORM ↔ Pydantic parity tests added: commit `4cc5354`.
+> This intake is retained for historical reference; further changes go in new intakes.
 
 ## Problem
 
