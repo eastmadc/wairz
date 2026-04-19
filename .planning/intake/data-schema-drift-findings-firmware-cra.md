@@ -1,9 +1,26 @@
 ---
 title: "Data: Fix Schema Drift in Findings, Firmware, CRA"
-status: pending
+status: completed
 priority: critical
 target: backend/app/models/, backend/app/schemas/, backend/alembic/versions/
 ---
+
+> **Status note 2026-04-21 (Rule-19 audit):** Shipped via session 435cb5c2 Phase 2
+> Stream Alpha D1/D2/D3 (see `.planning/campaigns/wairz-intake-sweep-2026-04-19.md`
+> Phase 2 history). Live audit verified:
+> - **D1** `findings.source` backfilled + enforced NOT NULL: commit `fb10d28`
+>   (alembic `bb4acf97d9dd_backfill_and_enforce_findings_source_.py`). ORM
+>   `backend/app/models/finding.py:43` now declares
+>   `source: Mapped[str] = mapped_column(String(50), default="manual",
+>   server_default="manual")`.
+> - **D2** `FirmwareDetailResponse` fields restored:
+>   `backend/app/schemas/firmware.py:49` exposes `extraction_dir: str | None`,
+>   line 56 exposes `device_metadata: dict | None`.
+> - **D3** CRA JSONB columns retyped to `Mapped[list[str]]`:
+>   `backend/app/models/cra_compliance.py:81-92` (`finding_ids`, `tool_sources`,
+>   `related_cwes`, `related_cves`).
+> - ORM ↔ Pydantic parity regression test: commit `4cc5354`.
+> This intake is retained for historical reference; further changes go in new intakes.
 
 ## Problem
 
