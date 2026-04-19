@@ -21,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.models.analysis_cache import AnalysisCache
+from app.utils.docker_client import get_docker_client
 
 logger = logging.getLogger(__name__)
 
@@ -94,7 +95,7 @@ async def check_image_available() -> tuple[bool, str]:
     """Check if the cwe_checker Docker image is available."""
     try:
         import docker
-        client = docker.from_env()
+        client = get_docker_client()
         client.images.get(_image())
         return True, _image()
     except docker.errors.ImageNotFound:
@@ -225,7 +226,7 @@ async def run_cwe_checker(
 
     start = time.monotonic()
     try:
-        client = docker.from_env()
+        client = get_docker_client()
         raw = await asyncio.get_event_loop().run_in_executor(
             None,
             lambda: client.containers.run(

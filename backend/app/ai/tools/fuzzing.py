@@ -13,6 +13,7 @@ from app.config import get_settings
 from app.models.firmware import Firmware
 from app.models.fuzzing import FuzzingCampaign, FuzzingCrash
 from app.services.fuzzing_service import FuzzingService
+from app.utils.docker_client import get_docker_client
 
 
 def register_fuzzing_tools(registry: ToolRegistry) -> None:
@@ -951,7 +952,7 @@ async def _handle_diagnose_campaign(input: dict, context: ToolContext) -> str:
     afl_process_running = False
     if campaign.container_id and campaign.status == "running":
         try:
-            client = docker.from_env()
+            client = get_docker_client()
             container = client.containers.get(campaign.container_id)
 
             # Read AFL++ log

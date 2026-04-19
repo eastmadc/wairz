@@ -33,6 +33,7 @@ from app.services.emulation_constants import (
     _validate_kernel_file,
 )
 from app.services.emulation_preset_service import EmulationPresetService
+from app.utils.docker_client import get_docker_client
 from app.utils.sandbox import validate_path
 
 logger = logging.getLogger(__name__)
@@ -47,7 +48,7 @@ class EmulationService:
 
     def _get_docker_client(self) -> docker.DockerClient:
         """Create a Docker client (created per-call, not cached)."""
-        return docker.from_env()
+        return get_docker_client()
 
     def _normalize_arch(self, arch: str | None) -> str | None:
         if not arch:

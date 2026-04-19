@@ -2193,7 +2193,8 @@ async def _handle_get_crash_dump(input: dict, context: ToolContext) -> str:
         return "Error: session not found or no container."
 
     import docker
-    client = docker.from_env()
+    from app.utils.docker_client import get_docker_client
+    client = get_docker_client()
     try:
         container = client.containers.get(session.container_id)
     except docker.errors.NotFound:
@@ -2332,7 +2333,8 @@ async def _handle_run_gdb_command(input: dict, context: ToolContext) -> str:
         return "Error: no container associated with this session."
 
     import docker
-    client = docker.from_env()
+    from app.utils.docker_client import get_docker_client
+    client = get_docker_client()
     try:
         container = client.containers.get(session.container_id)
     except docker.errors.NotFound:

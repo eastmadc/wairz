@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import get_settings
 from app.models.emulation_session import EmulationSession
 from app.models.firmware import Firmware
+from app.utils.docker_client import get_docker_client
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +41,7 @@ class SystemEmulationService:
         self._settings = get_settings()
 
     def _get_docker_client(self) -> docker.DockerClient:
-        return docker.from_env()
+        return get_docker_client()
 
     def _resolve_host_path(self, container_path: str) -> str | None:
         """Translate backend-container path to host path for Docker mounts.

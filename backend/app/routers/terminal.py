@@ -20,6 +20,8 @@ import docker
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from sqlalchemy import select
 
+from app.utils.docker_client import get_docker_client
+
 from app.database import async_session_factory
 from app.models.emulation_session import EmulationSession
 from app.models.firmware import Firmware
@@ -52,7 +54,7 @@ def _resolve_host_path(container_path: str) -> str | None:
         return real_path
 
     try:
-        client = docker.from_env()
+        client = get_docker_client()
         our_container = client.containers.get(hostname)
         mounts = our_container.attrs.get("Mounts", [])
 
@@ -123,7 +125,7 @@ async def websocket_terminal(
     # Spawn a sandboxed Docker container
     loop = asyncio.get_running_loop()
     try:
-        client = await loop.run_in_executor(None, docker.from_env)
+        client = await loop.run_in_executor(None, get_docker_client)
     except Exception as exc:
         await websocket.send_json({"type": "error", "data": f"Docker unavailable: {exc}"})
         await websocket.close(code=4004)
@@ -362,7 +364,7 @@ async def websocket_tcp_proxy(
     loop = asyncio.get_running_loop()
 
     try:
-        client = await loop.run_in_executor(None, docker.from_env)
+        client = await loop.run_in_executor(None, get_docker_client)
         container = await loop.run_in_executor(
             None, client.containers.get, container_id,
         )
