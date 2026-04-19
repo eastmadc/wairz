@@ -402,6 +402,57 @@ async def cleanup_fuzzing_orphans_job(ctx: dict) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Cron: cleanup_tmp_dumps (infra-volumes V2)
+# ---------------------------------------------------------------------------
+
+async def cleanup_tmp_dumps_job(ctx: dict) -> dict:
+    """Daily cleanup of ``/tmp/wairz-dumps`` — 7-day age cut.
+
+    The dump directory is a host bind-mount (``docker-compose.yml:155,
+    213``) used by the device-acquisition bridge. Dumps persist across
+    container restarts and may contain sensitive firmware bytes; without
+    this reaper they accumulate until host reboot or manual cleanup.
+
+    Strategy: walk top-level entries, delete any whose ``mtime`` is older
+    than 7 days. Directories use ``shutil.rmtree``; files use
+    ``os.unlink``. Individual-entry errors are logged but don't abort the
+    sweep — partial progress is better than no progress on a noisy host.
+    """
+    import time
+    from datetime import timedelta
+
+    tmpdir = "/tmp/wairz-dumps"
+    if not os.path.isdir(tmpdir):
+        return {"status": "ok", "deleted": 0, "reason": "tmpdir-missing"}
+
+    cutoff = time.time() - timedelta(days=7).total_seconds()
+    deleted = 0
+    errors = 0
+    for name in os.listdir(tmpdir):
+        path = os.path.join(tmpdir, name)
+        try:
+            if os.path.getmtime(path) >= cutoff:
+                continue
+            if os.path.isfile(path) or os.path.islink(path):
+                os.unlink(path)
+            elif os.path.isdir(path):
+                shutil.rmtree(path, ignore_errors=False)
+            else:
+                continue
+            deleted += 1
+        except OSError as exc:
+            logger.warning("cleanup_tmp_dumps: failed to delete %s: %s", path, exc)
+            errors += 1
+
+    if deleted or errors:
+        logger.info(
+            "cleanup_tmp_dumps: tmpdir=%s deleted=%d errors=%d",
+            tmpdir, deleted, errors,
+        )
+    return {"status": "ok", "deleted": deleted, "errors": errors, "tmpdir": tmpdir}
+
+
+# ---------------------------------------------------------------------------
 # Cron: check_storage_quota (infra-volumes V1)
 # ---------------------------------------------------------------------------
 
@@ -465,6 +516,7 @@ class WorkerSettings:
         cleanup_emulation_expired_job,
         cleanup_fuzzing_orphans_job,
         check_storage_quota_job,
+        cleanup_tmp_dumps_job,
     ]
 
     # Scheduled cron jobs. Phase 3 / O1 adds the two cleanup reapers;
@@ -473,6 +525,7 @@ class WorkerSettings:
     #   - cleanup_emulation_expired_job : every 30 min (timeout-based reap)
     #   - cleanup_fuzzing_orphans_job   : every 30 min, offset 15 min (DB<->container)
     #   - check_storage_quota_job       : every hour at :15 (V1 disk-quota audit)
+    #   - cleanup_tmp_dumps_job         : daily 04:00 UTC (V2 dump reaper)
     # Staggering the reapers prevents them from contending for the same arq
     # worker slot on a busy host. ``unique=True`` (the arq default)
     # guarantees single execution across multiple worker processes.
@@ -481,6 +534,7 @@ class WorkerSettings:
         cron(cleanup_emulation_expired_job, minute={5, 35}),
         cron(cleanup_fuzzing_orphans_job, minute={20, 50}),
         cron(check_storage_quota_job, minute=15),
+        cron(cleanup_tmp_dumps_job, hour=4, minute=0),
     ]
 
     redis_settings = get_redis_settings()
