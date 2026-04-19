@@ -232,6 +232,44 @@ def _extract_archive(archive_path: str, output_dir: str) -> None:
         )
 
 
+def _check_storage_available(storage_root: str, required_bytes: int) -> None:
+    """Raise HTTP 507 if ``storage_root`` can't absorb another ``required_bytes``.
+
+    Applies a 1.5x safety margin — an incoming 2 GB upload needs ~3 GB free.
+    The margin covers temporary extraction artefacts and the unpack
+    pipeline's own working space (unblob copies each container before
+    recursing, etc.). ``shutil.disk_usage`` operates on the volume the
+    path resolves to, so this works against both bind-mounted and named
+    Docker volumes.
+
+    The guard is cheap (< 1 ms) and runs before the UploadFile stream is
+    consumed, so rejected uploads don't burn bandwidth.
+    """
+    from fastapi import HTTPException
+
+    try:
+        free = shutil.disk_usage(storage_root).free
+    except OSError as exc:
+        logger.warning(
+            "storage-quota check: disk_usage(%s) failed: %s — allowing upload",
+            storage_root, exc,
+        )
+        return
+
+    needed = int(required_bytes * 1.5)
+    if free < needed:
+        free_mb = free // (1024 * 1024)
+        needed_mb = needed // (1024 * 1024)
+        raise HTTPException(
+            507,  # Insufficient Storage (RFC 4918)
+            (
+                f"Not enough disk space on {storage_root} to accept upload. "
+                f"{free_mb} MB free, need {needed_mb} MB (upload size x1.5 safety "
+                f"margin). Delete old firmware or expand the volume."
+            ),
+        )
+
+
 class FirmwareService:
     def __init__(self, db: AsyncSession):
         self.db = db
@@ -243,6 +281,16 @@ class FirmwareService:
         file: UploadFile,
         version_label: str | None = None,
     ) -> Firmware:
+        # Storage-quota pre-flight (infra-volumes V1). Reject with 507 before
+        # consuming the upload stream if the volume can't absorb the file.
+        # ``file.size`` is trustworthy for multipart uploads — FastAPI reads
+        # it from the Content-Length on the part boundary. Fall back to the
+        # MAX_UPLOAD_SIZE ceiling when size is unavailable.
+        probable_size = file.size if file.size is not None else (
+            self.settings.max_upload_size_mb * 1024 * 1024
+        )
+        _check_storage_available(self.settings.storage_root, probable_size)
+
         # Generate a firmware ID upfront for per-firmware storage directory
         firmware_id = uuid.uuid4()
 

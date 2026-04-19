@@ -8,6 +8,7 @@ the request lifecycle.
 
 import logging
 import os
+import shutil
 import uuid
 
 from arq.connections import RedisSettings
@@ -401,6 +402,54 @@ async def cleanup_fuzzing_orphans_job(ctx: dict) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Cron: check_storage_quota (infra-volumes V1)
+# ---------------------------------------------------------------------------
+
+async def check_storage_quota_job(ctx: dict) -> dict:
+    """Hourly disk-usage audit of ``settings.storage_root``.
+
+    Logs at WARNING when usage exceeds 80% and at ERROR past 90%. Returns a
+    dict with ``used_pct`` / ``free_gb`` for the arq result backend so
+    operators can tail the history via ``docker compose logs worker`` or
+    the arq Redis job result. Fail-soft — a transient ``OSError`` (NFS
+    blip, volume unmount mid-scan) must not crash the worker.
+    """
+    settings = get_settings()
+    root = settings.storage_root
+    try:
+        total, used, free = shutil.disk_usage(root)
+    except OSError as exc:
+        logger.exception("check_storage_quota: disk_usage(%s) failed: %s", root, exc)
+        return {"status": "error", "error": str(exc)}
+
+    used_pct = (used / total) * 100 if total else 0.0
+    free_gb = free // (1024**3)
+    payload = {
+        "status": "ok",
+        "root": root,
+        "used_pct": round(used_pct, 2),
+        "free_gb": free_gb,
+        "total_gb": total // (1024**3),
+    }
+    if used_pct > 90:
+        logger.error(
+            "check_storage_quota: CRITICAL %s is %.1f%% full (%d GB free)",
+            root, used_pct, free_gb,
+        )
+    elif used_pct > 80:
+        logger.warning(
+            "check_storage_quota: WARNING %s is %.1f%% full (%d GB free)",
+            root, used_pct, free_gb,
+        )
+    else:
+        logger.info(
+            "check_storage_quota: %s is %.1f%% full (%d GB free)",
+            root, used_pct, free_gb,
+        )
+    return payload
+
+
+# ---------------------------------------------------------------------------
 # arq WorkerSettings — discovered by ``arq app.workers.arq_worker.WorkerSettings``
 # ---------------------------------------------------------------------------
 
@@ -415,20 +464,23 @@ class WorkerSettings:
         sync_kernel_vulns_job,
         cleanup_emulation_expired_job,
         cleanup_fuzzing_orphans_job,
+        check_storage_quota_job,
     ]
 
-    # Scheduled cron jobs. Phase 3 / O1 adds the two cleanup reapers.
+    # Scheduled cron jobs. Phase 3 / O1 adds the two cleanup reapers;
+    # infra-volumes-quotas-and-backup adds storage / tmp / reconcile.
     #   - sync_kernel_vulns_job         : daily 03:00 UTC (Tier 5 CVE feed)
     #   - cleanup_emulation_expired_job : every 30 min (timeout-based reap)
     #   - cleanup_fuzzing_orphans_job   : every 30 min, offset 15 min (DB<->container)
-    # Staggering the two 30-min reapers prevents them from contending for
-    # the same arq worker slot on a busy host. ``unique=True`` (the arq
-    # default) guarantees single execution across multiple worker
-    # processes.
+    #   - check_storage_quota_job       : every hour at :15 (V1 disk-quota audit)
+    # Staggering the reapers prevents them from contending for the same arq
+    # worker slot on a busy host. ``unique=True`` (the arq default)
+    # guarantees single execution across multiple worker processes.
     cron_jobs = [
         cron(sync_kernel_vulns_job, hour=3, minute=0),
         cron(cleanup_emulation_expired_job, minute={5, 35}),
         cron(cleanup_fuzzing_orphans_job, minute={20, 50}),
+        cron(check_storage_quota_job, minute=15),
     ]
 
     redis_settings = get_redis_settings()
