@@ -99,12 +99,14 @@ These are regex-able patterns with concrete evidence from Wave 3. Adoption is BL
 
 ```json
 {
-  "name": "auto-wave3-frontend-tsc-no-noEmit",
+  "name": "auto-wave3-frontend-tsc-no-noemit",
   "pattern": "tsc\\s+--noEmit",
-  "filePattern": "{.claude/harness.json,**/package.json,.github/workflows/**}",
-  "message": "Learned from wave-1+2+3: frontend tsconfig uses `files: []` + project references; `tsc --noEmit` exits 0 silently without checking. Use `npx tsc -b --force` (Rule #24). Rule-17 canary mandatory: write a bad .ts, run the command, confirm it fails before trusting any 'green' output."
+  "filePattern": "{**/package.json,.github/workflows/**}",
+  "message": "Learned from wave-1+2+3 (CLAUDE.md Rule #24): wairz frontend tsconfig uses `files: []` + project references; `tsc --noEmit` exits 0 silently without descending into referenced projects. Use `npx tsc -b --force`. Rule-17 canary mandatory: write a bad .ts, run the command, confirm it fails before trusting any 'green' output."
 }
 ```
+
+> **Adopted in session 2026-04-19/Option-C** (post-handoff session a90838f6). Name lowercased from `auto-wave3-frontend-tsc-no-noEmit` → `auto-wave3-frontend-tsc-no-noemit` because the protect-files append-only exception's name-regex `^auto-[a-z0-9-]+$` rejects uppercase. `filePattern` dropped `.claude/harness.json` from the brace expansion since the harness file's own typecheck.command is now self-healing via the typecheck-allowlist exception path (no need to flag it as a rule violation).
 
 ### auto-wave3-intake-status-lowercase (LOW recurrence, adopt optional)
 
@@ -118,3 +120,5 @@ These are regex-able patterns with concrete evidence from Wave 3. Adoption is BL
 ```
 
 Note: none of these three are being appended to harness.json this session — `protect-files` blocks. When the proposal lands, adopt as a batch.
+
+> **Update (session a90838f6, 2026-04-19):** proposal LANDED via Citadel `hooks_src/protect-files.js` append-only exception (commit pending). All three rules adopted into `.claude/harness.json` qualityRules.custom along with the three older candidates from session-69f004fe (`auto-intake-sweep-1-no-stat-docker-sock`, `auto-intake-sweep-1-no-docker-from-env`) and session-435cb5c2 (`auto-fleet-worktree-requires-worktree-add` — refined name per Wave-3 evidence). `.claude/harness.json:6` `typecheck.command` self-healed from `npx tsc --noEmit` → `npx tsc -b --force` via the secondary typecheck-allowlist exception path. Total wairz custom rules: 15 → 21. CLAUDE.md Rule #23 refined inline; Rule #24 stale-companion-defect note resolved; `.mex/context/conventions.md` Verify Checklist mirrored per Rule #21.
