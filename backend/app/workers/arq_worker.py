@@ -402,6 +402,125 @@ async def cleanup_fuzzing_orphans_job(ctx: dict) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Cron: reconcile_firmware_storage (infra-volumes V4) — log-only
+# ---------------------------------------------------------------------------
+
+async def reconcile_firmware_storage_job(ctx: dict) -> dict:
+    """Daily reconcile: find DB-vs-disk drift in firmware extractions.
+
+    Two classes of drift:
+      1. **Missing extractions** — a ``Firmware`` row points at an
+         ``extracted_path`` that no longer exists on disk (user deleted it
+         manually, volume got recreated, etc).
+      2. **Orphan directories** — an extraction directory exists on disk
+         with no corresponding ``Firmware`` row (crashed during upload,
+         row was deleted but disk wasn't cleaned up).
+
+    v1: LOG ONLY. Do not auto-delete. Operators review ``worker`` logs for
+    any ``missing_dirs`` / ``orphan_dirs`` counts and decide manually.
+    Auto-cleanup of orphan dirs is planned for v2 once the default has been
+    validated against a few months of real-world deployment.
+
+    When ``settings.firmware_retention_days`` is set to an integer N, rows
+    older than N days are also surfaced in the log output so operators
+    have a running tally for a future retention pass.
+    """
+    from datetime import datetime, timedelta
+
+    settings = get_settings()
+    root = settings.storage_root
+    retention_days = settings.firmware_retention_days
+
+    try:
+        async with async_session_factory() as db:
+            stmt = select(Firmware).where(Firmware.extracted_path.isnot(None))
+            firmware_rows = (await db.execute(stmt)).scalars().all()
+    except Exception as exc:
+        logger.exception("reconcile_firmware_storage: DB query failed: %s", exc)
+        return {"status": "error", "error": str(exc)}
+
+    db_paths = {r.extracted_path for r in firmware_rows if r.extracted_path}
+
+    missing_dirs = [
+        str(r.id) for r in firmware_rows
+        if r.extracted_path and not os.path.isdir(r.extracted_path)
+    ]
+
+    # Scan the projects tree for orphan extraction directories. Guard
+    # against the root volume missing (fresh install with nothing uploaded
+    # yet) and against individual per-project permission glitches — log
+    # and move on.
+    orphan_dirs: list[str] = []
+    projects_root = os.path.join(root, "projects")
+    if os.path.isdir(projects_root):
+        try:
+            project_ids = os.listdir(projects_root)
+        except OSError as exc:
+            logger.warning(
+                "reconcile_firmware_storage: cannot list %s: %s",
+                projects_root, exc,
+            )
+            project_ids = []
+
+        for pid in project_ids:
+            proj_fw_dir = os.path.join(projects_root, pid, "firmware")
+            if not os.path.isdir(proj_fw_dir):
+                continue
+            try:
+                fw_entries = os.listdir(proj_fw_dir)
+            except OSError:
+                continue
+            for fw_id in fw_entries:
+                extracted = os.path.join(proj_fw_dir, fw_id, "extracted")
+                if os.path.isdir(extracted) and extracted not in db_paths:
+                    orphan_dirs.append(extracted)
+
+    # Retention-days signal. We intentionally do NOT auto-delete; log the
+    # count so operators can run a retention sweep at their own cadence.
+    aged_rows = 0
+    if retention_days is not None and retention_days > 0:
+        cutoff = datetime.utcnow() - timedelta(days=retention_days)
+        aged_rows = sum(
+            1 for r in firmware_rows
+            if r.created_at and r.created_at < cutoff
+        )
+
+    if missing_dirs:
+        logger.warning(
+            "reconcile_firmware_storage: %d firmware rows have missing "
+            "extraction directories: %s",
+            len(missing_dirs),
+            missing_dirs[:10] + (["…"] if len(missing_dirs) > 10 else []),
+        )
+    if orphan_dirs:
+        logger.warning(
+            "reconcile_firmware_storage: %d extraction directories have no "
+            "DB row: %s",
+            len(orphan_dirs),
+            orphan_dirs[:10] + (["…"] if len(orphan_dirs) > 10 else []),
+        )
+    if aged_rows:
+        logger.warning(
+            "reconcile_firmware_storage: %d firmware rows are older than the "
+            "configured retention (%d days) — review for manual cleanup",
+            aged_rows, retention_days,
+        )
+    if not (missing_dirs or orphan_dirs or aged_rows):
+        logger.info(
+            "reconcile_firmware_storage: %d firmware rows, no drift",
+            len(firmware_rows),
+        )
+    return {
+        "status": "ok",
+        "missing_dirs": len(missing_dirs),
+        "orphan_dirs": len(orphan_dirs),
+        "aged_rows": aged_rows,
+        "total_rows": len(firmware_rows),
+        "retention_days": retention_days,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Cron: cleanup_tmp_dumps (infra-volumes V2)
 # ---------------------------------------------------------------------------
 
@@ -517,15 +636,17 @@ class WorkerSettings:
         cleanup_fuzzing_orphans_job,
         check_storage_quota_job,
         cleanup_tmp_dumps_job,
+        reconcile_firmware_storage_job,
     ]
 
     # Scheduled cron jobs. Phase 3 / O1 adds the two cleanup reapers;
     # infra-volumes-quotas-and-backup adds storage / tmp / reconcile.
-    #   - sync_kernel_vulns_job         : daily 03:00 UTC (Tier 5 CVE feed)
-    #   - cleanup_emulation_expired_job : every 30 min (timeout-based reap)
-    #   - cleanup_fuzzing_orphans_job   : every 30 min, offset 15 min (DB<->container)
-    #   - check_storage_quota_job       : every hour at :15 (V1 disk-quota audit)
-    #   - cleanup_tmp_dumps_job         : daily 04:00 UTC (V2 dump reaper)
+    #   - sync_kernel_vulns_job           : daily 03:00 UTC (Tier 5 CVE feed)
+    #   - cleanup_emulation_expired_job   : every 30 min (timeout-based reap)
+    #   - cleanup_fuzzing_orphans_job     : every 30 min, offset 15 min (DB<->container)
+    #   - check_storage_quota_job         : every hour at :15 (V1 disk-quota audit)
+    #   - cleanup_tmp_dumps_job           : daily 04:00 UTC (V2 dump reaper)
+    #   - reconcile_firmware_storage_job  : daily 05:00 UTC (V4 drift detector, log-only)
     # Staggering the reapers prevents them from contending for the same arq
     # worker slot on a busy host. ``unique=True`` (the arq default)
     # guarantees single execution across multiple worker processes.
@@ -535,6 +656,7 @@ class WorkerSettings:
         cron(cleanup_fuzzing_orphans_job, minute={20, 50}),
         cron(check_storage_quota_job, minute=15),
         cron(cleanup_tmp_dumps_job, hour=4, minute=0),
+        cron(reconcile_firmware_storage_job, hour=5, minute=0),
     ]
 
     redis_settings = get_redis_settings()
