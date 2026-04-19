@@ -16,11 +16,10 @@ import os
 import uuid
 from dataclasses import dataclass, field
 
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
-from app.models.analysis_cache import AnalysisCache
+from app.services import _cache
 from app.utils.docker_client import get_docker_client
 
 logger = logging.getLogger(__name__)
@@ -111,16 +110,11 @@ async def _get_cached_result(
     db: AsyncSession, firmware_id: uuid.UUID, sha256: str
 ) -> list[dict] | None:
     """Check analysis_cache for a prior cwe_checker result."""
-    result = await db.execute(
-        select(AnalysisCache).where(
-            AnalysisCache.firmware_id == firmware_id,
-            AnalysisCache.binary_sha256 == sha256,
-            AnalysisCache.operation == "cwe_checker",
-        )
+    cached = await _cache.get_cached(
+        db, firmware_id, "cwe_checker", binary_sha256=sha256,
     )
-    cached = result.scalar_one_or_none()
-    if cached and cached.result:
-        return cached.result.get("warnings", [])
+    if cached:
+        return cached.get("warnings", [])
     return None
 
 
@@ -131,13 +125,12 @@ async def _save_to_cache(
     sha256: str,
     warnings: list[CweWarning],
 ) -> None:
-    """Save cwe_checker result to analysis_cache."""
-    entry = AnalysisCache(
-        firmware_id=firmware_id,
-        binary_path=binary_path,
-        binary_sha256=sha256,
-        operation="cwe_checker",
-        result={
+    """Save cwe_checker result to analysis_cache (idempotent upsert)."""
+    await _cache.store_cached(
+        db,
+        firmware_id,
+        "cwe_checker",
+        {
             "warnings": [
                 {
                     "cwe_id": w.cwe_id,
@@ -150,9 +143,9 @@ async def _save_to_cache(
                 for w in warnings
             ]
         },
+        binary_sha256=sha256,
+        binary_path=binary_path,
     )
-    db.add(entry)
-    await db.flush()
 
 
 async def run_cwe_checker(
