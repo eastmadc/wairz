@@ -620,6 +620,36 @@ async def check_storage_quota_job(ctx: dict) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Cron: cleanup_analysis_cache (backend-cache-module-extraction-and-ttl)
+# ---------------------------------------------------------------------------
+
+async def cleanup_analysis_cache_job(ctx: dict) -> dict:
+    """Delete ``analysis_cache`` rows older than the configured retention.
+
+    The JSONB ``result`` column on ``analysis_cache`` is used by Ghidra
+    decompilations, JADX class dumps, mobsfscan reports, manifest scans,
+    bytecode scans, and component maps — all multi-megabyte per row under
+    realistic firmware loads. Without a TTL the table grows unboundedly.
+
+    The retention window is ``settings.analysis_cache_retention_days``
+    (default 30). Returns a dict with the deletion count for the arq
+    result backend.
+    """
+    from app.services import _cache
+
+    days = get_settings().analysis_cache_retention_days
+    async with async_session_factory() as db:
+        deleted = await _cache.cleanup_older_than(db, days=days)
+        await db.commit()
+
+    if deleted:
+        logger.info(
+            "cleanup_analysis_cache: retention_days=%d deleted=%d", days, deleted,
+        )
+    return {"status": "ok", "retention_days": days, "deleted": deleted}
+
+
+# ---------------------------------------------------------------------------
 # arq WorkerSettings — discovered by ``arq app.workers.arq_worker.WorkerSettings``
 # ---------------------------------------------------------------------------
 
@@ -637,16 +667,19 @@ class WorkerSettings:
         check_storage_quota_job,
         cleanup_tmp_dumps_job,
         reconcile_firmware_storage_job,
+        cleanup_analysis_cache_job,
     ]
 
     # Scheduled cron jobs. Phase 3 / O1 adds the two cleanup reapers;
-    # infra-volumes-quotas-and-backup adds storage / tmp / reconcile.
+    # infra-volumes-quotas-and-backup adds storage / tmp / reconcile;
+    # backend-cache-module-extraction-and-ttl adds analysis_cache cleanup.
     #   - sync_kernel_vulns_job           : daily 03:00 UTC (Tier 5 CVE feed)
     #   - cleanup_emulation_expired_job   : every 30 min (timeout-based reap)
     #   - cleanup_fuzzing_orphans_job     : every 30 min, offset 15 min (DB<->container)
     #   - check_storage_quota_job         : every hour at :15 (V1 disk-quota audit)
     #   - cleanup_tmp_dumps_job           : daily 04:00 UTC (V2 dump reaper)
     #   - reconcile_firmware_storage_job  : daily 05:00 UTC (V4 drift detector, log-only)
+    #   - cleanup_analysis_cache_job      : daily 06:00 UTC (analysis_cache TTL)
     # Staggering the reapers prevents them from contending for the same arq
     # worker slot on a busy host. ``unique=True`` (the arq default)
     # guarantees single execution across multiple worker processes.
@@ -657,6 +690,7 @@ class WorkerSettings:
         cron(check_storage_quota_job, minute=15),
         cron(cleanup_tmp_dumps_job, hour=4, minute=0),
         cron(reconcile_firmware_storage_job, hour=5, minute=0),
+        cron(cleanup_analysis_cache_job, hour=6, minute=0),
     ]
 
     redis_settings = get_redis_settings()
