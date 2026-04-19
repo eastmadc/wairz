@@ -18,6 +18,8 @@ from app.schemas.attack_surface import (
     AttackSurfaceScanResponse,
     AttackSurfaceSummary,
 )
+from app.schemas.pagination import Page
+from app.utils.pagination import paginate_query
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +29,7 @@ router = APIRouter(
 )
 
 
-@router.get("", response_model=list[AttackSurfaceEntryResponse])
+@router.get("", response_model=Page[AttackSurfaceEntryResponse])
 async def list_attack_surface_entries(
     project_id: uuid.UUID,
     min_score: int = Query(0, ge=0, le=100, description="Minimum attack surface score"),
@@ -36,7 +38,7 @@ async def list_attack_surface_entries(
     firmware=Depends(_resolve_firmware),
     db: AsyncSession = Depends(get_db),
 ):
-    """List attack surface entries sorted by score descending."""
+    """List attack surface entries sorted by score descending (paged)."""
     stmt = (
         select(AttackSurfaceEntry)
         .where(
@@ -45,11 +47,14 @@ async def list_attack_surface_entries(
             AttackSurfaceEntry.attack_surface_score >= min_score,
         )
         .order_by(AttackSurfaceEntry.attack_surface_score.desc())
-        .limit(limit)
-        .offset(offset)
     )
-    result = await db.execute(stmt)
-    return result.scalars().all()
+    items, total = await paginate_query(db, stmt, offset=offset, limit=limit)
+    return Page[AttackSurfaceEntryResponse](
+        items=[AttackSurfaceEntryResponse.model_validate(e) for e in items],
+        total=total,
+        offset=offset,
+        limit=limit,
+    )
 
 
 @router.post("/scan", response_model=AttackSurfaceScanResponse)
@@ -84,7 +89,7 @@ async def trigger_attack_surface_scan(
                 .order_by(AttackSurfaceEntry.attack_surface_score.desc())
             )
             result = await db.execute(stmt)
-            entries = result.scalars().all()
+            entries = result.scalars().all()  # bounded: scan response includes all entries for this firmware
             return AttackSurfaceScanResponse(
                 entries=[AttackSurfaceEntryResponse.model_validate(e) for e in entries],
                 summary=_build_summary(entries),

@@ -138,7 +138,7 @@ async def list_blobs(
     if signed_only:
         stmt = stmt.where(HardwareFirmwareBlob.signed == "signed")
     stmt = stmt.order_by(HardwareFirmwareBlob.category, HardwareFirmwareBlob.blob_path)
-    blobs = (await db.execute(stmt)).scalars().all()
+    blobs = (await db.execute(stmt)).scalars().all()  # bounded: per-firmware blobs + envelope (HardwareFirmwareListResponse)
 
     # Single GROUP BY across all sbom_vulnerabilities for this firmware,
     # split into actual-CVE vs ADVISORY-* presence flags.  We project
@@ -515,7 +515,7 @@ async def get_blob_cves(
         )
         .order_by(SbomVulnerability.created_at.desc())
     )
-    vulns = (await db.execute(stmt)).scalars().all()
+    vulns = (await db.execute(stmt)).scalars().all()  # bounded: CVEs for a single blob_id
     return [
         {
             "id": str(v.id),
