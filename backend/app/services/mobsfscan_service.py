@@ -40,6 +40,8 @@ from dataclasses import dataclass, field
 from shutil import which
 from typing import TYPE_CHECKING, Any
 
+from app.services import _cache
+
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -1001,8 +1003,6 @@ class MobsfScanPipeline:
         db: "AsyncSession",
     ) -> dict | None:
         """Retrieve a previously cached mobsfscan result."""
-        from app.services import _cache
-
         return await _cache.get_cached(
             db, firmware_id, _CACHE_OP, binary_sha256=apk_sha256,
         )
@@ -1016,8 +1016,6 @@ class MobsfScanPipeline:
         db: "AsyncSession",
     ) -> None:
         """Store a mobsfscan result (delete-then-insert upsert)."""
-        from app.services import _cache
-
         await _cache.store_cached(
             db,
             firmware_id,
