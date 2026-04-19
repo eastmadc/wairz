@@ -86,8 +86,8 @@ Clear the entire `.planning/intake/` backlog of 20 pending items by decomposing 
 
 ## Active Context
 
-**Current phase:** 2 COMPLETE · 3 (1/3) · 4 (2/3) · 6 (1/3) — cross-phase dispatch overrode the phase-serial plan. Remaining 11 intake items can clear in 2-3 more sessions.
-**Current sub-step:** session 435cb5c2 end-of-session (Wave 1+2 landed, artefacts pending commit).
+**Current phase:** 2 COMPLETE · 3 **COMPLETE** (3/3) · 4 **COMPLETE** (3/3) · 6 (1/3) · 7 **partial** (5/6 closed, harness.json deferred) — Wave 3 cleared an additional 5+ intakes. Remaining: Phase 5 serial refactor (3 items, dedicated session) + Phase 6 Android-HW (own campaign spin-out) + harness.json protect-files exception proposal.
+**Current sub-step:** session 198243b8 end-of-session (Wave 3 landed, 18 commits across 3 streams merged linearly, all invariants green).
 
 **Session history:**
 - 2026-04-19 (session 69f004fe): campaign created. Phase 1 shipped (5 commits). 8/8 verification items PASS.
@@ -100,46 +100,58 @@ Clear the entire `.planning/intake/` backlog of 20 pending items by decomposing 
     - Stream Delta (infra cleanup+migration+observability): 7 commits `a4e9eb8..daa7ecf` — structlog JSON logging + prometheus-fastapi-instrumentator + /ready alias + /metrics endpoint, arq cron jobs (sync_kernel@03:00, cleanup_emulation@:05/:35, cleanup_fuzzing@:20/:50), FuzzingService.cleanup_orphans reconciliation, one-shot migrator service + stripped alembic from backend/worker entrypoints (migration race fixed), uvicorn/arq logger reroute through JSON handler. 10/10 verification PASS. Migrator `Exited (0)`, alembic_version = 1 row.
     - Stream Epsilon (LATTE LLM taint): 4 commits `cbeb8fd..06b80b8` — YAML sink+source dictionaries, `scan_taint_analysis` + `deep_dive_taint_analysis` MCP tools (LATTE-style prompt composers), registered in `create_tool_registry`, 39/39 unit tests pass. **MCP tool count 170 → 172.** Rule 19: pyyaml already present; DVRF fixture declined for unit tests (integration target). Zero Anthropic SDK, zero API keys — follows existing MCP pattern (tools return prompt strings; Claude client reasons).
     - Stream Zeta (frontend api-client hardening): 2 direct commits `bfbfa91`, `a01236f` + 1 cross-attributed in `e8548fd` — axios request/response interceptors with auth+error toasts + dedupe, apiUrl() helper + API_BASE migration across 8 files, p-limit chunking for bulkResolve. Added sonner + p-limit deps. Rule 19: SecurityScanPage hard-code already patched; A2 VITE_API_KEY rotation already handled by existing getApiKey interceptor.
+- 2026-04-19 (session 198243b8): **Wave 3 three-stream dispatch — 18 commits, 5+ intakes closed across Phases 3/4/7.**
+  - Stream α (infra bundled — 8 commits `83e31c8..d868cb6` after rebase onto clean-history): finished `infra-secrets-and-auth-defaults` (POSTGRES/FIRMAE passwords `:?required`; `.env.example` security header; README secret-rotation section; no frontend `env_file:` change — already shipped in b9f438f per Rule #19) + all of `infra-volumes-quotas-and-backup` V1/V2/V3/V4 (config.py `firmware_retention_days` + `backup_dir`; `check_storage_quota_job` + 507 pre-upload check; `cleanup_tmp_dumps_job`; new `pg-backup` compose service with nightly `pg_dump -Fc` + 30-day retention + `docs/operations/backup-recovery.md`; `reconcile_firmware_storage_job` log-only). arq cron_jobs 3 → 6.
+  - Stream β (frontend-store-isolation — 4 commits `72ec063..90c0dc6` after rebase): S1 `currentProjectId` check-before-commit guard in explorerStore/projectStore/vulnerabilityStore; S2 `ProjectRouteGuard` wrapping 12 `/projects/:projectId/*` routes; S3 end-to-end BROM typing (backend `DeviceInfo.mode/available/error` + `DeviceDetailResponse.chipset` + service passthrough + frontend `DeviceMode` union + removal of all 5 `as any` casts). **β Rule-19 save**: intake S3 was half-wrong — backend Pydantic `extra="ignore"` was silently stripping 4 BROM fields, so `(dev as any).mode` was always undefined at runtime. Frontend-only typing fix would have left the feature broken; β expanded scope end-to-end. Rule-17 canary passed twice.
+  - Stream γ (Phase 7 maintenance sweep — 6 commits `e1f94c3..e241571` landed directly, pre-rebase): apk-scan-deep-linking closed (Rule-19 verify); 5 stale security-* intakes status-bumped; backend Docker healthcheck `/health` → `/ready`; `wairz-mcp --list-tools` CLI restored (was `ModuleNotFoundError`); 10 completed campaigns archived via `git mv` to `.planning/campaigns/completed/`; 4 candidate harness.json rules DEFERRED (protect-files exception proposal still `status: proposed`).
 
-**Wave-level anti-patterns observed 3× this session (see `.planning/knowledge/wairz-intake-sweep-wave12-antipatterns.md`):** `isolation: "worktree"` + `worktreePath: ok` sentinel in Fleet dispatch does NOT provide working-tree isolation. Agents share the on-disk checkout; concurrent commits race on shared files. Wave 1 Alpha+Gamma, Wave 2 Delta+Zeta, Wave 2 Epsilon+Zeta all showed cross-stream file sweeps. Content was always correct (no lost work) but commit attribution was scrambled. Strict `git add <paths>` discipline alone is insufficient — harness-level mitigation (true worktree checkouts OR per-stream `git checkout -b`) is required for future waves.
+**Wave-3 anti-pattern confirmed 4× more this session (Rule #23 damage catalog — cross-stream commit sweeps despite per-branch discipline):** all three sub-agents reported the shared-checkout symptom again. α swept gamma content twice before creating its own true `.worktrees/stream-alpha`; γ recovered via cherry-pick + reflog-replay twice during its run. β's agent identified the fix early and created a true `git worktree add .worktrees/stream-beta` proactively. The `isolation: "worktree"` sentinel is still a no-op at the working-tree level; the effective mitigation is `git worktree add <path> <branch>` + operate IN that path. CLAUDE.md Rule #23 wording should be tightened to name true `git worktree add` as the primary mitigation (not just `git checkout -b`). Updated knowledge artefact will be written this session.
 
-**Post-session verification (HEAD = 06b80b8):**
-- /health 200 · /ready 200 · /health/deep all-4-ok · /metrics 200 (Prom text)
-- Auth matrix: noauth=401 · auth-GET=200
-- Alembic head `123cc2c5463a` · DPCS10 canary = 260 · MCP tools = 172 · arq cron jobs = 3 · migrator Exited(0)
-- Acceptance grep: 0 unbounded `scalars().all()` in routers
+**Post-session verification (HEAD = d868cb6):**
+- /health 200 · /ready 200 · /health/deep all-4-ok (db+redis+docker+storage) · /metrics 200
+- Auth matrix: noauth=401 · auth-GET=200 (`-H X-API-Key: dev-test-key-wairz-b1`)
+- Alembic head `123cc2c5463a` (unchanged — Wave 3 added no migrations) · DPCS10 canary = 260 · MCP tools = 172 (Python API) / 173 (CLI `--list-tools` includes a metadata row)
+- arq cron jobs = 6 (3 Delta + check_storage_quota_job + cleanup_tmp_dumps_job + reconcile_firmware_storage_job)
+- pg-backup container running, first-run 5-min startup delay logged
+- docker compose config renders clean with `:?required` POSTGRES_PASSWORD / FIRMAE_DB_PASSWORD gates
+- Phase 1 invariant: docker-proxy `DOCKER_HOST=tcp://docker-proxy:2375` intact
 
 ## Continuation State
 
-**Phases status after 435cb5c2:**
+**Phases status after 198243b8 (Wave 3):**
 - Phase 1: COMPLETE (69f004fe, 5 commits)
-- Phase 2: **COMPLETE** (435cb5c2, 13 commits — schema-drift, constraints, pagination)
-- Phase 3: **1/3** (435cb5c2 Delta — cleanup-migration-observability). Remaining: `infra-secrets-and-auth-defaults` (partial), `infra-volumes-quotas-and-backup`.
-- Phase 4: **2/3** (435cb5c2 Gamma + Zeta — code-split, virtualize, api-client hardening). Remaining: `frontend-store-isolation-and-types`.
-- Phase 5: 0/3 (serial refactor — next dedicated session). Items: cache-module-extraction, private-api + circular-imports, god-class decomposition.
-- Phase 6: **1/3** (435cb5c2 Epsilon — LATTE taint). Remaining: `apk-scan-deep-linking`, `feature-android-hardware-firmware-detection`.
-- Phase 7: 0 (maintenance sweep at campaign end).
+- Phase 2: COMPLETE (435cb5c2, 13 commits — schema-drift, constraints, pagination)
+- Phase 3: **COMPLETE** (435cb5c2 Delta cleanup-migration-observability + 198243b8 α infra-secrets-finish + infra-volumes-quotas-and-backup)
+- Phase 4: **COMPLETE** (435cb5c2 Gamma + Zeta code-split/virtualize/api-client + 198243b8 β store-isolation/device-types)
+- Phase 5: 0/3 (serial refactor — dedicated session). Items: `backend-cache-module-extraction-and-ttl`, `backend-private-api-and-circular-imports`, `backend-service-decomposition`.
+- Phase 6: 1/3 (435cb5c2 Epsilon LATTE taint + 198243b8 γ apk-scan Rule-19 close). Remaining: `feature-android-hardware-firmware-detection` — spin out to dedicated campaign per plan.
+- Phase 7: **5/6 closed** (198243b8 γ: 5 security-* status-bumps, healthcheck→/ready, `wairz-mcp --list-tools` fix, 10 campaign archives, apk-scan close). Remaining: 4 harness.json quality rules BLOCKED on `.planning/proposals/citadel-protect-files-learn-exception.md` approval.
 
-**Next session pickup order:**
-1. Read this campaign file + `.planning/knowledge/handoff-2026-04-19-session-435cb5c2-end.md` + `.planning/knowledge/wairz-intake-sweep-wave12-antipatterns.md` + `.planning/prompts/next-session-wave3-2026-04-XX.md` (the ready-to-paste Wave 3 starter prompt).
-2. **Wave 3 recommended plan (Option B, deep-researched 2026-04-19 post-Wave-2):** 3 parallel streams per-branch-isolated, expected yield 5+ intakes/session.
-   - **Stream α** — Infra bundled (SERIAL within, both touch docker-compose.yml): `infra-secrets-and-auth-defaults` finish-partial + `infra-volumes-quotas-and-backup`. Build storage-quota + pg_dump cron on top of Delta's arq cron. DO NOT regress docker-socket-proxy from Phase 1.
-   - **Stream β** — `frontend-store-isolation-and-types` (S1 store reset race + S2 project-id guard + S3 DeviceAcquisitionPage `as any` removal). ~400 LOC surface; tsc `-b --force` only.
-   - **Stream γ** — Phase 7 maintenance sweep (batched): apk-scan-deep-linking Rule-19 verify (body says completed, YAML header pending; confirm & mark), 5 stale security-* intake close-outs, 4 harness.json quality rules (bypass protect-files hook carefully — ask Dustin first), frontend healthcheck → /ready, fix wairz-mcp --list-tools CLI.
-3. **Alternative dispatch:**
-   - **Phase 5 serial session** (dedicated): cache-module-extraction → private-api + circular-imports (8+ inline `from app.services import X` workarounds; 70 cross-imports baseline) → god-class decomposition (8 services > 1000 LOC; target <800). Ordering matters; do NOT parallelise.
-   - **Phase 6 HW-firmware spin-out**: `feature-android-hardware-firmware-detection` is a 5-phase / ~6-session campaign. Recommend creating `.planning/campaigns/android-hw-firmware.md` and treating as its own work stream.
-4. **CRITICAL dispatch discipline (Wave-2 anti-pattern #1):** every Wave 3 sub-agent MUST run `git checkout -b feat/stream-{name}-2026-04-XX` FIRST, before any file write. `isolation: "worktree"` + `worktreePath: "ok"` does NOT isolate working trees (3 cross-stream sweeps in 6 streams = 50% hit rate observed this session). Orchestrator merges branches sequentially after all streams complete.
-5. End-condition batteries from campaign table remain canonical. Global `/health/deep` + DPCS10 canary + auth matrix in every stream's verification regardless of scope.
-6. Remaining inventory audit: 8-10 actionable items depending on apk-scan Rule-19 outcome; quick-wins Q4 is Phase-5-blocked; next-session-plan.md is stale documentation, not an action item.
+**Net remaining after this campaign's current scope:**
+- 3 Phase-5 serial refactors (dedicated session, ~2 sessions)
+- 1 Phase-6 Android HW firmware spin-out campaign (~6 sessions in own campaign file)
+- 4 harness.json quality-rule adoptions (blocked on proposal)
 
-**Active streams this session:** none at handoff.
+**Next session pickup options:**
+1. **Read** this campaign file + `.planning/knowledge/handoff-2026-04-19-session-198243b8-end.md` + CLAUDE.md Rules 1–25 canonical.
+2. **Option A (Phase 5 serial refactor — RECOMMENDED for depth):** cache-module-extraction → private-api + circular-imports (8+ inline `from app.services import X` workarounds; 70 cross-imports baseline) → god-class decomposition (8 services > 1000 LOC; target <800). ORDER MATTERS; do NOT parallelise within Phase 5. 2 sessions estimated.
+3. **Option B (Phase 6 Android HW firmware spin-out):** create `.planning/campaigns/android-hw-firmware.md`, close this campaign, begin a dedicated 5-phase / ~6-session campaign for `feature-android-hardware-firmware-detection`.
+4. **Option C (harness.json unblock):** resolve `.planning/proposals/citadel-protect-files-learn-exception.md` (review, approve, land). Then adopt the 4 candidate rules. Small session.
+5. **CRITICAL dispatch discipline if any future Wave is attempted (CLAUDE.md Rule #23 — refined by Wave-3 evidence):** `git checkout -b feat/…` BEFORE writes is NECESSARY but NOT SUFFICIENT. The durable fix is `git worktree add .worktrees/stream-{name} -b feat/stream-{name}-{date}` and operating IN that worktree path — β did this proactively and had zero cross-sweep; α did it mid-session after two sweeps and recovered cleanly; γ stayed in the main checkout and absorbed two sweeps. Fleet harness should adopt this as the default isolation mode.
+
+**Active streams this session:** none at handoff (3 worktrees removed, 3 branches deleted post-merge).
 
 **Continuation-state checkpoint refs:**
-- checkpoint-wave12: `06b80b8` is the post-Wave-12 baseline. Rollback to `abe15e0` for full session revert (28 commits). Individual commits can be `git revert`ed in reverse dependency order (alembic migrations last — reverse-order required for rev chain).
+- checkpoint-wave3: `d868cb6` is the post-Wave-3 baseline (18 linear commits atop `c954039`). Rollback to `c954039` for full session revert. Sub-rollback per stream:
+  - α only: `git revert 83e31c8..d868cb6` (8 commits)
+  - β only: `git revert 72ec063..90c0dc6` (4 commits)
+  - γ only: `git revert e1f94c3..e241571` (6 commits; note the directory-move commit `2db769b` may need `--mainline 1`)
 
 **Blocking issues:** none.
 
-**Reset instructions:** if next-session work fails, `git checkout clean-history && git reset --hard 06b80b8` to the post-Wave-12 baseline, OR `git reset --hard abe15e0` to pre-session baseline (drops all 28 Wave 1+2 commits — last resort).
+**Reset instructions:** if next-session work fails, `git checkout clean-history && git reset --hard d868cb6` to the post-Wave-3 baseline (18 commits preserved). `git reset --hard c954039` drops all of Wave 3 (last resort).
+
+**Operator action REQUIRED on any existing deployment upgrading through this campaign:** add `POSTGRES_PASSWORD=wairz` + `FIRMAE_DB_PASSWORD=firmae` to `.env` (matches running `pgdata`). Without these, `docker compose up` fails with the intended `:?required` message — this is the new safe default for fresh clones (they must pick real strong values) but is a one-time migration step for existing `.env` files.
 
 <!-- session-end: 2026-04-19T session 435cb5c2 -->
+<!-- session-end: 2026-04-19T session 198243b8 (Wave 3 — 18 commits, 5+ intakes, HEAD=d868cb6) -->
