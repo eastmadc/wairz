@@ -124,6 +124,13 @@ export interface CveMatchRunResult {
   kernel_module_rows: number
 }
 
+// CVE-match walks every hardware-firmware blob and kernel module, expanding
+// the cartesian (kernel_cve × kmod) product persist. Large Android scatter
+// extractions with 10+ partitions routinely exceed 2 min; default axios 30 s
+// fires and surfaces a fake failure while the backend continues.
+// Matches SECURITY_SCAN_TIMEOUT tier in findings.ts (b437095).
+const SECURITY_SCAN_TIMEOUT = 600_000
+
 export async function runCveMatch(
   projectId: string,
   options?: { forceRescan?: boolean; firmwareId?: string | null },
@@ -134,7 +141,7 @@ export async function runCveMatch(
   const { data } = await apiClient.post<CveMatchRunResult>(
     `/projects/${projectId}/hardware-firmware/cve-match`,
     null,
-    { params },
+    { params, timeout: SECURITY_SCAN_TIMEOUT },
   )
   return data
 }
