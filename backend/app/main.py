@@ -4,10 +4,14 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
 from starlette.requests import Request
 
 from app.config import get_settings
 from app.middleware.asgi_auth import APIKeyASGIMiddleware
+from app.rate_limit import limiter  # shared rate-limiter instance (B.1.b)
 from app.routers import analysis, apk_scan, attack_surface, comparison, compliance, component_map, cra_compliance, device, documents, emulation, events, export_import, files, findings, firmware, fuzzing, hardware_firmware, kernels, projects, sbom, security_audit, terminal, tools, uart
 from app.routers.terminal import system_ws_router as _system_ws_router
 from app.services.event_service import event_service
@@ -16,9 +20,21 @@ from app.utils.sandbox import PathTraversalError
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    import sys
     settings = get_settings()
     os.makedirs(settings.storage_root, exist_ok=True)
     os.makedirs(settings.emulation_kernel_dir, exist_ok=True)
+
+    # Refuse to start if auth is not configured (B.1.a).
+    # Set API_KEY in .env (or environment) for production.
+    # Set WAIRZ_ALLOW_NO_AUTH=true only for local-only single-user deployments.
+    if not settings.api_key and not settings.allow_no_auth:
+        print(
+            "ERROR: api_key is required. Set API_KEY in .env or "
+            "WAIRZ_ALLOW_NO_AUTH=true for local-only deployments.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
 
     # Connect Redis event bus
     try:
@@ -54,6 +70,13 @@ app = FastAPI(
     version="0.1.0",
     lifespan=lifespan,
 )
+
+# Attach rate limiter state, 429 handler, and SlowAPI middleware (B.1.b).
+# SlowAPIMiddleware intercepts requests and checks @limiter.limit() decorators.
+# The exception handler converts RateLimitExceeded → HTTP 429 JSON response.
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+app.add_middleware(SlowAPIMiddleware)
 
 _cors_origins = (
     get_settings().cors_origins.split(",")

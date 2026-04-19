@@ -39,6 +39,7 @@ dependencies = [
     "semgrep>=1.80.0",
     "setuptools>=70.0",
     "pyyaml>=6.0",
+    "slowapi>=0.1.9",
 ]
 
 [project.scripts]

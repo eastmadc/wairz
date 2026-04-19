@@ -1,6 +1,7 @@
 from functools import lru_cache
 from pathlib import Path
 
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -85,6 +86,12 @@ class Settings(BaseSettings):
     virustotal_api_key: str = ""
     abusech_auth_key: str = ""
     api_key: str | None = None
+    # Accept both ALLOW_NO_AUTH and WAIRZ_ALLOW_NO_AUTH (the documented name).
+    # Set WAIRZ_ALLOW_NO_AUTH=true only for local-only single-user deployments.
+    allow_no_auth: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("WAIRZ_ALLOW_NO_AUTH", "ALLOW_NO_AUTH", "allow_no_auth"),
+    )
     log_level: str = "INFO"
 
 
