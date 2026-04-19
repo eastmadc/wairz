@@ -13,10 +13,9 @@ import struct
 import uuid
 from dataclasses import asdict, dataclass, field
 
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.analysis_cache import AnalysisCache
+from app.services import _cache
 
 
 @dataclass
@@ -127,15 +126,12 @@ class FirmwareMetadataService:
         Checks cache first. If not cached, runs binwalk scan, U-Boot header/env
         parsing, and MTD partition detection. Caches the result.
         """
-        # Check cache (use .first() since duplicate entries can exist)
-        stmt = select(AnalysisCache).where(
-            AnalysisCache.firmware_id == firmware_id,
-            AnalysisCache.operation == "firmware_metadata",
-        ).limit(1)
-        result = await db.execute(stmt)
-        cached = result.scalar_one_or_none()
-        if cached and cached.result:
-            return self._from_cache(cached.result)
+        # Firmware-wide cache entry (binary_sha256 IS NULL)
+        cached = await _cache.get_cached(
+            db, firmware_id, "firmware_metadata",
+        )
+        if cached:
+            return self._from_cache(cached)
 
         # Parse the firmware image
         file_size = os.path.getsize(firmware_storage_path)
@@ -152,14 +148,10 @@ class FirmwareMetadataService:
             mtd_partitions=mtd_partitions,
         )
 
-        # Cache the result
-        cache_entry = AnalysisCache(
-            firmware_id=firmware_id,
-            operation="firmware_metadata",
-            result=self._to_cache(metadata),
+        # Cache the result (idempotent upsert — replaces prior duplicate rows)
+        await _cache.store_cached(
+            db, firmware_id, "firmware_metadata", self._to_cache(metadata),
         )
-        db.add(cache_entry)
-        await db.flush()
 
         return metadata
 
