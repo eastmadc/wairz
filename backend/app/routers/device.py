@@ -71,6 +71,7 @@ async def device_info(
         getprop=info["getprop"],
         partitions=info["partitions"],
         device_metadata=info.get("device_metadata"),
+        chipset=info.get("chipset"),
     )
 
 

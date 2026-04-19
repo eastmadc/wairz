@@ -374,10 +374,10 @@ export default function DeviceAcquisitionPage() {
                     </p>
                   )}
                   {devices.map((dev) => {
-                    const mode = (dev as any).mode as string | undefined
+                    const mode = dev.mode ?? undefined
                     const isMtk = mode === 'brom' || mode === 'preloader'
-                    const mtkAvailable = (dev as any).available !== false
-                    const mtkError = (dev as any).error as string | undefined
+                    const mtkAvailable = dev.available !== false
+                    const mtkError = dev.error ?? undefined
                     return (
                       <button
                         key={dev.serial}
@@ -478,10 +478,10 @@ export default function DeviceAcquisitionPage() {
                             <Badge variant="outline" className="text-xs border-orange-500/50 text-orange-600">BROM</Badge>
                             <span className="text-muted-foreground">MediaTek device in BootROM mode</span>
                           </div>
-                          {(deviceDetail as any).chipset && (
+                          {deviceDetail.chipset && (
                             <dl className="grid grid-cols-2 gap-x-4 gap-y-1">
                               <dt className="text-muted-foreground">Chipset</dt>
-                              <dd className="font-medium font-mono">{(deviceDetail as any).chipset}</dd>
+                              <dd className="font-medium font-mono">{deviceDetail.chipset}</dd>
                             </dl>
                           )}
                           <p className="text-xs text-muted-foreground">

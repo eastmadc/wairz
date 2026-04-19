@@ -78,6 +78,10 @@ class DeviceService:
             "partitions": result.get("partitions", []),
             "partition_sizes": result.get("partition_sizes", []),
             "device_metadata": metadata,
+            # Pass the BROM chipset (e.g. "MT6765") through to the
+            # response. Bridge sets this from `mtk printgpt` output;
+            # None for ADB devices.
+            "chipset": result.get("chipset"),
         }
 
     # Shared dump directory — bind-mounted between host and container so the

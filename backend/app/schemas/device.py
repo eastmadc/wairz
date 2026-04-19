@@ -9,6 +9,15 @@ class DeviceInfo(BaseModel):
     device: str | None = None
     transport_id: str | None = None
     state: str = "device"
+    # Acquisition-mode fields for MediaTek BROM / preloader devices. The
+    # bridge (scripts/wairz-device-bridge.py) already populates these for
+    # BROM/preloader discoveries, but they were silently stripped at the
+    # router boundary (Pydantic default extra="ignore") so the frontend
+    # saw them only via `as any` casts. Wide typing ('adb' | 'brom' |
+    # 'preloader') matches the only values the bridge emits today.
+    mode: str | None = None
+    available: bool | None = None
+    error: str | None = None
 
 
 class DeviceBridgeStatus(BaseModel):
@@ -33,6 +42,11 @@ class DeviceDetailResponse(BaseModel):
     partitions: list[str] = []
     partition_sizes: list[PartitionInfo] = []
     device_metadata: dict | None = None
+    # MediaTek chipset identifier populated when the bridge runs `mtk printgpt`
+    # and parses a chipset header (e.g. "MT6765", "MT6789"). Only present for
+    # BROM/preloader devices; null for ADB devices whose chipset is surfaced
+    # via getprop['ro.hardware.chipname'] instead.
+    chipset: str | None = None
 
 
 class DumpPartitionRequest(BaseModel):
