@@ -95,6 +95,17 @@ class Settings(BaseSettings):
     )
     log_level: str = "INFO"
 
+    # --- Volume / backup knobs (infra-volumes-quotas-and-backup) ---
+    # Firmware retention. ``None`` = keep forever (current default). When set
+    # to an integer N, ``reconcile_firmware_storage`` (daily @05:00) will
+    # include N-day-old rows in its log output. Auto-delete is DISABLED in
+    # v1 — the cron logs counts only and treats the warning as operator-
+    # actionable signal.
+    firmware_retention_days: int | None = None
+    # Host path bind-mounted into the ``pg-backup`` container. Relative to
+    # the docker-compose working directory (typically the repo root).
+    backup_dir: str = "./backups"
+
 
 @lru_cache
 def get_settings() -> Settings:
