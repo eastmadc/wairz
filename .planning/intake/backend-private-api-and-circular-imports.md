@@ -1,8 +1,38 @@
 ---
 title: "Backend: Promote Private APIs + Break Circular Imports"
-status: pending
+status: partial
 priority: high
 target: backend/app/services/
+partially_completed_at: 2026-04-19
+partially_completed_via: "session 93a4948d — Phases 1 and 2 shipped (kernel_service cycle broken; _scan_* promoted via run_scan_subset)"
+---
+
+## Status: Partial — P1 and P2 complete (2026-04-19, session 93a4948d)
+
+| Phase | Status | Commit | Scope |
+|---|---|---|---|
+| P1 — private-API leak | **complete** | `2a27175` | Added public `run_scan_subset(root, names, findings?)` + `SCANNERS` dict in `security_audit_service`. `assessment_service._phase_credential_crypto` now calls `run_scan_subset(["credentials","shadow","crypto_material"])` instead of importing three `_scan_*` privates. `grep '_scan_credentials\|_scan_crypto_material\|_scan_shadow' backend/app/services/assessment_service.py` → **0 hits**. |
+| P2 — kernel_service ↔ emulation_service cycle | **complete** | `68ecb64` | `kernel_service.py:323` function-local `from app.services.emulation_service import _validate_kernel_file` → top-level `from app.services.emulation_constants import _validate_kernel_file` (the helper actually lives there and was re-exported only for convenience). `emulation_service.py` promoted 2 function-local `from app.services.kernel_service import KernelService` to top-level. Both files now import only top-level across the former cycle. |
+| P3 — systemic function-local import audit | **deferred** | — | Baseline function-local `from app.services.*` count: session start = **40**, post-session = **37** (−3 from P1/P2). Remaining 37 live in 13 files (assessment_service, attack_surface_service, comparison_service, emulation_service, fuzzing_service, hardware_firmware/*, mobsfscan_service, qiling_service, sbom_service, security_audit_service, wairz_runner). A dependency-graph audit + per-cycle shared-extract is a standalone campaign; intake explicitly noted "Phase 3 is open-ended and can grow — cap the scope to specific service pairs per PR, not 'all of them'." **Deferred to a follow-up campaign** — see `.planning/intake/` for the Phase-3 carve-out if/when prioritized. |
+
+### Acceptance criteria (audit result)
+
+| Criterion | Status |
+|---|---|
+| P1: `grep -n 'from app.services.emulation_service import _validate_kernel_file' backend/app/services/kernel_service.py` → 0 | ✓ |
+| P1: `kernel_service.py` and `emulation_service.py` both top-level import from `emulation_constants`, neither imports the other at any scope | ✓ (verified) |
+| P2: `grep -rn '_scan_credentials\b\|_scan_crypto_material\b\|_scan_shadow\b' backend/app/services/assessment_service.py` → 0 | ✓ |
+| P2: `assessment_service` has no direct function references to `security_audit_service` internals | ✓ (calls `run_scan_subset` by name only) |
+| All existing tests pass | ✓ (tests continue to import `_scan_*` privates — legitimate, since they test the same-module implementation) |
+
+### Remaining work (P3)
+
+Non-blocking, open-ended. Spin out as a separate campaign when cycle pressure becomes felt.
+
+---
+
+## Original specification (preserved for reference)
+
 ---
 
 ## Problem

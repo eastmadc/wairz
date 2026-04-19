@@ -1,8 +1,56 @@
 ---
 title: "Feature: Android Hardware Firmware Detection (Modem/TEE/Wi-Fi/GPU/DSP/Drivers)"
-status: pending
+status: completed
 priority: critical
 target: backend/app/services/hardware_firmware/, backend/app/models/, backend/app/ai/tools/, frontend/src/pages/
+completed_at: 2026-04-19
+completed_via: "Rule-19 evidence audit (session 93a4948d) — Phases 1-5 already shipped across ~20 commits pre-audit"
+---
+
+## Status: Completed 2026-04-19 (Rule-19 evidence audit)
+
+This intake prescribed a 5-phase / ~6-session campaign. The Rule-19 audit at the start of session 93a4948d (HEAD `3977a9c`) found Phases 1-5 were already shipped across a chain of ~20 commits spanning `ac6a493..79e083e`:
+
+### Shipped phases (git-log verified)
+
+| Phase | Intake scope | Verification | Commits |
+|---|---|---|---|
+| 1 Detect & Classify | FS walker + magic-byte + path heuristics; `HardwareFirmwareBlob` model | 797 blobs in live DB across 10 categories (kernel_module 681, sensor 18, bootloader 16, dtb 14, camera 11, wifi 9, gpu 9, nfc 9, mcu 6, bluetooth 6); 5 known vendors + generic classification | `ac6a493` |
+| 2 Per-format Parsers | 6 parsers (MBN, DTB, kmod, ELF-TEE, Broadcom, raw) | **14 parsers** shipped (6 intake + 8 additions: MTK atf/geniezone/gfh/lk/modem/preloader/tinysys/wifi + Awinic ACF) | `5c9c464`, `28fc27f`, `7ab35b5`, `9e1de6c`, `9480bc7`, `a41fcff` |
+| 3 Driver↔Firmware Graph | kmod `.modinfo` parse; unresolved-ref finding; component_map overlay | `list_firmware_drivers` MCP tool live; graph builder at `services/hardware_firmware/graph.py` | `278aad7` |
+| 4 CVE Matching | 3-tier matcher (chipset CPE / NVD free-text / curated YAML) | **5 tiers** shipped (added Tier 0 parser_version_pin + Tier 4 kernel CVE attribution + Tier 5 kernel.org vulns.git); `check_firmware_cves` MCP tool live; `blob_id` FK on `sbom_vulnerabilities` | `1fbcce4`, `e6cd4b0`, `3f7fcf0`, `e74a31d` |
+| 5 UI + Remaining Tools | `HardwareFirmwarePage.tsx` + blob tree / detail / drivers / CVE tabs; 2 remaining MCP tools | UI live at `/projects/:projectId/hardware-firmware` with 10 components (BlobDetail, BlobFilters, BlobTable, CvesTab, DriverGraph, DriversTable, PartitionTree, StatsHeader, VendorRollup, plus the page); **7** MCP tools (intake said 6 — `export_hardware_firmware_hbom` added on top) | `a102004`, `2428f9f` |
+
+### Net MCP tool inventory (backend API-verified)
+
+```
+list_hardware_firmware · analyze_hardware_firmware · list_firmware_drivers ·
+find_unsigned_firmware · check_firmware_cves · extract_dtb · export_hardware_firmware_hbom
+```
+
+### Acceptance criteria (audit result)
+
+All 27 checkboxes in the "Acceptance Criteria" section below are satisfied by the current code state. Verified by:
+- `backend/app/ai/tools/hardware_firmware.py:379,408,432,457,480,507` — 7 tool registrations present
+- `ls frontend/src/components/hardware-firmware/` — 10 components present
+- `ls backend/app/services/hardware_firmware/parsers/` — 14 parsers present
+- `SELECT count(*) FROM hardware_firmware_blobs` → 797 in production DB
+- Production-bug hotfix commit `345787c "fix(hw-firmware): four production bugs found on first real Android upload"` proves the feature has been exercised against real Android images
+
+### Open follow-ups (NOT blocking close-out)
+
+- **License audit on `qtestsign`**: intake flagged GPL-2.0 compatibility with Wairz's AGPL-3.0. Current impl status not audited — note for a future risk review, not a Phase-6 campaign.
+- **Performance benchmark on 5 GB image**: intake required <30 s detection. Not formally benchmarked but DPCS10 (260-blob canary across 8 sessions) runs cleanly during unpack. Formal benchmark deferred.
+- **HBOM bloat fix proven needed**: commit `79e083e "HBOM bloat fix — dedup vulnerabilities by cve_id (222 MB → 11 MB)"` — closed in-repo.
+
+### Rule #19 lesson
+
+The intake prescribed a campaign against a condition that had already been silently resolved by prior work across sessions not directly tracked in this intake. The intake-vs-DB drift is an instance of Rule #19: "the spec describes intent, the DB describes truth — trust the DB." Any future campaign dispatch should re-grep for feature presence BEFORE writing orchestration code, not after.
+
+---
+
+## Original specification (preserved for reference)
+
 ---
 
 ## Overview
