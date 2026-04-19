@@ -22,9 +22,15 @@ Read in order:
      — CRITICAL: anti-pattern #1 (Fleet worktree isolation is broken).
        Apply per-stream `git checkout -b` discipline in dispatch prompts.
   3. .planning/knowledge/wairz-intake-sweep-wave12-patterns.md
-     — 6 patterns + 3 candidate Learned Rules.
+     — 6 successful patterns. Its candidate rules LANDED as Rules
+       #23/#24/#25 in CLAUDE.md this session.
   4. .planning/knowledge/handoff-2026-04-19-session-435cb5c2-end.md
-  5. CLAUDE.md rules 1-22 canonical.
+  5. CLAUDE.md Rules 1-25 canonical. Rules #23 (parallel-dispatch
+     branch isolation), #24 (tsc -b --force required in frontend), #25
+     (≥3 sub-tasks → per-sub-task commit) are NEW — enforce in dispatch
+     prompts and stream verification.
+  6. (Optional) .planning/proposals/citadel-protect-files-learn-exception.md
+     — pending harness change; reference only (Dustin approval gate).
 
 Current state (verified at 435cb5c2 handoff):
   - HEAD=bdc5745. All containers healthy.
