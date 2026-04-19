@@ -196,6 +196,31 @@ Entry points:
 
 The daemon-chained path: SessionStart hook → detect campaign → resume archon → load campaign Continuation State → present Options A.3 / E / D for user selection → execute.
 
+## Bug-fix follow-ups queued from this session (2 new threads)
+
+These came out of the frontend-stale-bundle incident + security-scan timeout fix at the end of session 93a4948d. Neither blocking; both good next-session candidates:
+
+**A. Arq-job refactor for long-running scan / audit / export endpoints.** The frontend timeout extension (10 min for `/security/audit` / `/security/yara`, 5 min for `/security/abusech-scan` / `/security/known-good-scan`) is a band-aid. The RespArray project's audit takes ~8 min end-to-end and could exceed 10 min on larger targets. Proper fix: adopt the arq-job-plus-polling pattern already used by firmware unpack — POST returns `202 Accepted` with `{job_id}`; frontend polls `/security/audit/{job_id}` until `status` transitions from `running` to `succeeded|failed`. Endpoints that need this pattern (9 total): `/security/audit`, `/security/yara`, `/security/uefi-scan`, `/security/abusech-scan`, `/security/known-good-scan`, `/sbom/vulnerabilities/scan`, `/hardware-firmware/cve-match`, `/attack-surface/scan`, `/cra/assessments/{id}/auto-populate`, `/device/dump`. ~1-2 sessions of work. Arq worker, schema, router, frontend polling loop — each endpoint. Do `/security/audit` first as the pilot.
+
+**B. Repeat-pattern audit across the frontend.** `/learn` survey at end of session 93a4948d found repeats of the two anti-patterns fixed in `b437095`, in files NOT yet fixed:
+   - **Bucket A (6 long-op endpoints missing explicit timeout)**:
+     - `frontend/src/api/files.ts:101` `scanUefiModules` → `/security/uefi-scan`
+     - `frontend/src/api/sbom.ts:74` `runVulnerabilityScan` → `/sbom/vulnerabilities/scan`
+     - `frontend/src/api/hardwareFirmware.ts:127` `runCveMatch` → `/hardware-firmware/cve-match`
+     - `frontend/src/api/attackSurface.ts:74` `triggerAttackSurfaceScan` → `/attack-surface/scan`
+     - `frontend/src/api/craCompliance.ts:58` `autoPopulateCra` → `/cra/assessments/{id}/auto-populate`
+     - `frontend/src/api/device.ts:38` `startDump` → `/device/dump`
+   - **Bucket B (5 catch-swallow sites with hardcoded fake-error state)**:
+     - `frontend/src/pages/DeviceAcquisitionPage.tsx:89` — hardcodes `error: 'Failed to check bridge status'`
+     - `frontend/src/pages/ComparisonPage.tsx:132` — hardcodes `error: 'Failed to load instruction diff'`
+     - `frontend/src/pages/ComparisonPage.tsx:152` — hardcodes `error: 'Failed to load decompilation diff'`
+     - `frontend/src/components/security/CraChecklistTab.tsx:71` — silently clears assessments list
+     - `frontend/src/components/security/CraChecklistTab.tsx:87` — silently clears assessment
+   - **Bucket C**: zero unwrap-coverage gaps found — all list-endpoint calls properly wrapped.
+   - Scope: this is ~30-45 min of mechanical work. Don't batch across both buckets — each bucket is its own commit (Rule #25). Bucket A converges to the same `extractErrorMessage(e, fallback)` pattern fixed in `b437095`. Bucket B either gets the same `extractErrorMessage` fix OR converts to arq-job + polling depending on whether thread (A) is being done in the same session.
+
+If done together, the two threads unify to: "make all long-running frontend→backend paths correctly handle duration + failure." Feel free to split A into the pilot (`/security/audit` arq-ification) and B into the fast mechanical fix.
+
 ## Bug-fix session variant (alternative starter prompt)
 
 Use this instead of the Phase-5 prompt at the top if the next session is
