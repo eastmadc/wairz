@@ -1,8 +1,17 @@
 ---
 title: "Security: Authentication Hardening"
-status: pending
+status: completed
 priority: critical
 target: backend/app/middleware/, backend/app/routers/terminal.py, backend/app/main.py, backend/app/config.py
+completed_at: 2026-04-19
+completed_in: session 69f004fe phase 1
+shipped_commits:
+  - 3d8aa10  # feat(security): B.1 pure-ASGI auth middleware — http + websocket scopes
+  - de3f6bd  # feat(security): B.1.a/b — startup auth guard + slowapi rate limiting
+  - ab09e1c  # feat(security): safe_extract_zip — zipslip + bomb + symlink defences
+  - bac49ea  # feat(security): narrow Docker access via socket proxy (D.1)
+  - e443def  # fix(security): eliminate double-shell injection at 4 sites in services
+closed_by: wave3-stream-gamma (Rule-19 status-bump)
 ---
 
 ## Problem

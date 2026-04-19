@@ -1,8 +1,13 @@
 ---
 title: "Security: Harden Android OTA and ZIP Extraction Paths"
-status: pending
+status: completed
 priority: critical
 target: backend/app/workers/unpack_android.py, backend/app/workers/unpack_common.py, backend/app/services/firmware_service.py
+completed_at: 2026-04-19
+completed_in: session 69f004fe phase 1
+shipped_commits:
+  - ab09e1c  # feat(security): safe_extract_zip — zipslip + bomb + symlink defences for all ZIP extraction paths
+closed_by: wave3-stream-gamma (Rule-19 status-bump)
 ---
 
 ## Problem

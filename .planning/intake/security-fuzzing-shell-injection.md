@@ -1,8 +1,13 @@
 ---
 title: "Security: Fix Double-Shell Injection in Fuzzing Service"
-status: pending
+status: completed
 priority: critical
 target: backend/app/services/fuzzing_service.py
+completed_at: 2026-04-19
+completed_in: session 69f004fe phase 1
+shipped_commits:
+  - e443def  # fix(security): eliminate double-shell injection at 4 sites in services
+closed_by: wave3-stream-gamma (Rule-19 status-bump)
 ---
 
 ## Problem
