@@ -64,6 +64,17 @@ def configure_logging(level: str = "INFO") -> None:
     root_logger.handlers = [handler]
     root_logger.setLevel(level.upper())
 
+    # Uvicorn's "uvicorn", "uvicorn.error", "uvicorn.access", and fastapi's
+    # "fastapi" loggers install their OWN handlers with a plain-text formatter
+    # and set ``propagate=False``. Without rerouting they bypass the root
+    # handler and emit plain-text lines (``INFO: Uvicorn running on ...``)
+    # alongside the JSON produced by stdlib callers. Remove their handlers
+    # and let them propagate to the root.
+    for named in ("uvicorn", "uvicorn.error", "uvicorn.access", "fastapi", "arq", "arq.worker"):
+        lg = logging.getLogger(named)
+        lg.handlers = []
+        lg.propagate = True
+
     # Tame the most chatty libraries at INFO; they still bubble to WARN+.
     for noisy in ("uvicorn.access", "sqlalchemy.engine"):
         logging.getLogger(noisy).setLevel("WARNING")
