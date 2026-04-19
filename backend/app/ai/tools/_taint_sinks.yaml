@@ -1,0 +1,107 @@
+# Dangerous sink functions grouped by CWE family.
+#
+# Consumed by `backend/app/ai/tools/taint_llm.py` during LATTE-style
+# binary taint analysis. Each `sinks` name must match a symbol that
+# appears in a binary's import table (see `list_imports` / Ghidra cache
+# `imports` operation). The matching is symbol-name exact; add PLT/alias
+# variants explicitly when they matter (e.g. `_system`, `system_plt`).
+#
+# To extend coverage, add new families under `families:`; no code change
+# needed. `scan_taint_analysis` and `deep_dive_taint_analysis` re-read
+# this file on every invocation.
+
+families:
+  command_injection:
+    cwe: CWE-78
+    description: "OS command injection via shell / exec family"
+    sinks:
+      - system
+      - popen
+      - execl
+      - execle
+      - execlp
+      - execv
+      - execve
+      - execvp
+      - doSystemCmd
+      - twsystem
+      - CsteSystem
+      - do_system
+      - __system
+      - _system
+
+  buffer_overflow:
+    cwe: CWE-120
+    description: "Classic stack/heap buffer overflow sinks (missing bound check)"
+    sinks:
+      - strcpy
+      - strcat
+      - sprintf
+      - vsprintf
+      - gets
+      - memcpy
+      - strncpy
+      - strncat
+      - snprintf
+      - vsnprintf
+
+  format_string:
+    cwe: CWE-134
+    description: "printf-family functions with potentially user-controlled fmt"
+    sinks:
+      - printf
+      - fprintf
+      - vprintf
+      - vfprintf
+      - syslog
+      - dprintf
+      - vdprintf
+
+  integer_overflow:
+    cwe: CWE-190
+    description: "Size-based allocators where computed size may wrap"
+    sinks:
+      - malloc
+      - calloc
+      - realloc
+      - alloca
+
+  path_traversal:
+    cwe: CWE-22
+    description: "Filesystem entry points accepting attacker-controlled paths"
+    sinks:
+      - fopen
+      - open
+      - openat
+      - unlink
+      - rename
+      - chmod
+      - chown
+      - mkdir
+      - access
+
+  untrusted_search:
+    cwe: CWE-426
+    description: "Dynamic loading of attacker-controlled library paths"
+    sinks:
+      - dlopen
+      - dlsym
+      - LoadLibrary
+      - LoadLibraryA
+      - LoadLibraryW
+
+  xxe_xml:
+    cwe: CWE-611
+    description: "XML parsers with default external-entity expansion"
+    sinks:
+      - xmlReadFile
+      - xmlReadMemory
+      - xmlParseFile
+
+  sql_injection:
+    cwe: CWE-89
+    description: "SQL query execution with string-concatenated input"
+    sinks:
+      - sqlite3_exec
+      - mysql_query
+      - PQexec

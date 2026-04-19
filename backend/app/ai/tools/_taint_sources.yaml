@@ -1,0 +1,74 @@
+# Untrusted-input source functions grouped by vector.
+#
+# Consumed by `backend/app/ai/tools/taint_llm.py`. A function is flagged
+# as a "taint source" if it appears in the binary's import table (or is
+# otherwise called) and its output is assumed to be attacker-controllable
+# unless sanitized.
+#
+# Matching is exact symbol-name; add variants (PLT stubs, leading
+# underscores) as discovered. `scan_taint_analysis` and
+# `deep_dive_taint_analysis` re-read this file on every invocation.
+
+families:
+  network:
+    description: "Network receive paths"
+    sources:
+      - recv
+      - recvfrom
+      - recvmsg
+      - read
+      - accept
+      - accept4
+
+  environment:
+    description: "Process environment + command-line"
+    sources:
+      - getenv
+      - secure_getenv
+      - __environ
+      - getopt
+      - getopt_long
+
+  user_io:
+    description: "Interactive / file stream input"
+    sources:
+      - fgets
+      - gets
+      - scanf
+      - fscanf
+      - sscanf
+      - getchar
+      - fgetc
+
+  http_cgi:
+    description: "HTTP / CGI parameter extractors common in embedded HTTPDs"
+    sources:
+      - websGetVar
+      - httpGetEnv
+      - CGI_get_field
+      - get_cgi
+      - websGetFormString
+      - mg_get_http_var
+      - lws_hdr_copy
+
+  nvram:
+    description: "NVRAM / config-store readers (router firmware)"
+    sources:
+      - nvram_get
+      - nvram_safe_get
+      - nvram_bufget
+      - nvram_match
+
+  files:
+    description: "File-content readers (content itself may be attacker-controlled)"
+    sources:
+      - fread
+      - pread
+      - readlink
+
+  ipc:
+    description: "IPC / shared-memory readers"
+    sources:
+      - mq_receive
+      - msgrcv
+      - shmat
