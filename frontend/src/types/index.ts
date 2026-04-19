@@ -68,6 +68,7 @@ export interface FirmwareDetail extends FirmwareSummary {
   project_id: string
   storage_path: string | null
   extracted_path: string | null
+  extraction_dir: string | null
   version_label: string | null
   unpack_log: string | null
   unpack_stage: string | null
