@@ -68,7 +68,14 @@ export default function CraChecklistTab({ projectId, selectedFirmwareId }: CraCh
       if (list.length > 0 && !selectedAssessmentId) {
         setSelectedAssessmentId(list[0].id)
       }
-    } catch {
+    } catch (e) {
+      // Intentional silent fallback: an empty list renders as the
+      // "Start CRA Assessment" empty state, which is the correct UX
+      // both for a brand-new project (no assessments) and for a
+      // transient API failure (user can retry by reloading). Still
+      // log for ops visibility so real regressions surface in
+      // devtools instead of being swallowed.
+      console.warn('[CraChecklistTab] loadAssessments failed', e)
       setAssessments([])
     } finally {
       setLoading(false)
@@ -84,7 +91,12 @@ export default function CraChecklistTab({ projectId, selectedFirmwareId }: CraCh
     try {
       const data = await getCraAssessment(projectId, selectedAssessmentId)
       setAssessment(data)
-    } catch {
+    } catch (e) {
+      // Intentional silent fallback: if the selected assessment
+      // fails to load (deleted between list + open, 404, 500), the
+      // UI gracefully falls back to the assessment-selector list,
+      // which is acceptable UX. Log for ops visibility.
+      console.warn('[CraChecklistTab] loadAssessment failed', e)
       setAssessment(null)
     } finally {
       setLoading(false)
