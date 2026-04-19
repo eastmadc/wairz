@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react'
 import { useParams, Link, useSearchParams } from 'react-router-dom'
 import { Shield, Loader2, RefreshCw, Smartphone } from 'lucide-react'
+import { List, type RowComponentProps } from 'react-window'
 
 import { apiUrl } from '@/api/config'
 import { Badge } from '@/components/ui/badge'
@@ -33,6 +34,20 @@ const SEVERITY_COLORS: Record<Severity, string> = {
   low: 'bg-blue-500 text-white',
   info: 'bg-gray-500 text-white',
 }
+
+/**
+ * Fixed row height for the virtualized findings table.  Rows are one line
+ * of py-1.5 with text-xs content (severity badge + title + file path);
+ * measured ~28-30px in Chrome, padded to 32 so borders don't fuse.
+ */
+const FINDINGS_ROW_HEIGHT = 32
+
+/**
+ * Column template shared between the div-grid header and each
+ * virtualized row so the (Severity, Title, File) columns stay aligned.
+ */
+const FINDINGS_COLUMN_TEMPLATE =
+  '80px minmax(200px, 2fr) minmax(160px, 1.2fr)'
 
 export default function SecurityScanPage() {
   const { projectId } = useParams<{ projectId: string }>()
@@ -462,64 +477,98 @@ export default function SecurityScanPage() {
                 </Button>
               </div>
 
-              {/* Findings table */}
-              <div className="overflow-x-auto">
-                <table className="w-full text-xs">
-                  <thead>
-                    <tr className="border-b text-left text-muted-foreground">
-                      <th className="pb-2 pr-3 font-medium w-20">Severity</th>
-                      <th className="pb-2 pr-3 font-medium">Title</th>
-                      <th className="pb-2 pr-3 font-medium">File</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {findings.slice(0, 200).map((f) => (
-                      <tr key={f.id} className="border-b border-border/30 hover:bg-muted/50">
-                        <td className="py-1.5 pr-3">
-                          <Badge variant="outline" className={`text-xs ${SEVERITY_COLORS[f.severity as Severity] || ''}`}>
-                            {f.severity}
-                          </Badge>
-                        </td>
-                        <td className="py-1.5 pr-3 truncate max-w-[400px]">
-                          <Link
-                            to={`/projects/${projectId}/findings`}
-                            state={{ findingId: f.id }}
-                            className="hover:underline hover:text-primary"
-                          >
-                            {f.title}
-                          </Link>
-                        </td>
-                        <td className="py-1.5 pr-3 font-mono text-muted-foreground truncate max-w-[200px]">
-                          {f.file_path ? (
-                            f.source?.startsWith('apk-') ? (
-                              <span className="text-muted-foreground">{f.file_path}</span>
-                            ) : (
-                              <Link
-                                to={`/projects/${projectId}/explore?path=${encodeURIComponent(f.file_path)}`}
-                                className="hover:underline hover:text-primary"
-                              >
-                                {f.file_path}
-                              </Link>
-                            )
-                          ) : '-'}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-                {findings.length > 200 && (
-                  <p className="text-xs text-muted-foreground mt-2">
-                    Showing first 200 of {findings.length} findings.{' '}
-                    <Link to={`/projects/${projectId}/findings?source=${source}`} className="underline">
-                      View all in Findings page
-                    </Link>
-                  </p>
-                )}
+              {/* Findings table — virtualized via react-window */}
+              <div className="rounded-md border border-border">
+                {/* Header — CSS grid shares gridTemplateColumns with each
+                    row so columns stay aligned through virtualization. */}
+                <div
+                  className="grid items-center border-b text-xs text-muted-foreground"
+                  style={{ gridTemplateColumns: FINDINGS_COLUMN_TEMPLATE }}
+                >
+                  <div className="pb-2 pt-2 pr-3 pl-3 font-medium">Severity</div>
+                  <div className="pb-2 pt-2 pr-3 font-medium">Title</div>
+                  <div className="pb-2 pt-2 pr-3 font-medium">File</div>
+                </div>
+                <List
+                  rowComponent={FindingRow}
+                  rowCount={findings.length}
+                  rowHeight={FINDINGS_ROW_HEIGHT}
+                  rowProps={{
+                    findings,
+                    projectId: projectId ?? '',
+                  }}
+                  style={{
+                    height: 'min(560px, calc(100vh - 360px))',
+                    minHeight: 240,
+                  }}
+                />
               </div>
             </div>
           )}
         </>
       )}
+    </div>
+  )
+}
+
+interface FindingRowExtraProps {
+  findings: Finding[]
+  projectId: string
+}
+
+function FindingRow({
+  index,
+  style,
+  findings,
+  projectId,
+}: RowComponentProps<FindingRowExtraProps>) {
+  const f = findings[index]
+
+  // react-window provides absolute positioning via `style`; we overlay the
+  // grid on top so row cells align with the div-grid header columns.
+  const rowStyle: CSSProperties = {
+    ...style,
+    gridTemplateColumns: FINDINGS_COLUMN_TEMPLATE,
+  }
+
+  return (
+    <div
+      style={rowStyle}
+      className="grid items-center border-b border-border/30 text-xs hover:bg-muted/50"
+    >
+      <div className="py-1.5 pl-3 pr-3">
+        <Badge
+          variant="outline"
+          className={`text-xs ${SEVERITY_COLORS[f.severity as Severity] || ''}`}
+        >
+          {f.severity}
+        </Badge>
+      </div>
+      <div className="py-1.5 pr-3 truncate">
+        <Link
+          to={`/projects/${projectId}/findings`}
+          state={{ findingId: f.id }}
+          className="hover:underline hover:text-primary"
+        >
+          {f.title}
+        </Link>
+      </div>
+      <div className="py-1.5 pr-3 font-mono text-muted-foreground truncate">
+        {f.file_path ? (
+          f.source?.startsWith('apk-') ? (
+            <span className="text-muted-foreground">{f.file_path}</span>
+          ) : (
+            <Link
+              to={`/projects/${projectId}/explore?path=${encodeURIComponent(f.file_path)}`}
+              className="hover:underline hover:text-primary"
+            >
+              {f.file_path}
+            </Link>
+          )
+        ) : (
+          '-'
+        )}
+      </div>
     </div>
   )
 }
