@@ -96,15 +96,24 @@ Clear the entire `.planning/intake/` backlog of 20 pending items by decomposing 
 
 ## Continuation State
 
-**Next session pickup:**
-1. Read this file + `.planning/knowledge/handoff-2026-04-19-session-698549d4-end.md` (predecessor).
-2. Read each stream's fleet output in `.planning/fleet/outputs/`.
-3. Run Phase 1 end-condition battery (see table above); any failure → that stream retries or parks.
-4. If all phase-1 conditions pass: mark phase 1 complete in the table above, advance to phase 2 (data/schema).
+**Phase 1:** COMPLETE as of 29dba35 (session 69f004fe). Full end-condition battery PASS. 5 commits shipped: ab09e1c (safe_extract), de3f6bd (auth B.1.a/b/c), e443def (fuzzing shell-inj), bac49ea (docker-socket-proxy), 29dba35 (health-fix + campaign artefacts).
+
+**Next session (Phase 2 — Data / schema) pickup order:**
+1. Read this campaign file + `.planning/knowledge/handoff-2026-04-19-session-698549d4-end.md`.
+2. Phase 2 scope = 3 streams, fleet-parallel possible:
+   - `.planning/intake/data-schema-drift-findings-firmware-cra.md` — column/enum drift between model and migrations.
+   - `.planning/intake/data-constraints-and-backpop.md` — CHECK + UNIQUE constraints + SQLAlchemy `back_populates` audit.
+   - `.planning/intake/data-pagination-list-endpoints.md` — wrap sbom/attack_surface/security_audit list endpoints with limit/offset/total metadata.
+3. Per-stream dispatch prompt template: see Phase 1 streams A/B/C/D as the shape — full context injection (CLAUDE.md, predecessor handoff), intake file reference, verification battery with file:line targets, HANDOFF output to `.planning/fleet/outputs/stream-*-2026-04-19.md`.
+4. Phase 2 end-condition table above already lists the 3 required checks. Rebuild backend+worker once after the 3 streams merge.
+5. Mark Phase 2 complete, advance to Phase 3 (Infra).
+
+**Active streams this session:** none at handoff.
 
 **Continuation-state checkpoint refs:**
-- checkpoint-phase-1: (set when phase 1 begins; `git stash` of pre-phase state if anything uncommitted)
+- checkpoint-phase-1: stash@{0} dropped after successful completion — no rollback artefact needed.
+- checkpoint-phase-2: (next session should stash BEFORE writing any campaign updates; Phase 1 procedural note preserved in Session history above.)
 
-**Blocking issues:** none at campaign creation.
+**Blocking issues:** none.
 
-**Reset instructions:** if phase 1 fails hard, `git checkout clean-history && git reset --hard 3d8aa10` restores pre-campaign HEAD. Individual fleet worktrees can be pruned with `git worktree prune`.
+**Reset instructions:** if a Phase 2 stream fails hard, `git checkout clean-history && git reset --hard 29dba35` rolls back to post-Phase-1. Individual Phase 2 commits can be reverted in reverse order if Phase 2 as a whole fails.
