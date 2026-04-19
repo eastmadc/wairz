@@ -22,6 +22,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { useFirmwareList } from '@/hooks/useFirmwareList'
 import { diffFirmware, diffBinary, diffTextFile, diffInstructions, diffDecompilation } from '@/api/comparison'
 import { formatFileSize } from '@/utils/format'
+import { extractErrorMessage } from '@/utils/error'
 import type { FirmwareDiff, BinaryDiff, TextDiff, InstructionDiff, DecompilationDiff, FileDiffEntry } from '@/types'
 
 type Tab = 'files' | 'binaries' | 'binary-detail' | 'text-diff'
@@ -128,8 +129,15 @@ export default function ComparisonPage() {
     try {
       const result = await diffInstructions(projectId, fwAId, fwBId, binDiff.binary_path, functionName)
       setInstrDiff(result)
-    } catch {
-      setInstrDiff({ function_name: functionName, arch: '', diff_text: '', lines_added: 0, lines_removed: 0, error: 'Failed to load instruction diff' })
+    } catch (e) {
+      setInstrDiff({
+        function_name: functionName,
+        arch: '',
+        diff_text: '',
+        lines_added: 0,
+        lines_removed: 0,
+        error: extractErrorMessage(e, 'Failed to load instruction diff'),
+      })
     } finally {
       setInstrLoading(false)
     }
@@ -148,8 +156,17 @@ export default function ComparisonPage() {
     try {
       const result = await diffDecompilation(projectId, fwAId, fwBId, binDiff.binary_path, functionName)
       setDecompDiff(result)
-    } catch {
-      setDecompDiff({ function_name: functionName, binary_path: binDiff.binary_path, source_a: '', source_b: '', diff_text: '', lines_added: 0, lines_removed: 0, error: 'Failed to load decompilation diff' })
+    } catch (e) {
+      setDecompDiff({
+        function_name: functionName,
+        binary_path: binDiff.binary_path,
+        source_a: '',
+        source_b: '',
+        diff_text: '',
+        lines_added: 0,
+        lines_removed: 0,
+        error: extractErrorMessage(e, 'Failed to load decompilation diff'),
+      })
     } finally {
       setDecompLoading(false)
     }
