@@ -329,6 +329,47 @@ All settings are configured via environment variables or `.env` file:
 | `API_KEY` | *(empty)* | Optional API key for REST endpoint authentication |
 | `LOG_LEVEL` | `INFO` | Logging level |
 
+## Security
+
+Wairz ingests and analyses untrusted firmware binaries; the deployment surface itself also needs care. The following rules are enforced by the default `docker-compose.yml`:
+
+**Required secrets.** `POSTGRES_PASSWORD` and `FIRMAE_DB_PASSWORD` are mandatory — `docker compose up` errors out if they are not set in `.env`:
+
+```
+$ docker compose config
+error while interpolating services.postgres.environment.POSTGRES_PASSWORD:
+  required variable POSTGRES_PASSWORD is missing a value
+```
+
+Generate strong values with:
+
+```bash
+python3 -c 'import secrets; print(secrets.token_urlsafe(32))'
+```
+
+Do not commit `.env`. Use `.env.example` as a template only.
+
+**Binding defaults.** Backend (`:8000`) and frontend (`:3000`) default to `127.0.0.1` — local access only. The `/ws` WebSocket endpoint is not yet authenticated, so exposing the backend to LAN is unsafe until `API_KEY` is set *and* the WebSocket is auth-gated. To allow LAN access after you understand the tradeoffs:
+
+```bash
+# .env
+API_KEY=<strong-random-key>
+BACKEND_HOST_BIND=0.0.0.0
+FRONTEND_HOST_BIND=0.0.0.0
+```
+
+Postgres (`:5432`) and Redis (`:6379`) are always loopback-bound — there is no override. Use `docker compose exec postgres psql ...` for host-side DB access, not a network socket.
+
+**Rotating credentials.** Edit `.env`, then recreate the affected containers:
+
+```bash
+docker compose up -d
+```
+
+For postgres specifically, changing `POSTGRES_PASSWORD` against an existing `pgdata` volume requires either `ALTER USER wairz WITH PASSWORD ...` inside the running container, or a fresh volume. The `pg-backup` service (nightly `pg_dump` into `${BACKUP_DIR:-./backups}`) makes rotation-via-dump-and-restore safe to experiment with.
+
+**Production.** For production deployments, consider an external secret manager (HashiCorp Vault, AWS Secrets Manager, SOPS-encrypted `.env` files) rather than plaintext `.env`. A `docker-compose.prod.yml` Docker-secrets variant is on the roadmap but not yet in-tree.
+
 ## Testing Firmware
 
 Good firmware images for testing:
