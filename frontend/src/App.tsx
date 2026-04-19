@@ -4,6 +4,7 @@ import AppLayout from '@/components/layout/AppLayout'
 import ErrorBoundary from '@/components/ErrorBoundary'
 import DisclaimerDialog from '@/components/DisclaimerDialog'
 import PageLoader from '@/components/PageLoader'
+import Toaster from '@/components/Toaster'
 
 // Route-level code splitting. Each page becomes its own chunk, so heavy deps
 // (Monaco in ExplorePage, xterm in EmulationPage, ReactFlow in ComponentMap /
@@ -29,6 +30,7 @@ export default function App() {
     <BrowserRouter>
       <ErrorBoundary>
       <DisclaimerDialog />
+      <Toaster />
       <Suspense fallback={<PageLoader />}>
         <Routes>
           <Route path="/" element={<Navigate to="/projects" replace />} />
