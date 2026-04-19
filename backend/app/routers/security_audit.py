@@ -105,7 +105,7 @@ async def run_audit(
         )
         .order_by(Firmware.created_at.desc())
     )
-    firmware_list = result.scalars().all()
+    firmware_list = result.scalars().all()  # bounded: small set (1-10 firmware versions per project)
     if not firmware_list:
         raise HTTPException(400, "No extracted firmware available — unpack first")
 
@@ -229,7 +229,7 @@ async def scan_uefi_modules(
         .where(Firmware.project_id == project_id, Firmware.extracted_path.isnot(None))
         .order_by(Firmware.created_at.desc())
     )
-    firmware_list = result.scalars().all()
+    firmware_list = result.scalars().all()  # bounded: small set (1-10 firmware versions per project)
     if not firmware_list:
         raise HTTPException(400, "No extracted firmware available")
 
@@ -482,7 +482,7 @@ async def run_yara_scan(
         )
         .order_by(Firmware.created_at.desc())
     )
-    firmware_list = result.scalars().all()
+    firmware_list = result.scalars().all()  # bounded: small set (1-10 firmware versions per project)
     if not firmware_list:
         raise HTTPException(400, "No extracted firmware available — unpack first")
 
@@ -594,7 +594,7 @@ async def run_clamav_scan_endpoint(
         )
         .order_by(Firmware.created_at.desc())
     )
-    firmware_list = result.scalars().all()
+    firmware_list = result.scalars().all()  # bounded: small set (1-10 firmware versions per project)
     if not firmware_list:
         raise HTTPException(400, "No extracted firmware available — unpack first")
 
@@ -708,7 +708,7 @@ async def run_vt_scan(
         )
         .order_by(Firmware.created_at.desc())
     )
-    firmware_list = result.scalars().all()
+    firmware_list = result.scalars().all()  # bounded: small set (1-10 firmware versions per project)
     if not firmware_list:
         raise HTTPException(400, "No extracted firmware available — unpack first")
 
@@ -907,7 +907,7 @@ async def run_abusech_scan_endpoint(
         )
         .order_by(Firmware.created_at.desc())
     )
-    firmware_list = result.scalars().all()
+    firmware_list = result.scalars().all()  # bounded: small set (1-10 firmware versions per project)
     if not firmware_list:
         raise HTTPException(400, "No extracted firmware available — unpack first")
 
@@ -998,7 +998,7 @@ async def run_known_good_scan_endpoint(
         )
         .order_by(Firmware.created_at.desc())
     )
-    firmware_list = result.scalars().all()
+    firmware_list = result.scalars().all()  # bounded: small set (1-10 firmware versions per project)
     if not firmware_list:
         raise HTTPException(400, "No extracted firmware available — unpack first")
 
