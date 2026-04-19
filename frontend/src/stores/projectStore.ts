@@ -22,6 +22,14 @@ interface ProjectState {
   firmwareList: FirmwareDetail[]
   firmwareListProjectId: string | null
   firmwareListLoading: boolean
+  /**
+   * Project id this store is currently hydrated for. `fetchProject` sets it
+   * synchronously on entry and checks after every `await` before committing,
+   * so a late `getProject(A)` response cannot overwrite a newer
+   * `getProject(B)` during rapid /projects/A ↔ /projects/B navigation.
+   * Cleared by `clearCurrentProject()` and by `ProjectRouteGuard` on route change.
+   */
+  currentProjectId: string | null
 }
 
 interface ProjectActions {
@@ -51,6 +59,7 @@ export const useProjectStore = create<ProjectState & ProjectActions>((set, get) 
   firmwareList: [],
   firmwareListProjectId: null,
   firmwareListLoading: false,
+  currentProjectId: null,
 
   fetchProjects: async () => {
     set({ loading: true, error: null })
@@ -65,11 +74,15 @@ export const useProjectStore = create<ProjectState & ProjectActions>((set, get) 
   fetchProject: async (id) => {
     // Only show loading spinner on initial fetch, not on polling refreshes
     const isRefresh = get().currentProject?.id === id
-    if (!isRefresh) set({ loading: true, error: null })
+    if (!isRefresh) set({ loading: true, error: null, currentProjectId: id })
+    else set({ currentProjectId: id })
     try {
       const project = await getProject(id)
+      // Bail if user switched projects while we were fetching.
+      if (get().currentProjectId !== id) return
       set({ currentProject: project, loading: false })
     } catch (e) {
+      if (get().currentProjectId !== id) return
       if (!isRefresh) set({ loading: false, error: extractError(e) })
     }
   },
@@ -137,7 +150,8 @@ export const useProjectStore = create<ProjectState & ProjectActions>((set, get) 
 
   setSelectedFirmware: (firmwareId) => set({ selectedFirmwareId: firmwareId }),
   clearError: () => set({ error: null }),
-  clearCurrentProject: () => set({ currentProject: null, selectedFirmwareId: null }),
+  clearCurrentProject: () =>
+    set({ currentProject: null, selectedFirmwareId: null, currentProjectId: null }),
 
   loadFirmwareList: async (projectId) => {
     // Cache hit — same project, list already populated.  Consumers
