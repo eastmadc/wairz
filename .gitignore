@@ -37,3 +37,9 @@ docker-compose.override.yml
 
 # Test firmware (large binaries)
 test-firmware/
+
+# Parallel-dispatch worktrees (CLAUDE.md Rule #23 Option A)
+.worktrees/
+
+# PostgreSQL backups (pg-backup service default target, see docs/operations/backup-recovery.md)
+/backups/
