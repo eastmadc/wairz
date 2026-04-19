@@ -40,6 +40,8 @@ dependencies = [
     "setuptools>=70.0",
     "pyyaml>=6.0",
     "slowapi>=0.1.9",
+    "structlog>=24.4.0",
+    "prometheus-fastapi-instrumentator>=7.0.0",
 ]
 
 [project.scripts]
