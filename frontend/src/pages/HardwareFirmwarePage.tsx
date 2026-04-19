@@ -12,6 +12,7 @@ import {
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { apiUrl } from '@/api/config'
 import {
   getCveAggregate,
   getFirmwareDrivers,
@@ -295,7 +296,7 @@ export default function HardwareFirmwarePage() {
   // blob-URL round-trip through axios.
   const hbomUrl = useMemo(() => {
     if (!projectId) return '#'
-    const base = `/api/v1/projects/${projectId}/hardware-firmware/cdx.json`
+    const base = apiUrl(`/api/v1/projects/${projectId}/hardware-firmware/cdx.json`)
     return selectedFirmwareId
       ? `${base}?firmware_id=${encodeURIComponent(selectedFirmwareId)}`
       : base

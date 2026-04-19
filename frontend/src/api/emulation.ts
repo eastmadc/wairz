@@ -1,4 +1,5 @@
 import apiClient, { appendApiKey } from './client'
+import { apiUrl } from './config'
 import type {
   EmulationSession,
   EmulationStartRequest,
@@ -283,5 +284,5 @@ export function getPcapDownloadUrl(
   projectId: string,
   sessionId: string,
 ): string {
-  return `/api/v1/projects/${projectId}/emulation/system/${sessionId}/pcap`
+  return apiUrl(`/api/v1/projects/${projectId}/emulation/system/${sessionId}/pcap`)
 }

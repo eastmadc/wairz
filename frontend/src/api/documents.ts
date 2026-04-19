@@ -1,4 +1,5 @@
 import apiClient from './client'
+import { apiUrl } from './config'
 import type { ProjectDocument, DocumentContent } from '@/types'
 
 export async function listDocuments(projectId: string): Promise<ProjectDocument[]> {
@@ -89,5 +90,5 @@ export async function updateDocumentContent(
 }
 
 export function getDocumentDownloadUrl(projectId: string, documentId: string): string {
-  return `/api/v1/projects/${projectId}/documents/${documentId}/download`
+  return apiUrl(`/api/v1/projects/${projectId}/documents/${documentId}/download`)
 }

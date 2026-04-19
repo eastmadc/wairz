@@ -1,4 +1,5 @@
 import apiClient from './client'
+import { apiUrl } from './config'
 import type { DirectoryListing, FileContent, FileInfo } from '@/types'
 
 export interface SearchResult {
@@ -50,7 +51,7 @@ export async function readFile(
 export function getFileDownloadUrl(projectId: string, path: string, firmwareId?: string): string {
   const params = new URLSearchParams({ path })
   if (firmwareId) params.set('firmware_id', firmwareId)
-  return `/api/v1/projects/${projectId}/files/download?${params.toString()}`
+  return apiUrl(`/api/v1/projects/${projectId}/files/download?${params.toString()}`)
 }
 
 export interface UefiSection {

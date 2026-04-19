@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useParams, Link, useSearchParams } from 'react-router-dom'
 import { Shield, Loader2, RefreshCw, Smartphone } from 'lucide-react'
 
-const API_BASE = import.meta.env.VITE_API_URL || ''
+import { apiUrl } from '@/api/config'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
@@ -128,7 +128,7 @@ export default function SecurityScanPage() {
     // Subscribe to SSE for progress updates.  The re-entry guard above
     // ensures ref.current is null here, so no explicit close() is needed.
     const evtSource = new EventSource(
-      `${API_BASE}/api/v1/projects/${projectId}/events?types=vulhunt`,
+      apiUrl(`/api/v1/projects/${projectId}/events?types=vulhunt`),
     )
     vulhuntEventSourceRef.current = evtSource
     evtSource.onmessage = (e) => {
