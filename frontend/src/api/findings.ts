@@ -60,11 +60,23 @@ export interface KnownGoodScanResult {
   errors: string[]
 }
 
+// Security scans walk the entire extracted firmware tree and can take
+// several minutes on large images (observed >2 min on 200 MB Linux-based
+// medical firmware with deeply nested archives). The default 30 s axios
+// timeout in client.ts is far too short — when it fires, the frontend
+// surfaces a fake "Scan failed" while the backend is still running the
+// actual audit. Match the per-call timeouts to the observed worst case
+// plus margin; matches the pattern used in comparison.ts / exportImport.ts.
+const SECURITY_SCAN_TIMEOUT = 600_000 // 10 min — full security audit
+const HASH_SCAN_TIMEOUT = 300_000 // 5 min — binary hash lookups (abuse.ch, hashlookup)
+
 export async function runAbusechScan(
   projectId: string,
 ): Promise<AbusechScanResult> {
   const { data } = await apiClient.post<AbusechScanResult>(
     `/projects/${projectId}/security/abusech-scan`,
+    null,
+    { timeout: HASH_SCAN_TIMEOUT },
   )
   return data
 }
@@ -74,6 +86,8 @@ export async function runKnownGoodScan(
 ): Promise<KnownGoodScanResult> {
   const { data } = await apiClient.post<KnownGoodScanResult>(
     `/projects/${projectId}/security/known-good-scan`,
+    null,
+    { timeout: HASH_SCAN_TIMEOUT },
   )
   return data
 }
@@ -83,6 +97,8 @@ export async function runSecurityAudit(
 ): Promise<SecurityAuditResult> {
   const { data } = await apiClient.post<SecurityAuditResult>(
     `/projects/${projectId}/security/audit`,
+    null,
+    { timeout: SECURITY_SCAN_TIMEOUT },
   )
   return data
 }
@@ -92,6 +108,8 @@ export async function runYaraScan(
 ): Promise<YaraScanResult> {
   const { data } = await apiClient.post<YaraScanResult>(
     `/projects/${projectId}/security/yara`,
+    null,
+    { timeout: SECURITY_SCAN_TIMEOUT },
   )
   return data
 }

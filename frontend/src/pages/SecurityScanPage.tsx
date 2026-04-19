@@ -16,6 +16,7 @@ import {
 import { runTool } from '@/api/tools'
 import { useFirmwareList } from '@/hooks/useFirmwareList'
 import { useProjectStore } from '@/stores/projectStore'
+import { extractErrorMessage } from '@/utils/error'
 import FirmwareSelector from '@/components/projects/FirmwareSelector'
 import AttackSurfaceTab from '@/components/security/AttackSurfaceTab'
 import CraChecklistTab from '@/components/security/CraChecklistTab'
@@ -93,8 +94,14 @@ export default function SecurityScanPage() {
       const result = await runSecurityAudit(projectId)
       setAuditResult(result)
       await loadFindings()
-    } catch {
-      setAuditResult({ status: 'error', checks_run: 0, findings_created: 0, total_findings: 0, errors: ['Scan failed'] })
+    } catch (e) {
+      setAuditResult({
+        status: 'error',
+        checks_run: 0,
+        findings_created: 0,
+        total_findings: 0,
+        errors: [extractErrorMessage(e, 'Security audit failed')],
+      })
     } finally {
       setAuditing(false)
     }
@@ -108,8 +115,15 @@ export default function SecurityScanPage() {
       const result = await runYaraScan(projectId)
       setYaraResult(result)
       await loadFindings()
-    } catch {
-      setYaraResult({ status: 'error', rules_loaded: 0, files_scanned: 0, files_matched: 0, findings_created: 0, errors: ['Scan failed'] })
+    } catch (e) {
+      setYaraResult({
+        status: 'error',
+        rules_loaded: 0,
+        files_scanned: 0,
+        files_matched: 0,
+        findings_created: 0,
+        errors: [extractErrorMessage(e, 'YARA scan failed')],
+      })
     } finally {
       setYaraScanning(false)
     }

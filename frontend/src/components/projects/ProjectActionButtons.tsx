@@ -12,6 +12,7 @@ import type { SecurityAuditResult, YaraScanResult } from '@/api/findings'
 import type { ProjectDetail } from '@/types'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
+import { extractErrorMessage } from '@/utils/error'
 import McpConnectionCard from '@/components/projects/McpConnectionCard'
 
 interface ProjectActionButtonsProps {
@@ -52,8 +53,14 @@ export default function ProjectActionButtons({
             try {
               const result = await runSecurityAudit(project.id)
               setAuditResult(result)
-            } catch {
-              setAuditResult({ status: 'error', checks_run: 0, findings_created: 0, total_findings: 0, errors: ['Scan failed'] })
+            } catch (e) {
+              setAuditResult({
+                status: 'error',
+                checks_run: 0,
+                findings_created: 0,
+                total_findings: 0,
+                errors: [extractErrorMessage(e, 'Security audit failed')],
+              })
             } finally {
               setAuditing(false)
             }
@@ -71,8 +78,15 @@ export default function ProjectActionButtons({
             try {
               const result = await runYaraScan(project.id)
               setYaraResult(result)
-            } catch {
-              setYaraResult({ status: 'error', rules_loaded: 0, files_scanned: 0, files_matched: 0, findings_created: 0, errors: ['YARA scan failed'] })
+            } catch (e) {
+              setYaraResult({
+                status: 'error',
+                rules_loaded: 0,
+                files_scanned: 0,
+                files_matched: 0,
+                findings_created: 0,
+                errors: [extractErrorMessage(e, 'YARA scan failed')],
+              })
             } finally {
               setYaraScanning(false)
             }
