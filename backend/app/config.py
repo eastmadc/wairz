@@ -84,7 +84,7 @@ class Settings(BaseSettings):
     clamav_enabled: bool = True
     virustotal_api_key: str = ""
     abusech_auth_key: str = ""
-    api_key: str = ""
+    api_key: str | None = None
     log_level: str = "INFO"
 
 

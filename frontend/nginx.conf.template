@@ -22,7 +22,25 @@ server {
         proxy_read_timeout 86400s;
     }
 
+    # Hashed asset files are immutable — safe to cache forever. Vite
+    # generates new filenames on every build, so stale assets are never
+    # pointed to by a fresh index.html.
+    location /assets/ {
+        add_header Cache-Control "public, max-age=31536000, immutable" always;
+        try_files $uri =404;
+    }
+
+    # index.html must revalidate on every load — otherwise browsers (and
+    # corporate caching proxies) pin clients to an old bundle hash that
+    # predates backend auth/API changes, producing stale-client 401s.
+    location = /index.html {
+        add_header Cache-Control "no-cache, no-store, must-revalidate" always;
+        add_header Pragma "no-cache" always;
+        expires 0;
+    }
+
     location / {
+        add_header Cache-Control "no-cache, no-store, must-revalidate" always;
         try_files $uri $uri/ /index.html;
     }
 }

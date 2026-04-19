@@ -7,7 +7,7 @@ from fastapi.responses import JSONResponse
 from starlette.requests import Request
 
 from app.config import get_settings
-from app.middleware.auth import APIKeyMiddleware
+from app.middleware.asgi_auth import APIKeyASGIMiddleware
 from app.routers import analysis, apk_scan, attack_surface, comparison, compliance, component_map, cra_compliance, device, documents, emulation, events, export_import, files, findings, firmware, fuzzing, hardware_firmware, kernels, projects, sbom, security_audit, terminal, tools, uart
 from app.routers.terminal import system_ws_router as _system_ws_router
 from app.services.event_service import event_service
@@ -68,9 +68,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# API key auth — runs after CORS (Starlette middleware stack is LIFO,
-# so adding it after CORSMiddleware means CORS processes first).
-app.add_middleware(APIKeyMiddleware)
+# API key auth — pure-ASGI middleware covers both http and websocket
+# scopes. The prior BaseHTTPMiddleware-based APIKeyMiddleware only
+# intercepted HTTP, leaving /ws terminal and /{session}/terminal ws-to-tcp
+# proxy endpoints unauthenticated.
+app.add_middleware(APIKeyASGIMiddleware)
 
 app.include_router(projects.router)
 app.include_router(firmware.router)
