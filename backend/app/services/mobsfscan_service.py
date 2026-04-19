@@ -8,9 +8,10 @@ Provides two layers:
 
 **Orchestration layer** (``MobsfScanPipeline``):
     End-to-end pipeline that accepts a JADX output path (or APK path),
-    invokes the runner, parses results, caches them in AnalysisCache,
-    normalizes findings with firmware-context severity adjustments,
-    persists them to the findings table, and returns structured output.
+    invokes the runner, parses results, caches them in the
+    ``analysis_cache`` table, normalizes findings with firmware-context
+    severity adjustments, persists them to the findings table, and
+    returns structured output.
 
 The runner is designed to work with sources materialized by
 :mod:`app.services.jadx_service` (``write_sources_to_disk``).
@@ -935,7 +936,7 @@ class MobsfScanPipelineResult:
     scan_result: MobsfScanResult
     normalized: list[NormalizedFinding]
     persisted_count: int = 0
-    cached: bool = False  # True if result was served from AnalysisCache
+    cached: bool = False  # True if result was served from the analysis_cache table
     text_output: str = ""
     # Phase timing (milliseconds)
     total_elapsed_ms: int = 0  # wall-clock time for the entire pipeline
@@ -960,7 +961,7 @@ class MobsfScanPipelineResult:
 # MobsfScanPipeline — end-to-end orchestration
 # ---------------------------------------------------------------------------
 
-#: AnalysisCache operation key for cached mobsfscan results.
+#: ``analysis_cache.operation`` key for cached mobsfscan results.
 _CACHE_OP = "mobsfscan_scan"
 
 #: Total pipeline budget (seconds).  The 3-minute cap is shared across
@@ -976,11 +977,13 @@ class MobsfScanPipeline:
 
     1. Accept either a **JADX output directory** (already decompiled) or
        an **APK path** (triggers lazy decompilation via jadx_service).
-    2. If sources live in AnalysisCache (JSONB), materialise them to a
-       temporary directory for mobsfscan CLI consumption.
+    2. If sources live in the ``analysis_cache`` table (JSONB),
+       materialise them to a temporary directory for mobsfscan CLI
+       consumption.
     3. Invoke ``run_mobsfscan()`` with configurable timeout.
     4. Parse + normalise findings with firmware-context severity adjustments.
-    5. Cache raw scan results in AnalysisCache (keyed by APK SHA-256).
+    5. Cache raw scan results in the ``analysis_cache`` table (keyed by
+       APK SHA-256).
     6. Persist normalised findings to the ``findings`` table via ``flush()``.
     7. Return a :class:`MobsfScanPipelineResult` with everything bundled.
 
@@ -993,7 +996,7 @@ class MobsfScanPipeline:
         self._lock = asyncio.Lock()
 
     # ------------------------------------------------------------------
-    # Cache helpers (AnalysisCache integration)
+    # Cache helpers (thin wrappers over app.services._cache)
     # ------------------------------------------------------------------
 
     async def _get_cached_result(
@@ -1149,9 +1152,9 @@ class MobsfScanPipeline:
         (default ``_PIPELINE_BUDGET_SECONDS`` = 180 s / 3 minutes):
 
         1. **JADX decompilation** (lazy, cached) — consumes part of the budget.
-        2. Check AnalysisCache for prior mobsfscan results.
+        2. Check the ``analysis_cache`` table for prior mobsfscan results.
         3. **mobsfscan SAST scan** — gets the *remaining* budget as its timeout.
-        4. Cache scan results in AnalysisCache.
+        4. Cache scan results in the ``analysis_cache`` table.
         5. Normalise findings with firmware-context severity adjustments.
         6. Optionally persist findings to the ``findings`` table.
         7. Format human-readable text output.
@@ -1181,8 +1184,8 @@ class MobsfScanPipeline:
         persist:
             Whether to write findings to the ``findings`` table.
         use_cache:
-            Whether to check/store AnalysisCache.  Set ``False`` to
-            force a rescan.
+            Whether to check/store the ``analysis_cache`` table.  Set
+            ``False`` to force a rescan.
         fw_ctx:
             Optional :class:`FirmwareContext` for enriching finding
             descriptions with device/firmware metadata.
@@ -1505,7 +1508,7 @@ class MobsfScanPipeline:
         with tempfile.TemporaryDirectory(prefix="mobsfscan_") as tmp_dir:
             source_dir = os.path.join(tmp_dir, "sources")
 
-            # Write decompiled sources from AnalysisCache to disk
+            # Write decompiled sources from the analysis_cache table to disk
             await self._materialise_sources_from_cache(
                 apk_path, firmware_id, db, source_dir,
             )

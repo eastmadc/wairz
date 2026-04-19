@@ -1,9 +1,9 @@
 """JADX-based APK/DEX decompilation service with caching.
 
 Runs JADX to decompile Android APK or DEX files into Java source code.
-Results are cached in the AnalysisCache table (keyed by SHA256) to avoid
-expensive re-decompilation.  Follows the same caching and concurrency
-patterns as ghidra_service.py.
+Results are cached in the ``analysis_cache`` table (keyed by SHA256) via
+:mod:`app.services._cache` to avoid expensive re-decompilation.  Follows
+the same caching and concurrency patterns as ghidra_service.py.
 
 All methods are async.  The actual JADX CLI invocation is done via
 ``asyncio.create_subprocess_exec()`` with configurable timeout.
