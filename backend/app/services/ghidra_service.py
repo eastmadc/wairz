@@ -17,11 +17,10 @@ import tempfile
 import uuid
 from pathlib import Path
 
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
-from app.models.analysis_cache import AnalysisCache
+from app.services import _cache
 from app.utils.hashing import compute_file_sha256
 
 logger = logging.getLogger(__name__)
@@ -227,13 +226,12 @@ class GhidraAnalysisCache:
         db: AsyncSession,
     ) -> bool:
         """Check if full analysis has been completed for this binary."""
-        stmt = select(AnalysisCache.id).where(
-            AnalysisCache.firmware_id == firmware_id,
-            AnalysisCache.binary_sha256 == binary_sha256,
-            AnalysisCache.operation == "ghidra_full_analysis",
-        ).limit(1)
-        result = await db.execute(stmt)
-        return result.scalar_one_or_none() is not None
+        return await _cache.exists_cached(
+            db,
+            firmware_id,
+            "ghidra_full_analysis",
+            binary_sha256=binary_sha256,
+        )
 
     async def get_cached(
         self,
@@ -253,16 +251,9 @@ class GhidraAnalysisCache:
         db: AsyncSession,
     ) -> dict | None:
         """Get a cached result by operation key."""
-        stmt = select(AnalysisCache.result).where(
-            AnalysisCache.firmware_id == firmware_id,
-            AnalysisCache.binary_sha256 == binary_sha256,
-            AnalysisCache.operation == operation,
+        return await _cache.get_cached(
+            db, firmware_id, operation, binary_sha256=binary_sha256,
         )
-        result = await db.execute(stmt)
-        row = result.scalars().first()
-        if row is not None and isinstance(row, dict):
-            return row
-        return None
 
     async def store_cached(
         self,
@@ -287,29 +278,15 @@ class GhidraAnalysisCache:
         result_data: dict,
         db: AsyncSession,
     ) -> None:
-        """Store a result in the cache.
-
-        Deletes any existing entries with the same composite key first
-        to prevent duplicate rows.
-        """
-        from sqlalchemy import delete
-
-        await db.execute(
-            delete(AnalysisCache).where(
-                AnalysisCache.firmware_id == firmware_id,
-                AnalysisCache.binary_sha256 == binary_sha256,
-                AnalysisCache.operation == operation,
-            )
-        )
-        cache_entry = AnalysisCache(
-            firmware_id=firmware_id,
-            binary_path=binary_path,
+        """Store a result in the cache (delete-then-insert upsert)."""
+        await _cache.store_cached(
+            db,
+            firmware_id,
+            operation,
+            result_data,
             binary_sha256=binary_sha256,
-            operation=operation,
-            result=result_data,
+            binary_path=binary_path,
         )
-        db.add(cache_entry)
-        await db.flush()
 
     async def _run_full_analysis(
         self,
