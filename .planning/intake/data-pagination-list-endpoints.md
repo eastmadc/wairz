@@ -1,9 +1,25 @@
 ---
 title: "Data: Add Pagination to Unbounded List Endpoints"
-status: pending
+status: completed
 priority: high
 target: backend/app/routers/
 ---
+
+> **Status note 2026-04-21 (Rule-19 audit):** Shipped via session 435cb5c2 Stream Beta
+> across 5 per-endpoint-family commits (see `.planning/campaigns/wairz-intake-sweep-2026-04-19.md`
+> Phase 3 history). Live audit verified:
+> - **Step 1** `Page[T]` + `PageParams` schemas: commit `8994dcb` →
+>   `backend/app/schemas/pagination.py:25` (`class Page(BaseModel, Generic[T])`) + line 34
+>   (`class PageParams(BaseModel)`).
+> - **Step 2** `paginate_query_rows` helper adopted in sbom/attack_surface/projects/findings
+>   routers (4 router files).
+> - **Step 3 migrations** —
+>   - projects + findings pagination: commit `6c4d08d`
+>   - attack_surface pagination + bounded-scalar annotations: commit `67aaf49`
+>   - sbom components + vulns: commit `9aeae31` (see `backend/app/routers/sbom.py:219,418`
+>     for the actual `paginate_query_rows(db, stmt, offset=offset, limit=limit)` calls).
+> - Frontend `unwrap(data)` companion helper: commit `3063283` + Rule #26 incident note.
+> This intake is retained for historical reference; further changes go in new intakes.
 
 ## Problem
 
