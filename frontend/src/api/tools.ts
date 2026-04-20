@@ -1,5 +1,16 @@
 import apiClient from './client'
 
+// POST /tools/run is a generic MCP-tool dispatcher. The set of
+// whitelisted tools includes long-running operations — decompile_function
+// (30-120 s Ghidra), check_all_binary_protections (walks every ELF,
+// can hit minutes), scan_with_yara, generate_sbom, etc. The default
+// axios 30 s timeout in client.ts fires while a legitimate tool is
+// still executing and surfaces a fake "tool failed" to the UI.
+// Matches SECURITY_SCAN_TIMEOUT tier used by sibling files — the
+// worst-case tool latency here is the same order of magnitude as a
+// full security scan.
+const TOOL_EXECUTION_TIMEOUT = 600_000
+
 export interface ToolRunResponse {
   tool: string
   output: string
@@ -38,7 +49,7 @@ export async function runTool(
   const { data } = await apiClient.post<ToolRunResponse>(
     `/projects/${projectId}/tools/run`,
     { tool_name: toolName, input },
-    { params },
+    { params, timeout: TOOL_EXECUTION_TIMEOUT },
   )
   return data
 }
