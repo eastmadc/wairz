@@ -719,7 +719,7 @@ async def scan_apk_sast_endpoint(
             f"Invalid min_severity '{min_severity}'. Must be one of: {', '.join(_SEVERITY_ORDER)}",
         )
 
-    from app.services.mobsfscan_service import (
+    from app.services.mobsfscan import (
         get_mobsfscan_pipeline,
         mobsfscan_available,
     )
