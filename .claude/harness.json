@@ -183,6 +183,24 @@
         "pattern": "ManifestChecksMixin\\b",
         "filePattern": "backend/**/*.py",
         "message": "Learned from campaign wairz-intake-sweep-2026-04-19 session b56eb487: ManifestChecksMixin was removed in Phase 5 part 1 split (commit 1577eaa); inheritance replaced with composition via ManifestChecker. Use from app.services.manifest_checks import ManifestChecker instead."
+      },
+      {
+        "name": "auto-phase5-no-sbom-service-import",
+        "pattern": "from app\\.services\\.sbom_service\\b",
+        "filePattern": "backend/**/*.py",
+        "message": "Learned from campaign wairz-intake-sweep-2026-04-19 session 7e8dd7c3: sbom_service.py was deleted in Phase 5 part 3 split (commit b29ef8f); module no longer exists. Use from app.services.sbom import ... instead (SbomService, IdentifiedComponent, CPE_VENDOR_MAP, etc. are all re-exported from the package __init__.py). Strategy classes live under app.services.sbom.strategies.*"
+      },
+      {
+        "name": "auto-phase5-no-emulation-service-import",
+        "pattern": "from app\\.services\\.emulation_service\\b",
+        "filePattern": "backend/**/*.py",
+        "message": "Learned from campaign wairz-intake-sweep-2026-04-19 session 7e8dd7c3: emulation_service.py was deleted in Phase 5 part 5 split (commit c267931); module no longer exists. Use from app.services.emulation import EmulationService instead. Sub-modules (docker_ops, kernel_selection, sysroot_mount, user_mode, system_mode) can be imported directly if needed \u2014 e.g. from app.services.emulation.docker_ops import copy_dir_to_container for free-function access."
+      },
+      {
+        "name": "auto-phase5-no-mobsfscan-service-import",
+        "pattern": "from app\\.services\\.mobsfscan_service\\b",
+        "filePattern": "backend/**/*.py",
+        "message": "Learned from campaign wairz-intake-sweep-2026-04-19 session 7e8dd7c3: mobsfscan_service.py was deleted in Phase 5 part 4 split (commit 206fbd5); module no longer exists. Use from app.services.mobsfscan import ... instead (MobsfScanPipeline, MobsfScanFinding, get_mobsfscan_pipeline, mobsfscan_available, normalize_mobsfscan_findings, SUPPRESSED_PATH_PATTERNS, SUPPRESSED_RULES all re-exported)."
       }
     ]
   },
