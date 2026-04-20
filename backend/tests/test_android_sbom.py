@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from app.services.sbom_service import IdentifiedComponent, SbomService
+from app.services.sbom import IdentifiedComponent, SbomService
 
 
 @pytest.fixture

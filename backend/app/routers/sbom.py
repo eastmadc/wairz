@@ -26,7 +26,7 @@ from app.schemas.sbom import (
     VulnerabilityScanResponse,
     VulnerabilityUpdateRequest,
 )
-from app.services.sbom_service import SbomService
+from app.services.sbom import SbomService
 from app.services.vulnerability_service import VulnerabilityService
 from app.utils.pagination import paginate_query_rows
 
