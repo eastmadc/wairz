@@ -2,6 +2,14 @@ import apiClient from './client'
 import { apiUrl } from './config'
 import type { ProjectDocument, DocumentContent } from '@/types'
 
+// Document uploads can include multi-MB PDFs, exported reports, and
+// firmware-related binaries. The default axios 30 s timeout in client.ts
+// can fire mid-upload for large documents on slow links and surface a
+// fake "upload failed" while the backend is still receiving bytes.
+// Matches the UPLOAD_TIMEOUT tier used in firmware.ts / exportImport.ts
+// for POST multipart uploads.
+const UPLOAD_TIMEOUT = 600_000
+
 export async function listDocuments(projectId: string): Promise<ProjectDocument[]> {
   const { data } = await apiClient.get<ProjectDocument[]>(
     `/projects/${projectId}/documents`,
@@ -26,6 +34,7 @@ export async function uploadDocument(
     form,
     {
       headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: UPLOAD_TIMEOUT,
       onUploadProgress: (e) => {
         if (e.total && onProgress) {
           onProgress(Math.round((e.loaded * 100) / e.total))

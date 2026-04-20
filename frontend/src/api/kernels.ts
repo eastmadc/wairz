@@ -1,6 +1,13 @@
 import apiClient from './client'
 import type { KernelInfo, KernelListResponse } from '@/types'
 
+// Kernel uploads are typically 10-80 MB bzImage/uImage/vmlinux blobs.
+// On slow links the upload can exceed the default axios 30 s timeout
+// in client.ts and surface a fake "upload failed" while the backend
+// is still streaming bytes. Matches the UPLOAD_TIMEOUT tier used in
+// firmware.ts / documents.ts / exportImport.ts.
+const UPLOAD_TIMEOUT = 600_000
+
 export async function listKernels(
   architecture?: string,
 ): Promise<KernelListResponse> {
@@ -25,6 +32,7 @@ export async function uploadKernel(
 
   const { data } = await apiClient.post<KernelInfo>('/kernels', form, {
     headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: UPLOAD_TIMEOUT,
     onUploadProgress: (e) => {
       if (e.total && onProgress) {
         onProgress(Math.round((e.loaded * 100) / e.total))
