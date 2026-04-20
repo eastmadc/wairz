@@ -360,7 +360,7 @@ async def cleanup_emulation_expired_job(ctx: dict) -> dict:
     configured timeout. Fail-soft — a docker-daemon blip must not crash
     the arq worker.
     """
-    from app.services.emulation_service import EmulationService
+    from app.services.emulation import EmulationService
 
     async with async_session_factory() as db:
         try:
