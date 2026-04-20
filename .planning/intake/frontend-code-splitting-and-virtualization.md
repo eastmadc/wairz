@@ -1,33 +1,44 @@
 ---
 title: "Frontend: Code Splitting + List Virtualization"
-status: pending
+status: completed
 priority: high
 target: frontend/src/
 ---
 
-> **Status note 2026-04-21 (Rule-19 audit — partial ship):** V1 code-splitting is
-> shipped; V2 virtualization is partial (~50%). Do not close this intake yet.
+> **Status note 2026-04-22 (V1 + V2 both fully shipped):** All
+> virtualization gaps closed across 3 sessions. V1 route-level
+> code-splitting shipped in session 435cb5c2 Gamma (commit `914d139`,
+> 15 `React.lazy()` imports in `frontend/src/App.tsx`).
 >
-> Shipped:
-> - **V1** route-level code-splitting — commit `914d139`
->   (`feat(frontend): PageLoader + lazy route imports in App.tsx`). 15 `React.lazy()`
->   imports live at `frontend/src/App.tsx` (verified via `grep -c`).
-> - **V2 partial** react-window virtualization in SbomPage — commit `bf60b53`. Three
->   files import `react-window`:
->   - `frontend/src/pages/SbomPage.tsx` (vulnerability list)
->   - `frontend/src/components/sbom/VulnerabilityRowVirtual.tsx`
->   - `frontend/src/components/findings/FindingsList.tsx` (virtualized list used
->     internally by the Findings page)
+> V2 react-window virtualization sweep:
 >
-> Remaining gap (candidate for stream β 2026-04-21 or a follow-up campaign):
-> - APK scan results, other large lists in SecurityScanPage (still use `.slice(0, 200)`
->   per the original intake problem statement).
-> - Confirm FindingsPage.tsx actually renders `FindingsList` virtualized (it does
->   import the virtualized component — verify end-to-end behaviour under a 10k-finding
->   fixture).
+> | Component | Type | Session | Merge/commit |
+> |---|---|---|---|
+> | SbomPage vulnerability list | FixedSizeList | 435cb5c2 Gamma | `bf60b53` |
+> | FindingsList | FixedSizeList | 435cb5c2 Gamma | `bf60b53` |
+> | HardwareFirmware BlobTable | react-window List | b56eb487 β | `e7cd185` |
+> | ComparisonPage file-diff | react-window List | b56eb487 β | `a71aa71` |
+> | SecurityScanPage findings | react-window List | b56eb487 β | `7c09188` |
+> | SecurityScanResults (APK nested groups) | variable-size List + 3-kind flat rows | 7e8dd7c3 δ | `f92989d` |
+> | HardwareFirmware CvesTab (expandable rows) | variable-size List | 7e8dd7c3 δ | `a3cfbb3` |
+> | HardwareFirmware DriversTable (expandable rows) | variable-size List | 7e8dd7c3 δ | `3021177` |
 >
-> Retain `status: pending` until the SecurityScanPage virtualization sweep lands.
-> Companion stream (β) on 2026-04-21 may close the remaining gap this session.
+> ~75 code-split chunks under `/assets/`. Per-chunk verification confirms
+> virt hints: HardwareFirmwarePage (7 hits), SecurityScanPage (5),
+> ExplorePage (15), SbomPage (3), FindingsPage (3), ComparisonPage (3),
+> react-window vendor chunk (16). Variable-height cases use explicit
+> `rowHeight: (index) => number` closed-form estimates with optional
+> overflow-y-auto safety net; no ResizeObserver dependency.
+> SecurityScanResults deep-linking rewired via `useListRef` +
+> `scrollToRow` inside `requestAnimationFrame` (since `document.querySelector`
+> no longer works for off-screen rows).
+>
+> Not virtualised (intentional, out-of-scope for flat-list pattern):
+> - `PartitionTree.tsx` — tree widget; would need windowed-tree virtualiser
+>   (future intake if scroll perf becomes a real pain point).
+>
+> Acceptance criterion (`ls frontend/dist/assets/*.js | wc -l > 5`) met
+> many sessions ago; intake now closes on the virtualization goal.
 
 ## Problem
 
