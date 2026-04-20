@@ -257,6 +257,15 @@ export interface PcapAnalysis {
   tls_info: TlsInfoResult[]
 }
 
+// Network capture waits `duration` seconds of live traffic before
+// responding; the default 10 s fits within the axios 30 s budget, but
+// callers are free to pass higher values (60 s, 300 s) and the HTTP
+// call will stall while the PCAP is still being written. PCAP
+// analysis parses the full capture and can take minutes on a large
+// dump. Both match the SECURITY_SCAN_TIMEOUT tier used by sibling
+// files for backend-bound long-running operations.
+const NETWORK_CAPTURE_TIMEOUT = 600_000
+
 export async function captureNetworkTraffic(
   projectId: string,
   sessionId: string,
@@ -266,6 +275,7 @@ export async function captureNetworkTraffic(
   const { data } = await apiClient.post<NetworkCaptureResult>(
     `/projects/${projectId}/emulation/system/${sessionId}/capture`,
     { duration, interface: iface },
+    { timeout: NETWORK_CAPTURE_TIMEOUT },
   )
   return data
 }
@@ -276,6 +286,7 @@ export async function analyzeNetworkTraffic(
 ): Promise<PcapAnalysis> {
   const { data } = await apiClient.get<PcapAnalysis>(
     `/projects/${projectId}/emulation/system/${sessionId}/network-analysis`,
+    { timeout: NETWORK_CAPTURE_TIMEOUT },
   )
   return data
 }
