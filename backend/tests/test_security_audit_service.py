@@ -5,15 +5,19 @@ from pathlib import Path
 
 import pytest
 
-from app.services.security_audit_service import (
+from app.services.security_audit import (
     SecurityFinding,
     run_security_audit,
+)
+from app.services.security_audit.credentials import (
     _scan_credentials,
-    _scan_shadow,
-    _scan_setuid,
-    _scan_init_services,
-    _scan_world_writable,
     _scan_crypto_material,
+    _scan_shadow,
+)
+from app.services.security_audit.permissions import (
+    _scan_init_services,
+    _scan_setuid,
+    _scan_world_writable,
 )
 
 
