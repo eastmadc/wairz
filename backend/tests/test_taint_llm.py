@@ -583,7 +583,7 @@ class TestScanIntegrationMocked:
             )
 
         with patch(
-            "app.ai.tools.taint_llm.get_analysis_cache", return_value=fake_cache
+            "app.ai.tools.taint_llm.ghidra_service", fake_cache
         ), patch(
             "app.ai.tools.taint_llm.decompile_function", side_effect=fake_decompile
         ):
@@ -621,7 +621,7 @@ class TestScanIntegrationMocked:
         fake_cache.store_cached = AsyncMock()
 
         with patch(
-            "app.ai.tools.taint_llm.get_analysis_cache", return_value=fake_cache
+            "app.ai.tools.taint_llm.ghidra_service", fake_cache
         ):
             result = await registry_for_taint.execute(
                 "scan_taint_analysis",
@@ -673,7 +673,7 @@ class TestDeepDiveIntegrationMocked:
             )
 
         with patch(
-            "app.ai.tools.taint_llm.get_analysis_cache", return_value=fake_cache
+            "app.ai.tools.taint_llm.ghidra_service", fake_cache
         ), patch(
             "app.ai.tools.taint_llm.decompile_function", side_effect=fake_decompile
         ):
