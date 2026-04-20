@@ -34,7 +34,7 @@ from app.schemas.emulation import (
     SystemEmulationStartRequest,
     SystemEmulationStatusResponse,
 )
-from app.services.emulation_service import EmulationService
+from app.services.emulation import EmulationService
 from app.services.pcap_analysis_service import PcapAnalysisService
 from app.services.system_emulation_service import SystemEmulationService
 

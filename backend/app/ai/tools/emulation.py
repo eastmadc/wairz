@@ -12,7 +12,7 @@ from app.config import get_settings
 from app.models.emulation_preset import EmulationPreset
 from app.models.emulation_session import EmulationSession
 from app.models.firmware import Firmware
-from app.services.emulation_service import EmulationService
+from app.services.emulation import EmulationService
 from app.services.kernel_service import KernelService
 
 from sqlalchemy import select

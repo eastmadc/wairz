@@ -402,11 +402,11 @@ class FuzzingService:
 
             # If no host path, copy firmware via tar
             if not host_path:
-                from app.services.emulation_service import EmulationService
-                container.exec_run(["mkdir", "-p", "/firmware"])
-                EmulationService._copy_dir_to_container(
-                    container, real_path, "/firmware"
+                from app.services.emulation.docker_ops import (
+                    copy_dir_to_container,
                 )
+                container.exec_run(["mkdir", "-p", "/firmware"])
+                copy_dir_to_container(container, real_path, "/firmware")
 
             # Set up AFL++ working directories
             container.exec_run(["mkdir", "-p", "/opt/fuzzing/input", "/opt/fuzzing/output"])

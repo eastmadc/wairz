@@ -3,7 +3,7 @@
 This subpackage replaces the monolithic ``emulation_service.py`` (1664 LOC)
 with per-topic modules:
 
-- ``service`` — ``EmulationService`` public API (orchestrator).
+- ``service`` — :class:`EmulationService` public API (orchestrator).
 - ``docker_ops`` — Docker container lifecycle helpers (tar streaming,
   symlink repair, stub injection, log retrieval, host-path resolution).
 - ``kernel_selection`` — arch-to-kernel matching + initrd discovery.
@@ -14,7 +14,11 @@ with per-topic modules:
 - ``system_mode`` — system-mode QEMU setup (kernel/initrd copy, QEMU
   launch, startup health probe).
 
-Callers should import ``EmulationService`` directly from
+Callers should import :class:`EmulationService` directly from
 ``app.services.emulation``. The legacy ``app.services.emulation_service``
-module has been deleted; no shim is kept (≤5 callers updated in-place).
+module has been deleted; no shim is kept (4 callers updated in-place).
 """
+
+from app.services.emulation.service import EmulationService
+
+__all__ = ["EmulationService"]
