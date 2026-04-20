@@ -7,6 +7,17 @@ import type {
   FuzzingCampaignCreateRequest,
 } from '@/types'
 
+// Fuzzing endpoints that invoke backend tooling past the default 30 s
+// axios timeout:
+//   - GET /fuzzing/analyze: runs radare2 + Ghidra on the target binary
+//     to extract input-surface hints. Cold-cache run on a non-trivial
+//     binary takes 30-90 s.
+//   - POST /crashes/{id}/triage: runs AFL++ tmin/cmin minimisation,
+//     GDB stack-trace, and ASAN classification inside the fuzzing
+//     container. Routinely 1-3 min per crash.
+// Both match the SECURITY_SCAN_TIMEOUT tier used by sibling files.
+const FUZZING_ANALYSIS_TIMEOUT = 600_000
+
 export async function analyzeTarget(
   projectId: string,
   path: string,
@@ -16,7 +27,7 @@ export async function analyzeTarget(
   if (firmwareId) params.firmware_id = firmwareId
   const { data } = await apiClient.get<FuzzingTargetAnalysis>(
     `/projects/${projectId}/fuzzing/analyze`,
-    { params },
+    { params, timeout: FUZZING_ANALYSIS_TIMEOUT },
   )
   return data
 }
@@ -101,6 +112,8 @@ export async function triageCrash(
 ): Promise<FuzzingCrash> {
   const { data } = await apiClient.post<FuzzingCrash>(
     `/projects/${projectId}/fuzzing/campaigns/${campaignId}/crashes/${crashId}/triage`,
+    null,
+    { timeout: FUZZING_ANALYSIS_TIMEOUT },
   )
   return data
 }
