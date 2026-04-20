@@ -1,10 +1,20 @@
 ---
 title: "Quick Wins Bundle (30 min each, high payoff)"
-status: partial
-partial_at: 2026-04-18
-partial_in: session 59045370 autopilot wave-2
-shipped: Q1, Q2, Q3, Q5, Q6, Q7, Q8, Q9, Q10, Q11, Q12, Q13, Q14, Q15, Q16, Q17
-remaining: Q4 (deferred — depends on backend-cache-module-extraction-and-ttl)
+status: completed
+closed_at: 2026-04-19
+closed_in: session 480666ce — Q4 shipped as commit a7bfe47
+original_partial_at: 2026-04-18
+original_partial_in: session 59045370 autopilot wave-2
+shipped: Q1-Q17 (all 17 items)
+Q4_final: |
+  Commit a7bfe47 refactor(ghidra_service): drop GhidraAnalysisCache singleton.
+  Intake's original premise ("get_analysis_cache returns a stateless wrapper")
+  was incorrect — the class held real concurrency state (_analysis_locks dict +
+  asyncio.Lock) guarding "one Ghidra run per binary SHA." Refactor re-homed the
+  state to module scope with lazy-constructed lock (avoids module-import-time
+  event-loop issue), and migrated 22 call sites across 5 files (binary.py,
+  comparison.py, taint_llm.py, routers/analysis.py, comparison_service.py).
+  Rule #8 rebuild + Rule #11 smoke passed; 172/172 MCP tools still register.
 priority: medium
 target: multiple
 ---
