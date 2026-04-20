@@ -1,6 +1,16 @@
 import apiClient from './client'
 import type { FirmwareDetail, FirmwareMetadata, FirmwareSummary } from '@/types'
 
+// Firmware uploads commonly run to MAX_UPLOAD_SIZE_MB (default 2 GB). On a
+// 100 Mbps link a 2 GB upload is ~3 min of wall-clock; the default axios
+// 30 s timeout in client.ts fires mid-upload and surfaces a fake
+// "upload failed" while the backend is still streaming bytes to disk.
+// Matches SECURITY_SCAN_TIMEOUT tier (10 min) used in findings.ts /
+// exportImport.ts — same order of magnitude, same "backend is still
+// doing work" UX contract. Applies to POST /firmware and
+// POST /firmware/{id}/upload-rootfs (rootfs can be similarly large).
+const UPLOAD_TIMEOUT = 600_000
+
 export async function uploadFirmware(
   projectId: string,
   file: File,
@@ -18,6 +28,7 @@ export async function uploadFirmware(
     form,
     {
       headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: UPLOAD_TIMEOUT,
       onUploadProgress: (e) => {
         if (e.total && onProgress) {
           onProgress(Math.round((e.loaded * 100) / e.total))
@@ -90,6 +101,7 @@ export async function uploadRootfs(
     form,
     {
       headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: UPLOAD_TIMEOUT,
       onUploadProgress: (e) => {
         if (e.total && onProgress) {
           onProgress(Math.round((e.loaded * 100) / e.total))
