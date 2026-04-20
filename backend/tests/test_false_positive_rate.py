@@ -47,7 +47,7 @@ except ImportError:
 
 # Try importing mobsfscan service; skip SAST tests if unavailable
 try:
-    from app.services.mobsfscan_service import (
+    from app.services.mobsfscan import (
         SUPPRESSED_PATH_PATTERNS,
         SUPPRESSED_RULES,
         _is_suppressed_path,
