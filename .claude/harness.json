@@ -168,9 +168,9 @@
       },
       {
         "name": "auto-frontend-long-op-no-explicit-timeout",
-        "pattern": "apiClient\\.(post|get)<[^>]+>\\([^)]*`[^`]*(audit|scan|export|import|dump|auto-populate|cve-match)[^`]*`[^)]*\\)",
+        "pattern": "apiClient\\.(post|get|put|patch)(<[^>]+>)?\\([^)]*`[^`]*/(audit|scan|export|import|dump|auto-populate|cve-match|generate|triage|analyze|capture|decompile|bytecode|sast|cleaned-code|disasm|network-analysis|upload-rootfs|apk-scan|tools/run)[^`]*`(?![^)]*\\btimeout\\s*:)[^)]*\\)",
         "filePattern": "frontend/src/api/**/*.ts",
-        "message": "Learned from session 93a4948d (CLAUDE.md Rule #2x bug-fix cluster): long-running endpoints (audit/scan/export/import/dump/auto-populate/cve-match) must pass `{ timeout: N }` explicitly \u2014 the axios default is 30s (client.ts:6), and the observed runtime for these paths is minutes. Match the pattern in exportImport.ts (600_000), comparison.ts (300_000), findings.ts (SECURITY_SCAN_TIMEOUT / HASH_SCAN_TIMEOUT). Otherwise axios throws `timeout of 30000ms exceeded` while the backend continues running \u2014 a user-visible lie when combined with bare `catch {}`. See .planning/knowledge/wairz-intake-sweep-bug-fixes-2026-04-19-antipatterns.md anti-pattern #2 for 6 repeat sites to fix."
+        "message": "Learned from session 7e8dd7c3 (bug.har complaint + generateSbom timeout + full sweep commit 6814461..ce4bf45): long-running backend calls must declare an explicit timeout: option on the options object \u2014 default axios timeout is 30s (client.ts) and these endpoints routinely exceed it, surfacing a fake 'scan failed' to the UI while the backend completes successfully. Common tiers: SECURITY_SCAN_TIMEOUT=600_000 (scans, SBOM, audit, fuzzing analyze/triage, MCP tools, uploads), GHIDRA_ANALYSIS_TIMEOUT=180_000 (decompile, cleaned-code), RADARE2_ANALYSIS_TIMEOUT=90_000 (functions, imports, disasm, binary-info), DEVICE_BRIDGE_TIMEOUT=300_000 (device import/dump). Use the matching constant already defined in the sibling file (findings.ts / sbom.ts pattern). Prior rule defects: (a) verb allowlist missed generate/triage/analyze/capture/decompile/bytecode/sast/cleaned-code/disasm/network-analysis/tools-run; (b) no negative-lookahead check \u2014 fired on already-annotated calls. Both fixed."
       },
       {
         "name": "auto-phase5-no-security-audit-service-import",
@@ -201,6 +201,12 @@
         "pattern": "from app\\.services\\.mobsfscan_service\\b",
         "filePattern": "backend/**/*.py",
         "message": "Learned from campaign wairz-intake-sweep-2026-04-19 session 7e8dd7c3: mobsfscan_service.py was deleted in Phase 5 part 4 split (commit 206fbd5); module no longer exists. Use from app.services.mobsfscan import ... instead (MobsfScanPipeline, MobsfScanFinding, get_mobsfscan_pipeline, mobsfscan_available, normalize_mobsfscan_findings, SUPPRESSED_PATH_PATTERNS, SUPPRESSED_RULES all re-exported)."
+      },
+      {
+        "name": "auto-frontend-multipart-no-explicit-timeout",
+        "pattern": "apiClient\\.(post|put|patch)(<[^>]+>)?\\([^)]*'Content-Type':\\s*'multipart/form-data'(?![^)]*\\btimeout\\s*:)[^)]*\\)",
+        "filePattern": "frontend/src/api/**/*.ts",
+        "message": "Multipart upload endpoints must declare a timeout. File uploads up to MAX_UPLOAD_SIZE_MB (default 2 GB) can take several minutes on slow links; the default axios 30s fires mid-upload surfacing a fake 'upload failed'. Use UPLOAD_TIMEOUT=600_000 (10 min) per the firmware.ts / documents.ts / kernels.ts pattern. Learned from session 7e8dd7c3 long-op timeout sweep."
       }
     ]
   },
@@ -263,7 +269,7 @@
     "sessions": 0,
     "campaigns": 0,
     "override": null,
-    "sessions_completed": 123
+    "sessions_completed": 124
   },
   "consent": {
     "externalActions": "session-allow"
