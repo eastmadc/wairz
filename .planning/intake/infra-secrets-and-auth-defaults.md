@@ -1,20 +1,50 @@
 ---
 title: "Infra: Secrets Management + Safe Default Bindings"
-status: partial
-partial_at: 2026-04-18
-partial_in: session 59045370 autopilot (commits 10872d6 + 906cfe2)
-partial_scope: |
-  Shipped: BACKEND_HOST_BIND/FRONTEND_HOST_BIND loopback default,
-  POSTGRES_USER/PASSWORD/DB parameterization, DATABASE_URL interpolation
-  in backend + worker, FIRMAE_DB_PASSWORD for system-emulation.
-  Deferred (blocked by session's secrets-access hook on .env.example):
-  .env.example documentation, :?error required-mode enforcement,
-  frontend env_file removal, docker-compose.prod.yml with Docker secrets,
-  README security section. Real auth-layer fix belongs under
-  security-auth-hardening.md (Option B.1).
+status: completed
+closed_at: 2026-04-19
+closed_in: Rule #19 audit (session 480666ce) — evidence walk confirmed 4 of 5 deferred items silently shipped
+original_partial_at: 2026-04-18
+original_partial_in: session 59045370 autopilot (commits 10872d6 + 906cfe2)
+shipped_summary: |
+  Phase 1 (session 59045370, commits 10872d6 + 906cfe2):
+    - BACKEND_HOST_BIND / FRONTEND_HOST_BIND loopback defaults
+    - POSTGRES_USER / PASSWORD / DB parameterization
+    - DATABASE_URL interpolation in backend + worker
+    - FIRMAE_DB_PASSWORD for system-emulation
+
+  Phase 2 (commit 83e31c8 — feat(infra): promote POSTGRES/FIRMAE passwords to :?required + .env.example security header):
+    - :?error required-mode on 6 sites — docker-compose.yml lines 27, 81, 112, 187, 250, 333
+    - .env.example SECURITY header block (required-secrets callout, rotation guidance, token generation command)
+
+  Phase 3 (commit b9f438f — chore(infra): tighten frontend env + backend .dockerignore (Q6,Q9)):
+    - Frontend env_file: removed — docker-compose.yml:396-403 now passes only MAX_UPLOAD_SIZE_MB via environment:
+
+  Phase 4 (README.md:332-378, "## Security" section):
+    - Required secrets documented with error-message example
+    - Token-generation one-liner (python3 -c 'import secrets; print(secrets.token_urlsafe(32))')
+    - Binding defaults + LAN-exposure caveat (WebSocket /ws not yet auth-gated)
+    - Rotation workflow (pg-backup service + ALTER USER note)
+deferred_residual: |
+  docker-compose.prod.yml with Docker secrets — README.md:375 explicitly labels this
+  "on the roadmap but not yet in-tree." No in-tree prod deployment consumer exists today
+  (wairz is single-node dev / self-host). Tracked as a future standalone brief when a
+  real prod deployment surfaces; NOT carried forward as a live intake, per Rule #19
+  (don't write dormant code for a consumer that doesn't exist).
 priority: critical
 target: docker-compose.yml, .env.example, backend/app/config.py
 ---
+
+## Status: COMPLETED — 2026-04-19
+
+Rule #19 audit (`.planning/intake/` walk at campaign-close) confirmed 4 of the 5
+originally-deferred items were silently shipped in commits `83e31c8` and `b9f438f`
+plus the README.md Security section. See `shipped_summary` in frontmatter for
+the evidence matrix. The 5th item (`docker-compose.prod.yml`) is documented as
+roadmap-not-in-tree; it has no live consumer and does not warrant a carried-forward
+intake. Original specification preserved below for reference.
+
+---
+
 
 ## Problem
 
