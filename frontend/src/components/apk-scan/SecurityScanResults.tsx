@@ -487,7 +487,7 @@ export default function SecurityScanResults({
     return out
   }, [groupedFindings, expandedGroups, expandedFindings, sortMode])
 
-  const virtItemSize = useCallback(
+  const itemSize = useCallback(
     (index: number) => computeRowHeight(virtRows[index]),
     [virtRows],
   )
@@ -586,7 +586,7 @@ export default function SecurityScanResults({
             listRef={listRef}
             rowComponent={VirtFindingRow}
             rowCount={virtRows.length}
-            rowHeight={virtItemSize}
+            rowHeight={itemSize}
             rowProps={{
               rows: virtRows,
               expandedGroups,
