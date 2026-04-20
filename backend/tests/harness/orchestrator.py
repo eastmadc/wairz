@@ -599,7 +599,7 @@ class SASTScanner:
             )
 
         try:
-            from app.services.mobsfscan_service import MobsfScanPipeline
+            from app.services.mobsfscan import MobsfScanPipeline
 
             pipeline = MobsfScanPipeline()
             result = await pipeline.scan_apk(

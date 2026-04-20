@@ -89,7 +89,7 @@ def _get_apk_rel_path(apk_path: str, extracted_root: str) -> str:
 
 async def _handle_scan_apk_sast(input: dict, context: ToolContext) -> str:
     """Run the full jadx+mobsfscan SAST pipeline on an APK."""
-    from app.services.mobsfscan_service import (
+    from app.services.mobsfscan import (
         get_mobsfscan_pipeline,
         mobsfscan_available,
     )
