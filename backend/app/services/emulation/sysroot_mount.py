@@ -1,0 +1,151 @@
+"""Firmware rootfs preparation — wairz init wrapper generation + injection.
+
+Extracted from ``emulation_service.py`` as step 4/7 of the Phase 5 split.
+
+The wairz init wrapper is a shell script injected into the firmware
+rootfs that runs as PID 1 in system-mode emulation. It performs the
+shared setup that every firmware needs (mount proc/sysfs/devtmpfs,
+configure QEMU user-net interface, set ``LD_PRELOAD`` for stub
+libraries) before handing off to the firmware's native init or an
+interactive shell.
+
+The module name "sysroot_mount" follows the Phase 5 intake spec; the
+actual operations target the firmware root that becomes the ext4 image
+mounted by the guest kernel.
+
+Public surface:
+
+- ``generate_init_wrapper`` — pure-string builder; renders the template
+  at ``app/templates/wairz_init_wrapper.sh`` with three substitutions.
+- ``inject_init_wrapper`` — writes ``/firmware/wairz_init.sh`` (and
+  optionally ``/firmware/wairz_pre_init.sh``) into a running container.
+  Returns the init_path to pass to ``start-system-mode.sh``.
+"""
+
+import logging
+import os
+
+import docker
+
+from app.services.emulation.docker_ops import put_file_in_container
+
+logger = logging.getLogger(__name__)
+
+# Template location: backend/app/templates/wairz_init_wrapper.sh
+# __file__ = backend/app/services/emulation/sysroot_mount.py
+# dirname (x3) walks up: emulation/ → services/ → app/
+_TEMPLATE_PATH = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
+    "templates", "wairz_init_wrapper.sh",
+)
+
+
+def generate_init_wrapper(
+    original_init: str | None = None,
+    pre_init_script: str | None = None,
+    stub_profile: str = "none",
+) -> str:
+    """Generate a wairz init wrapper script for system-mode emulation.
+
+    The wrapper runs before the firmware's own init and handles:
+
+    - Mounting proc, sysfs, devtmpfs, tmpfs
+    - Configuring networking (QEMU user-mode always uses 10.0.2.0/24)
+    - Setting ``LD_PRELOAD`` for stub libraries (based on stub_profile)
+    - Sourcing an optional pre-init script for firmware-specific setup
+    - Executing the firmware's original init or an interactive shell
+    """
+    if original_init:
+        exec_line = f'exec {original_init}'
+    else:
+        exec_line = (
+            '# Auto-detect init\n'
+            'for candidate in /sbin/init /etc/preinit /sbin/procd /init /linuxrc; do\n'
+            '    if [ -x "$candidate" ] || [ -L "$candidate" ]; then\n'
+            '        exec "$candidate"\n'
+            '    fi\n'
+            'done\n'
+            '# Fallback to shell\n'
+            'echo "[wairz] No init found, dropping to shell"\n'
+            'exec /bin/sh'
+        )
+
+    pre_init_block = ""
+    if pre_init_script:
+        pre_init_block = (
+            '\n# --- User pre-init script ---\n'
+            'if [ -f /wairz_pre_init.sh ]; then\n'
+            '    echo "[wairz] Running pre-init script..."\n'
+            '    chmod +x /wairz_pre_init.sh\n'
+            '    . /wairz_pre_init.sh\n'
+            '    echo "[wairz] Pre-init script finished (exit=$?)"\n'
+            'fi'
+        )
+
+    stub_block = ""
+    if stub_profile != "none":
+        stub_block = (
+            '# Export LD_PRELOAD for stub libraries based on stub_profile setting.\n'
+            '# This ensures ALL processes started by the firmware\'s init inherit the stubs.\n'
+            '# /etc/ld.so.preload is NOT supported by musl libc -- only the env var works.\n'
+            'STUBS=""\n'
+            'for f in /opt/stubs/stubs_*.so; do\n'
+            '    [ -f "$f" ] && STUBS="$STUBS $f"\n'
+            'done\n'
+            'STUBS=$(echo "$STUBS" | sed \'s/^ //\')\n'
+            'if [ -n "$STUBS" ]; then\n'
+            '    export LD_PRELOAD="$STUBS"\n'
+            '    echo "[wairz] LD_PRELOAD set: $LD_PRELOAD"\n'
+            'else\n'
+            '    echo "[wairz] No stub libraries found in /opt/stubs/"\n'
+            'fi'
+        )
+
+    with open(_TEMPLATE_PATH) as f:
+        template = f.read()
+
+    return (
+        template
+        .replace("@@PRE_INIT_BLOCK@@", pre_init_block)
+        .replace("@@STUB_BLOCK@@", stub_block)
+        .replace("@@EXEC_LINE@@", exec_line)
+    )
+
+
+def inject_init_wrapper(
+    container: "docker.models.containers.Container",
+    init_path: str | None = None,
+    pre_init_script: str | None = None,
+    stub_profile: str = "none",
+) -> str:
+    """Inject the wairz init wrapper into the firmware rootfs.
+
+    Writes ``/firmware/wairz_init.sh`` (and optionally
+    ``/firmware/wairz_pre_init.sh``) into the container's firmware
+    directory. These files will be included in the ext4 rootfs image
+    created by ``start-system-mode.sh``.
+
+    Returns the init_path to pass to ``start-system-mode.sh``
+    (``"/wairz_init.sh"``).
+    """
+    wrapper = generate_init_wrapper(
+        init_path, pre_init_script, stub_profile=stub_profile
+    )
+
+    # Write scripts into the container using put_archive (avoids
+    # heredoc/escaping issues)
+    put_file_in_container(container, "/firmware/wairz_init.sh", wrapper)
+
+    # Write the pre-init script if provided
+    if pre_init_script:
+        put_file_in_container(
+            container, "/firmware/wairz_pre_init.sh", pre_init_script,
+        )
+        logger.info("Injected pre-init script (%d bytes)", len(pre_init_script))
+
+    logger.info(
+        "Injected init wrapper (original_init=%s, has_pre_init=%s)",
+        init_path or "auto-detect",
+        bool(pre_init_script),
+    )
+    return "/wairz_init.sh"
