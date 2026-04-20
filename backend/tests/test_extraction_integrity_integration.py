@@ -383,7 +383,8 @@ def test_no_new_direct_extracted_path_reads():
         "unpack_linux.py",
         "unpack_common.py",
         # Per-binary flows — need a single rootfs for binary resolution
-        "emulation_service.py",
+        "emulation_service.py",  # pre-Phase-5 monolith (retained for history)
+        "service.py",  # backend/app/services/emulation/service.py (Phase 5 split)
         "fuzzing_service.py",
         "device_service.py",
         "arq_worker.py",
