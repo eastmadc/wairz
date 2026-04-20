@@ -1,7 +1,7 @@
 """Shared credential and secrets detection patterns.
 
 Used by both the MCP `find_hardcoded_credentials` tool (ai/tools/strings.py)
-and the automated security audit service (services/security_audit_service.py).
+and the automated security audit service (services/security_audit/credentials.py).
 
 Patterns sourced from:
 - Custom firmware-specific patterns

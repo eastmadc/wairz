@@ -14,7 +14,7 @@ from app.models.finding import Finding
 from app.models.project import Project
 from app.schemas.finding import FindingResponse, Severity
 from app.services.finding_service import FindingService
-from app.services.security_audit_service import (
+from app.services.security_audit import (
     SecurityFinding,
     run_security_audit,
     run_security_audit_multi,

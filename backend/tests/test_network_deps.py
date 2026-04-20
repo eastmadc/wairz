@@ -1,13 +1,11 @@
-"""Tests for the network dependency detection (S21, in security_audit_service)."""
+"""Tests for the network dependency detection (S21, in security_audit subpackage)."""
 
 from pathlib import Path
 
 import pytest
 
-from app.services.security_audit_service import (
-    SecurityFinding,
-    _scan_network_dependencies,
-)
+from app.services.security_audit import SecurityFinding
+from app.services.security_audit.network import _scan_network_dependencies
 
 
 @pytest.fixture

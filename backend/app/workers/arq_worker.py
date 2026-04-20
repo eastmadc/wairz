@@ -258,7 +258,7 @@ async def run_yara_scan_job(
     from app.models.finding import Finding
     from app.schemas.finding import FindingCreate
     from app.services.finding_service import FindingService
-    from app.services.security_audit_service import SecurityFinding
+    from app.services.security_audit import SecurityFinding
 
     pid = uuid.UUID(project_id)
 

@@ -270,7 +270,7 @@ class AssessmentService:
 
     async def _phase_credential_crypto(self) -> int:
         """Scan for hardcoded credentials and crypto material."""
-        from app.services.security_audit_service import (
+        from app.services.security_audit import (
             SecurityFinding,
             run_scan_subset,
         )
@@ -366,27 +366,20 @@ class AssessmentService:
 
     async def _phase_config_filesystem(self) -> int:
         """Check init scripts, setuid, world-writable files, filesystem perms."""
-        from app.services.security_audit_service import (
+        from app.services.security_audit import (
             SecurityFinding,
-            _scan_init_services,
-            _scan_setuid,
-            _scan_world_writable,
+            run_scan_subset,
         )
 
         findings: list[SecurityFinding] = []
         loop = asyncio.get_running_loop()
 
         # Phase 3b: scan every detection root.
+        scanners = ["init_services", "setuid", "world_writable"]
         roots = await self._resolve_detection_roots()
         for root in roots:
             await loop.run_in_executor(
-                None, _scan_init_services, root, findings
-            )
-            await loop.run_in_executor(
-                None, _scan_setuid, root, findings
-            )
-            await loop.run_in_executor(
-                None, _scan_world_writable, root, findings
+                None, run_scan_subset, root, scanners, findings
             )
 
         created = 0
