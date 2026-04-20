@@ -207,6 +207,24 @@
         "pattern": "apiClient\\.(post|put|patch)(<[^>]+>)?\\([^)]*'Content-Type':\\s*'multipart/form-data'(?![^)]*\\btimeout\\s*:)[^)]*\\)",
         "filePattern": "frontend/src/api/**/*.ts",
         "message": "Multipart upload endpoints must declare a timeout. File uploads up to MAX_UPLOAD_SIZE_MB (default 2 GB) can take several minutes on slow links; the default axios 30s fires mid-upload surfacing a fake 'upload failed'. Use UPLOAD_TIMEOUT=600_000 (10 min) per the firmware.ts / documents.ts / kernels.ts pattern. Learned from session 7e8dd7c3 long-op timeout sweep."
+      },
+      {
+        "name": "auto-q4-no-get-analysis-cache",
+        "pattern": "\\bget_analysis_cache\\b|_analysis_cache\\s*=\\s*GhidraAnalysisCache",
+        "filePattern": "backend/**/*.py",
+        "message": "Learned from session 480666ce (Q4): GhidraAnalysisCache class + get_analysis_cache() singleton removed in commit a7bfe47. Use module-level ghidra_service.X() directly \u2014 e.g. await ghidra_service.get_functions(...). For tests, patch the module binding: patch('module.ghidra_service', mock_cache) with positional 2nd arg, not return_value=."
+      },
+      {
+        "name": "auto-module-level-asyncio-lock",
+        "pattern": "^[a-zA-Z_][a-zA-Z_0-9]*\\s*(:\\s*asyncio\\.Lock\\s*)?=\\s*asyncio\\.Lock\\(\\)",
+        "filePattern": "backend/**/*.py",
+        "message": "Module-level asyncio.Lock() construction runs at import time, before any event loop. On workers / mcp_server / strict-async contexts this can raise 'no running event loop'. Safe pattern: declare `_lock: asyncio.Lock | None = None` + helper `def _get_lock(): global _lock; if _lock is None: _lock = asyncio.Lock(); return _lock`. Learned from session 480666ce Q4 Ghidra singleton drop \u2014 see ghidra_service.py:202-216."
+      },
+      {
+        "name": "auto-ci-pytest-ignore-requires-intake",
+        "pattern": "--ignore=tests/",
+        "filePattern": ".github/workflows/**/*.yml",
+        "message": "CI pytest --ignore= flags hide real signal. Each ignored file MUST have a tracking intake in .planning/intake/*-unstable-*.md with per-file failure triage (test-bug / product-bug / missing-fixture / deprecated). Remove the --ignore= line in the same commit that makes the file green. Learned from session 480666ce backend-tests.yml workflow \u2014 see .planning/intake/backend-pytest-unstable-tests.md."
       }
     ]
   },
@@ -269,7 +287,7 @@
     "sessions": 0,
     "campaigns": 0,
     "override": null,
-    "sessions_completed": 124
+    "sessions_completed": 126
   },
   "consent": {
     "externalActions": "session-allow"
