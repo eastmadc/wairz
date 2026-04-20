@@ -72,6 +72,13 @@ export async function cancelDump(
   await apiClient.post(`/projects/${projectId}/device/dump/cancel`)
 }
 
+// importDump() takes a completed multi-partition dump from the device
+// bridge and ingests it as a firmware revision: hashes each partition,
+// writes the combined scatter layout to STORAGE_ROOT, creates the
+// Firmware row, and kicks off unpacking metadata. With 10+ partitions
+// totalling several GB this routinely exceeds the default axios 30 s
+// and surfaces a fake "import failed" while the backend is still
+// copying bytes. Matches DEVICE_BRIDGE_TIMEOUT tier used for startDump.
 export async function importDump(
   projectId: string,
   deviceId: string,
@@ -80,6 +87,7 @@ export async function importDump(
   const { data } = await apiClient.post<ImportResult>(
     `/projects/${projectId}/device/import`,
     { device_id: deviceId, version_label: versionLabel },
+    { timeout: DEVICE_BRIDGE_TIMEOUT },
   )
   return data
 }
