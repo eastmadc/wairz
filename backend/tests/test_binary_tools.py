@@ -391,8 +391,8 @@ class TestHandlerFormatting:
         ])
 
         with patch(
-            "app.ai.tools.binary.get_analysis_cache",
-            return_value=mock_cache,
+            "app.ai.tools.binary.ghidra_service",
+            mock_cache,
         ):
             result = await registry.execute(
                 "list_functions",
@@ -427,8 +427,8 @@ class TestHandlerFormatting:
         })
 
         with patch(
-            "app.ai.tools.binary.get_analysis_cache",
-            return_value=mock_cache,
+            "app.ai.tools.binary.ghidra_service",
+            mock_cache,
         ):
             result = await registry.execute(
                 "get_binary_info",
@@ -451,8 +451,8 @@ class TestHandlerFormatting:
         ])
 
         with patch(
-            "app.ai.tools.binary.get_analysis_cache",
-            return_value=mock_cache,
+            "app.ai.tools.binary.ghidra_service",
+            mock_cache,
         ):
             result = await registry.execute(
                 "list_imports",
@@ -474,8 +474,8 @@ class TestHandlerFormatting:
         ])
 
         with patch(
-            "app.ai.tools.binary.get_analysis_cache",
-            return_value=mock_cache,
+            "app.ai.tools.binary.ghidra_service",
+            mock_cache,
         ):
             result = await registry.execute(
                 "list_exports",
@@ -495,8 +495,8 @@ class TestHandlerFormatting:
         ])
 
         with patch(
-            "app.ai.tools.binary.get_analysis_cache",
-            return_value=mock_cache,
+            "app.ai.tools.binary.ghidra_service",
+            mock_cache,
         ):
             result = await registry.execute(
                 "xrefs_to",
@@ -514,8 +514,8 @@ class TestHandlerFormatting:
         mock_cache.get_functions = AsyncMock(return_value=[])
 
         with patch(
-            "app.ai.tools.binary.get_analysis_cache",
-            return_value=mock_cache,
+            "app.ai.tools.binary.ghidra_service",
+            mock_cache,
         ):
             result = await registry.execute(
                 "list_functions",
@@ -533,8 +533,8 @@ class TestHandlerFormatting:
         )
 
         with patch(
-            "app.ai.tools.binary.get_analysis_cache",
-            return_value=mock_cache,
+            "app.ai.tools.binary.ghidra_service",
+            mock_cache,
         ):
             result = await registry.execute(
                 "disassemble_function",
