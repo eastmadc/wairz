@@ -171,6 +171,18 @@
         "pattern": "apiClient\\.(post|get)<[^>]+>\\([^)]*`[^`]*(audit|scan|export|import|dump|auto-populate|cve-match)[^`]*`[^)]*\\)",
         "filePattern": "frontend/src/api/**/*.ts",
         "message": "Learned from session 93a4948d (CLAUDE.md Rule #2x bug-fix cluster): long-running endpoints (audit/scan/export/import/dump/auto-populate/cve-match) must pass `{ timeout: N }` explicitly \u2014 the axios default is 30s (client.ts:6), and the observed runtime for these paths is minutes. Match the pattern in exportImport.ts (600_000), comparison.ts (300_000), findings.ts (SECURITY_SCAN_TIMEOUT / HASH_SCAN_TIMEOUT). Otherwise axios throws `timeout of 30000ms exceeded` while the backend continues running \u2014 a user-visible lie when combined with bare `catch {}`. See .planning/knowledge/wairz-intake-sweep-bug-fixes-2026-04-19-antipatterns.md anti-pattern #2 for 6 repeat sites to fix."
+      },
+      {
+        "name": "auto-phase5-no-security-audit-service-import",
+        "pattern": "from app\\.services\\.security_audit_service\\b",
+        "filePattern": "backend/**/*.py",
+        "message": "Learned from campaign wairz-intake-sweep-2026-04-19 session b56eb487: security_audit_service.py was deleted in Phase 5 part 2 split (commit fb28072); module no longer exists. Use from app.services.security_audit import ... instead."
+      },
+      {
+        "name": "auto-phase5-no-manifest-checks-mixin",
+        "pattern": "ManifestChecksMixin\\b",
+        "filePattern": "backend/**/*.py",
+        "message": "Learned from campaign wairz-intake-sweep-2026-04-19 session b56eb487: ManifestChecksMixin was removed in Phase 5 part 1 split (commit 1577eaa); inheritance replaced with composition via ManifestChecker. Use from app.services.manifest_checks import ManifestChecker instead."
       }
     ]
   },
@@ -233,7 +245,7 @@
     "sessions": 0,
     "campaigns": 0,
     "override": null,
-    "sessions_completed": 121
+    "sessions_completed": 123
   },
   "consent": {
     "externalActions": "session-allow"
