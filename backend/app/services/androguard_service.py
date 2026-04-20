@@ -14,7 +14,7 @@ import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from typing import Any
 
-from app.services.manifest_checks import ManifestChecksMixin, ManifestFinding
+from app.services.manifest_checks import ManifestChecker, ManifestFinding
 
 logger = logging.getLogger(__name__)
 
@@ -444,12 +444,62 @@ def _apply_permission_allowlisting(
     return findings, suppressed_count, suppression_reasons
 
 
-class AndroguardService(ManifestChecksMixin):
+class AndroguardService:
     """Wraps Androguard to analyse individual APK files.
 
-    Inherits manifest security check methods from ManifestChecksMixin
-    (defined in manifest_checks.py) to keep this file manageable.
+    Composes ``ManifestChecker`` (from ``app.services.manifest_checks``)
+    instead of inheriting a monolithic mixin.  ``ManifestChecker`` in
+    turn aggregates six topic modules (backup/debug, network, component,
+    permission, signing, misc).  Thin ``_check_*`` forwarders below
+    preserve the existing ``self._check_<name>(...)`` call sites in
+    ``scan_manifest_security`` so the composition change stayed local.
     """
+
+    def __init__(self) -> None:
+        self.manifest_checker = ManifestChecker(self)
+
+        # Thin forwarders so ``self._check_<name>(...)`` inside
+        # ``scan_manifest_security`` continues to work with the same
+        # method-name surface the legacy Mixin provided.  Binding the
+        # already-bound methods from ``self.manifest_checker`` preserves
+        # correct ``self`` semantics on each topic module.
+        self._check_debuggable = self.manifest_checker._check_debuggable
+        self._check_allow_backup = self.manifest_checker._check_allow_backup
+        self._check_cleartext_traffic = (
+            self.manifest_checker._check_cleartext_traffic
+        )
+        self._check_test_only = self.manifest_checker._check_test_only
+        self._check_min_sdk = self.manifest_checker._check_min_sdk
+        self._check_exported_components = (
+            self.manifest_checker._check_exported_components
+        )
+        self._check_custom_permissions = (
+            self.manifest_checker._check_custom_permissions
+        )
+        self._check_strandhogg_v1 = self.manifest_checker._check_strandhogg_v1
+        self._check_strandhogg_v2 = self.manifest_checker._check_strandhogg_v2
+        self._check_app_links = self.manifest_checker._check_app_links
+        self._check_network_security_config = (
+            self.manifest_checker._check_network_security_config
+        )
+        self._check_allow_task_reparenting = (
+            self.manifest_checker._check_allow_task_reparenting
+        )
+        self._check_implicit_intent_hijacking = (
+            self.manifest_checker._check_implicit_intent_hijacking
+        )
+        self._check_signing_scheme = self.manifest_checker._check_signing_scheme
+        self._check_backup_agent = self.manifest_checker._check_backup_agent
+        self._check_dangerous_permissions = (
+            self.manifest_checker._check_dangerous_permissions
+        )
+        self._check_intent_scheme_hijacking = (
+            self.manifest_checker._check_intent_scheme_hijacking
+        )
+        self._check_shared_user_id = self.manifest_checker._check_shared_user_id
+        self._has_signature_or_system_protection = (
+            self.manifest_checker._has_signature_or_system_protection
+        )
 
     @staticmethod
     def is_available() -> bool:
