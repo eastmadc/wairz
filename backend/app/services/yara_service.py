@@ -16,7 +16,7 @@ from pathlib import Path
 
 import yara
 
-from app.services.security_audit_service import SecurityFinding
+from app.services.security_audit import SecurityFinding
 
 logger = logging.getLogger(__name__)
 
