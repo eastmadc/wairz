@@ -1,26 +1,48 @@
 ---
 title: "Backend: Decompose God-Class Services"
-status: pending
+status: completed
 priority: high
 target: backend/app/services/
 ---
 
+> **Status note 2026-04-22 (all 5 phases shipped):** All 5 priorities
+> closed across 2 sessions via the "N additive + 1 cut-over" pattern
+> (now Learned Rule #27). Total: 34 additive + 5 cut-over commits,
+> 0 reverts, 0 cross-stream commit sweeps (under Rule #23 worktree
+> discipline). Pattern validated 5× — durable.
+>
+> | # | File (old LOC) | Split shape | Session | Merge commit |
+> |---|-----|------|------|------|
+> | 1 | `manifest_checks.py` (2589) | 8 files (Mixin→composition) | b56eb487 γ | `c8718d9` |
+> | 2 | `security_audit_service.py` (1258) | 8 files | b56eb487 δ | `83acb9d` |
+> | 3 | `sbom_service.py` (2412) | 21 files (Strategy pattern, 14 strategies) | 7e8dd7c3 α | `ef8aec0` |
+> | 4 | `emulation_service.py` (1664) | 7 files | 7e8dd7c3 β | `c3d7f21` |
+> | 5 | `mobsfscan_service.py` (1539) | 5 files | 7e8dd7c3 γ | `773164f` |
+>
+> Post-merge verification after Wave 1 of session 7e8dd7c3: mcp_tools=172,
+> cron_jobs=7, alembic head=123cc2c5463a unchanged, /health=200,
+> /ready=200, auth=200. Per-split Rule #11 runtime smokes all pass
+> (SbomService.generate_sbom on dpkg fixture → openssl component found;
+> EmulationService 15/15 public methods preserved; MobsfScanPipeline
+> singleton constructs; MobsfScanFinding dataclass shape intact).
+>
+> Largest remaining service after all 5 splits: `assessment_service.py`
+> (~500 LOC — no decomposition needed). `wc -l backend/app/services/*.py
+> | sort -rn | head -3` now shows no service > 1000 LOC. Acceptance
+> criterion met.
+>
+> Original status notes retained below for historical record.
+>
 > **Status note (2026-04-20):** unchanged — no part shipped yet.
 > Attempted in session 2026-04-20 but deferred: `manifest_checks.py`
 > has grown to **2589 LOC** (from the 2263 measured at intake time),
 > and the full 8-file split requires a dedicated focused session.
-> See `.planning/campaigns/wairz-intake-sweep-2026-04-19.md` § Session
-> 2026-04-20 summary for the next-session pickup prompt. Table in
-> "Problem" below still reflects the intake-time measurements; see
-> campaign file for current numbers.
 >
-> **Status note 2026-04-21 (Rule-19 audit):** Still pending — retained as partial.
-> Stream γ of the 2026-04-21 parallel-audit session is attempting the
-> `manifest_checks.py` split in worktree
-> `.worktrees/stream-gamma` on branch `feat/stream-gamma-manifest-checks-split-2026-04-21`.
-> If γ lands the 8-file split this session, flip priority 1 to done and re-scope this
-> intake to "4 remaining services." Priorities 2-5 (`security_audit_service.py`,
-> `sbom_service.py`, `mobsfscan_service.py`, `emulation_service.py`) remain queued.
+> **Status note 2026-04-21 (Rule-19 audit):** Priority 1 + 2 shipped this
+> session (γ: manifest_checks 8-file split; δ: security_audit_service
+> 8-file split). Priorities 3-5 queued for next session. The Rule-19
+> re-measure pattern caught +14-22% LOC drift across all 5 targets —
+> now Learned Rule #28.
 
 ## Problem
 
