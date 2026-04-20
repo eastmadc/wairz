@@ -165,6 +165,8 @@ Clear the entire `.planning/intake/` backlog of 20 pending items by decomposing 
 
 <!-- session-end: 2026-04-20 session {current} — Wave 1 close, Wave 2 deferred -->
 
+<!-- session-end: 2026-04-19T23:41:48.342Z -->
+
 ## Session 2026-04-20 summary (Wave 1 completion + Wave 2 deferral)
 
 **Shipped in this session (HEAD = 50ed62c, +15 commits atop 4970448):**
@@ -255,4 +257,103 @@ hand off — the intake explicitly anticipates this being multi-session.
 **Blocking issues:** none.
 
 <!-- session-end: 2026-04-20 — Wave 1 (15 commits) landed; Wave 2 deferred -->
+
+## Session 2026-04-21 summary (Wave 1+2 — Phase 5 parts 1 and 2 shipped)
+
+**Shipped in this session (HEAD = 83acb9d, +35 commits atop 4f6d47e, session b56eb487):**
+
+**Continuation State update after this session:**
+- Phase 5: **2.67/3** — Phase 5 sub-item 3 (god-class decomposition) is
+  now 2/5 complete (manifest_checks + security_audit_service shipped;
+  sbom + emulation + mobsfscan remaining). Rule #19 re-measure caught
+  a uniform +14-22% drift pattern across all 5 targets.
+
+**Streams:**
+
+Wave 1 Stream α — Rule-19 intake audit (12 commits, merged `e5911f1`).
+Probed each of 12 "pending" intakes against live DB + filesystem state.
+Found 8 were already shipped in prior sessions (data-constraints,
+data-schema-drift, data-pagination, infra-cleanup-migration, infra-volumes,
+frontend-api-client, frontend-store-isolation, LATTE) — all flipped to
+`status: completed` with evidence paragraphs citing specific commit SHAs.
+Retained 2 with status notes (frontend-code-splitting V2 partial;
+backend-service-decomposition with γ stream note). 2 housekeeping
+(apk-scan-deep-linking YAML frontmatter fix; next-session-plan retyped
+as `status: reference`). WITHOUT this audit, the session would have
+dispatched agents to re-implement ~50% of production-live features.
+
+Wave 1 Stream β — 3 frontend virtualization gap closures (commits e7cd185,
+a71aa71, 7c09188; merged `85a4cff`). HardwareFirmware BlobTable,
+ComparisonPage file-diff list, SecurityScanPage findings list — each
+virtualized via react-window v2 `List` + `rowComponent` house style.
+Side-effect cleanup: removed `filteredEntries.slice(0, 500)` UX cap on
+ComparisonPage and `findings.slice(0, 200)` UX cap on SecurityScanPage.
+Post-Rule-#26 rebuild per-chunk verification confirmed all 3 pages ship
+with ≥3 virt-hints in their per-page chunks.
+
+Wave 1 Stream γ — Phase 5 part 1 manifest_checks god-class split
+(8 commits 782a5ad..1577eaa, merged `c8718d9`). `ManifestChecksMixin`
+(2589 LOC — +14% over intake's 2263 measurement) → `ManifestChecker`
+composition with 6 topic modules + `_base.py` + `checker.py` + 19
+forwarder methods in `AndroguardService`. Cut-over commit `1577eaa`:
+deleted the monolith + un-mixed the inheritance chain + updated the
+single caller via forwarders. Rule #8 full rebuild + Rule #11 smoke
+test: APK scan of `InputDevices.apk` returned 3 findings (MANIFEST-006
+/013/018) with `severity_bumped=True, severity_reduced=True` — full
+severity-adjustment pipeline confirmed.
+
+Wave 2 Stream δ — Phase 5 part 2 security_audit_service god-class split
+(8 commits 92f71fa..fb28072, merged `83acb9d`). Serial stream.
+`security_audit_service.py` (1258 LOC — +22% over intake's 1036) →
+`security_audit/` subpackage with 8 topic files (largest 377 LOC).
+Cut-over commit `fb28072`: deleted monolith + updated 5 callers
+in-place (no shim) + refactored `assessment_service.py:369` to call
+public `run_scan_subset(["init_services","setuid","world_writable"])`
+(completes P1 of backend-private-api-and-circular-imports). Rule #8
+full rebuild + Rule #11 smoke: `run_security_audit` on planted
+PASSWORD= returned `ScanResult(findings=2, checks_run=12, errors=0)`;
+`len(SCANNERS)=12`; all 4 async hash-lookup scanners confirmed as
+coroutines.
+
+**Post-merge invariants (all 8 gates PASS):**
+- /health=200, /ready=200, noauth=401, auth=200
+- mcp_tools=172, cron_jobs=7, alembic head=123cc2c5463a (unchanged)
+- Backend + frontend + worker all (healthy)
+- Both splits verified via Rule #11 runtime smoke tests
+- Rule #17 canary caught a planted type error; tsc -b --force works correctly
+
+**Worktree discipline (Rule #23) — 5th consecutive clean session:**
+All 4 streams operated in dedicated `.worktrees/stream-{name}` worktrees
+with absolute-path `frontend/node_modules` symlinks (where needed).
+0 cross-stream commit sweeps across 31 stream commits + 4 merges.
+Pattern is durable across 5 sessions now (198243b8 β, d9f61335 αβγ,
+b56eb487 αβγδ).
+
+**Remaining Phase 5 part 3 (god-class decomposition, 3 of 5):**
+- `backend/app/services/sbom_service.py` (2412 LOC, +16% over 2073)
+- `backend/app/services/emulation_service.py` (1664 LOC, +14% over 1454)
+- `backend/app/services/mobsfscan_service.py` (1539 LOC, +16% over 1328)
+
+Uniform +14-22% LOC drift pattern holds. Per γ+δ discipline: each split
+= 7 additive + 1 cut-over commit, single Rule #8 rebuild + Rule #11
+smoke at the end. Parallel-dispatch feasible: all 3 files are truly
+independent, so 3 streams in 3 worktrees can run concurrently. Next
+session option A (recommended): 2 of the 3 in parallel (mobsfscan +
+emulation), leaving sbom for a dedicated session since it uses a
+Strategy pattern per intake.
+
+**Rule candidates proposed in handoff (user review):**
+- Rule #27: "N additive + 1 cut-over" god-class split pattern
+- Rule #28: "Re-measure LOC before scheduling — intakes drift +14-22%"
+
+**Next session starter prompt:** see
+`.planning/knowledge/handoff-2026-04-21-session-b56eb487-end.md`.
+
+**Operator action:** none required. No schema / env / cron changes.
+Third-party code that imports `app.services.security_audit_service`
+must switch to `app.services.security_audit`.
+
+**Blocking issues:** none.
+
+<!-- session-end: 2026-04-21 session b56eb487 — Wave 1+2 (35 commits) landed; 2 more splits scheduled for next session -->
 
