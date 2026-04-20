@@ -12,7 +12,7 @@
  * visual styling across the APK scan UI.
  */
 
-import React, { useMemo, useState, useCallback, useEffect, useRef } from 'react'
+import React, { useMemo, useState, useCallback, useEffect, useRef, type CSSProperties } from 'react'
 import {
   ChevronDown,
   ChevronRight,
@@ -28,6 +28,7 @@ import {
   SortAsc,
   SortDesc,
 } from 'lucide-react'
+import { List, useListRef, type RowComponentProps } from 'react-window'
 import { cn } from '@/lib/utils'
 import { SeverityBadge } from './SeverityBadge'
 import { CategoryTag } from './CategoryTag'
@@ -107,6 +108,101 @@ const PHASE_CONFIG: Record<ScanPhase, { label: string; icon: React.ElementType; 
 
 export type SortMode = 'severity' | 'category' | 'phase'
 export type SortDirection = 'asc' | 'desc'
+
+// ── Virtualised row heights ──
+
+/**
+ * Group header row height (px).  Measured from `py-2.5 + text-sm` button
+ * with a single-line severity badge / category tag / phase label and a
+ * finding count.  Chrome measures ~44-46px; padded to 48 for spacing.
+ */
+const GROUP_HEADER_HEIGHT = 48
+
+/**
+ * Finding row height (px).  `py-2 + text-sm` with a single-line truncated
+ * title and 1-3 right-side metadata chips (severity / category / phase /
+ * cwe / confidence).  Chrome measures ~36-38px; padded to 40.
+ */
+const FINDING_ROW_HEIGHT = 40
+
+/**
+ * Characters per line for the description wrap estimate in the detail
+ * panel.  ~100 matches typical panel widths at 1280-1920px viewports.
+ */
+const DETAIL_DESC_CHARS_PER_LINE = 100
+
+/**
+ * Height per wrapped line of body text in the detail panel (text-sm with
+ * default line-height).
+ */
+const DETAIL_LINE_HEIGHT = 20
+
+/**
+ * Chrome overhead inside a detail panel: px-4 + py-3 + metadata row at
+ * bottom + description section header + border.  Does not include
+ * evidence / occurrences / CWE / OWASP / location which are estimated
+ * separately from the finding data.
+ */
+const DETAIL_CHROME_HEIGHT = 100
+
+/**
+ * Height per bytecode occurrence row in the detail panel (py-0.5 + text-xs
+ * one-line).
+ */
+const DETAIL_BYTECODE_LINE_HEIGHT = 18
+
+/**
+ * Flattened row model for the virtualised list.  The nested
+ * (group, finding, detail) structure is flattened into a single row
+ * sequence: a group header row, followed by finding rows (only when the
+ * group is expanded), each optionally followed by a detail row (only
+ * when that finding is expanded).  Each row has a computed height.
+ */
+type VirtRow =
+  | { kind: 'group'; groupKey: string; groupMode: SortMode; findings: UnifiedFinding[] }
+  | { kind: 'finding'; finding: UnifiedFinding; groupMode: SortMode }
+  | { kind: 'detail'; finding: UnifiedFinding }
+
+function estimateDetailHeight(f: UnifiedFinding): number {
+  let h = DETAIL_CHROME_HEIGHT
+
+  // Description wrapping
+  const descLines = f.description
+    ? Math.max(1, Math.ceil(f.description.length / DETAIL_DESC_CHARS_PER_LINE))
+    : 0
+  h += descLines * DETAIL_LINE_HEIGHT
+
+  // Evidence pre block
+  if (f.evidence) {
+    const evLines = Math.max(1, Math.ceil(f.evidence.length / 80))
+    h += 24 + Math.min(evLines, 10) * 16 // bounded at 10 lines before scroll
+  }
+
+  // SAST location + View Source button
+  if (f.filePath) {
+    h += 40
+  }
+
+  // Bytecode locations (capped at max-h-48 = 192px scroll)
+  if (f.locations && f.locations.length > 0) {
+    const visible = Math.min(f.locations.length, 10)
+    h += 24 + visible * DETAIL_BYTECODE_LINE_HEIGHT
+  }
+
+  return h
+}
+
+function computeRowHeight(row: VirtRow | undefined): number {
+  if (!row) return GROUP_HEADER_HEIGHT
+  switch (row.kind) {
+    case 'group':
+      return GROUP_HEADER_HEIGHT
+    case 'finding':
+      return FINDING_ROW_HEIGHT
+    case 'detail':
+      return estimateDetailHeight(row.finding)
+  }
+}
 
 // ── Normalization helpers ──
 
@@ -371,8 +467,40 @@ export default function SecurityScanResults({
   const hasResults = allFindings.length > 0
   const hasAnyResponse = manifest != null || bytecode != null || sast != null
 
+  // ── Flattened virtualised rows ──
+  // Walk the (group, findings, optional details) tree into a single indexable
+  // list so react-window can window it efficiently.  Rebuilt whenever the
+  // grouping, expansion state, or underlying findings change — which also
+  // invalidates react-window's internal row-height cache.
+  const virtRows = useMemo<VirtRow[]>(() => {
+    const out: VirtRow[] = []
+    for (const [groupKey, findings] of groupedFindings) {
+      out.push({ kind: 'group', groupKey, groupMode: sortMode, findings })
+      if (!expandedGroups.has(groupKey)) continue
+      for (const f of findings) {
+        out.push({ kind: 'finding', finding: f, groupMode: sortMode })
+        if (expandedFindings.has(f.id)) {
+          out.push({ kind: 'detail', finding: f })
+        }
+      }
+    }
+    return out
+  }, [groupedFindings, expandedGroups, expandedFindings, sortMode])
+
+  const virtItemSize = useCallback(
+    (index: number) => computeRowHeight(virtRows[index]),
+    [virtRows],
+  )
+
   // ── Deep-link: auto-expand and scroll to a specific finding ──
+  // The virtualised list only renders visible rows, so `document.querySelector`
+  // can no longer find an arbitrary off-screen finding.  Use the List's
+  // imperative `scrollToRow` API instead, after the group+finding expansion
+  // has been written into state and the row array rebuilt.
+  const listRef = useListRef(null)
   const deepLinkHandled = useRef(false)
+  const pendingScrollId = useRef<string | null>(null)
+
   useEffect(() => {
     if (!initialFinding || deepLinkHandled.current || allFindings.length === 0) return
     deepLinkHandled.current = true
@@ -386,16 +514,27 @@ export default function SecurityScanResults({
     // Determine which group key this finding belongs to (default sort is severity)
     const groupKey = match.severity.toLowerCase()
 
-    // Expand the group and the finding
+    // Expand the group and the finding — triggers a rebuild of virtRows.
     setExpandedGroups(new Set([groupKey]))
     setExpandedFindings(new Set([match.id]))
-
-    // Scroll to the finding after React renders
-    requestAnimationFrame(() => {
-      const el = document.querySelector(`[data-finding-id="${match.id}"]`)
-      el?.scrollIntoView({ behavior: 'smooth', block: 'center' })
-    })
+    pendingScrollId.current = match.id
   }, [initialFinding, allFindings])
+
+  // Second effect: once virtRows includes the target finding, scroll to it.
+  // We key on `virtRows` (not `virtRows.length`) so a reflowed list also
+  // re-attempts the scroll if the target row moves.
+  useEffect(() => {
+    const targetId = pendingScrollId.current
+    if (!targetId) return
+    const idx = virtRows.findIndex(
+      (r) => r.kind === 'finding' && r.finding.id === targetId,
+    )
+    if (idx < 0) return
+    pendingScrollId.current = null
+    requestAnimationFrame(() => {
+      listRef.current?.scrollToRow({ align: 'center', index: idx })
+    })
+  }, [virtRows, listRef])
 
   if (!hasAnyResponse && !isScanning) {
     return null
@@ -440,22 +579,27 @@ export default function SecurityScanResults({
         />
       )}
 
-      {/* ── Grouped findings ── */}
+      {/* ── Grouped findings — virtualised via react-window ── */}
       {hasResults ? (
-        <div className="space-y-2">
-          {groupedFindings.map(([groupKey, findings]) => (
-            <FindingGroup
-              key={groupKey}
-              groupKey={groupKey}
-              groupMode={sortMode}
-              findings={findings}
-              isExpanded={expandedGroups.has(groupKey)}
-              expandedFindings={expandedFindings}
-              onToggleGroup={() => toggleGroup(groupKey)}
-              onToggleFinding={toggleFinding}
-              onViewSource={onViewSource}
-            />
-          ))}
+        <div className="rounded-lg border bg-card overflow-hidden">
+          <List
+            listRef={listRef}
+            rowComponent={VirtFindingRow}
+            rowCount={virtRows.length}
+            rowHeight={virtItemSize}
+            rowProps={{
+              rows: virtRows,
+              expandedGroups,
+              expandedFindings,
+              onToggleGroup: toggleGroup,
+              onToggleFinding: toggleFinding,
+              onViewSource,
+            }}
+            style={{
+              height: 'min(720px, calc(100vh - 400px))',
+              minHeight: 320,
+            }}
+          />
         </div>
       ) : hasAnyResponse && !isScanning ? (
         <div className="text-center py-8 text-muted-foreground">
@@ -795,29 +939,90 @@ function ResultsToolbar({
   )
 }
 
-// ── Finding Group ──
+// ── Virtualised row dispatcher ──
 
-interface FindingGroupProps {
-  groupKey: string
-  groupMode: SortMode
-  findings: UnifiedFinding[]
-  isExpanded: boolean
+interface VirtRowExtraProps {
+  rows: VirtRow[]
+  expandedGroups: Set<string>
   expandedFindings: Set<string>
-  onToggleGroup: () => void
+  onToggleGroup: (key: string) => void
   onToggleFinding: (id: string) => void
   onViewSource?: (filePath: string, line?: number) => void
 }
 
-function FindingGroup({
-  groupKey,
-  groupMode,
-  findings,
-  isExpanded,
+function VirtFindingRow({
+  index,
+  style,
+  rows,
+  expandedGroups,
   expandedFindings,
   onToggleGroup,
   onToggleFinding,
   onViewSource,
-}: FindingGroupProps) {
+}: RowComponentProps<VirtRowExtraProps>) {
+  const row = rows[index]
+  if (!row) return null
+
+  // react-window provides absolute positioning via `style`; each row wrapper
+  // applies it so children flow in document order within the window.
+  const wrapperStyle: CSSProperties = { ...style }
+
+  if (row.kind === 'group') {
+    return (
+      <div style={wrapperStyle} className="bg-card">
+        <FindingGroupHeader
+          groupKey={row.groupKey}
+          groupMode={row.groupMode}
+          findings={row.findings}
+          isExpanded={expandedGroups.has(row.groupKey)}
+          onToggleGroup={() => onToggleGroup(row.groupKey)}
+        />
+      </div>
+    )
+  }
+
+  if (row.kind === 'finding') {
+    return (
+      <div style={wrapperStyle} className="bg-card border-t border-border/50">
+        <FindingRow
+          finding={row.finding}
+          groupMode={row.groupMode}
+          isExpanded={expandedFindings.has(row.finding.id)}
+          onToggle={() => onToggleFinding(row.finding.id)}
+          onViewSource={onViewSource}
+        />
+      </div>
+    )
+  }
+
+  // kind === 'detail'
+  return (
+    <div style={wrapperStyle} className="bg-card border-t border-border/50 overflow-y-auto">
+      <FindingDetail finding={row.finding} onViewSource={onViewSource} />
+    </div>
+  )
+}
+
+// ── Finding Group Header (formerly FindingGroup) ──
+// The findings list is now virtualised at the parent level, so this
+// component only renders the collapsible header button.  The per-finding
+// rows are dispatched by `VirtFindingRow` from the flattened row list.
+
+interface FindingGroupHeaderProps {
+  groupKey: string
+  groupMode: SortMode
+  findings: UnifiedFinding[]
+  isExpanded: boolean
+  onToggleGroup: () => void
+}
+
+function FindingGroupHeader({
+  groupKey,
+  groupMode,
+  findings,
+  isExpanded,
+  onToggleGroup,
+}: FindingGroupHeaderProps) {
   const groupSeverityCounts = useMemo(() => {
     const counts: Record<string, number> = {}
     for (const f of findings) {
@@ -828,79 +1033,60 @@ function FindingGroup({
   }, [findings])
 
   return (
-    <div className="rounded-lg border bg-card overflow-hidden">
-      {/* Group header */}
-      <button
-        type="button"
-        onClick={onToggleGroup}
-        className="w-full flex items-center gap-2 px-3 py-2.5 hover:bg-accent/50 transition-colors text-left"
-      >
-        {isExpanded ? (
-          <ChevronDown className="size-4 text-muted-foreground shrink-0" />
-        ) : (
-          <ChevronRight className="size-4 text-muted-foreground shrink-0" />
-        )}
+    <button
+      type="button"
+      onClick={onToggleGroup}
+      className="w-full flex items-center gap-2 px-3 py-2.5 hover:bg-accent/50 transition-colors text-left border-t border-border/40 first:border-t-0"
+    >
+      {isExpanded ? (
+        <ChevronDown className="size-4 text-muted-foreground shrink-0" />
+      ) : (
+        <ChevronRight className="size-4 text-muted-foreground shrink-0" />
+      )}
 
-        {/* Group label */}
-        {groupMode === 'severity' && (
-          <SeverityBadge severity={groupKey} variant="filled" showIcon size="sm" />
-        )}
-        {groupMode === 'category' && (
-          <CategoryTag category={groupKey} variant="subtle" showIcon size="sm" />
-        )}
-        {groupMode === 'phase' && (() => {
-          const config = PHASE_CONFIG[groupKey as ScanPhase]
-          if (!config) return <span className="text-sm font-medium">{groupKey}</span>
-          const PhaseIcon = config.icon
-          return (
-            <span className={cn('inline-flex items-center gap-1 text-sm font-medium', config.color)}>
-              <PhaseIcon className="size-3.5" />
-              {config.label}
-            </span>
-          )
-        })()}
+      {/* Group label */}
+      {groupMode === 'severity' && (
+        <SeverityBadge severity={groupKey} variant="filled" showIcon size="sm" />
+      )}
+      {groupMode === 'category' && (
+        <CategoryTag category={groupKey} variant="subtle" showIcon size="sm" />
+      )}
+      {groupMode === 'phase' && (() => {
+        const config = PHASE_CONFIG[groupKey as ScanPhase]
+        if (!config) return <span className="text-sm font-medium">{groupKey}</span>
+        const PhaseIcon = config.icon
+        return (
+          <span className={cn('inline-flex items-center gap-1 text-sm font-medium', config.color)}>
+            <PhaseIcon className="size-3.5" />
+            {config.label}
+          </span>
+        )
+      })()}
 
-        {/* Finding count */}
-        <span className="text-xs text-muted-foreground">
-          {findings.length} finding{findings.length !== 1 ? 's' : ''}
-        </span>
+      {/* Finding count */}
+      <span className="text-xs text-muted-foreground">
+        {findings.length} finding{findings.length !== 1 ? 's' : ''}
+      </span>
 
-        {/* Severity mini-badges (when not grouped by severity) */}
-        {groupMode !== 'severity' && (
-          <div className="flex items-center gap-1 ml-auto">
-            {(['critical', 'high', 'medium', 'warning', 'low', 'info'] as const).map((sev) => {
-              const count = groupSeverityCounts[sev]
-              if (!count) return null
-              return (
-                <SeverityBadge
-                  key={sev}
-                  severity={sev}
-                  variant="subtle"
-                  size="sm"
-                  label={String(count)}
-                />
-              )
-            })}
-          </div>
-        )}
-      </button>
-
-      {/* Finding rows */}
-      {isExpanded && (
-        <div className="border-t divide-y divide-border/50">
-          {findings.map((finding) => (
-            <FindingRow
-              key={finding.id}
-              finding={finding}
-              groupMode={groupMode}
-              isExpanded={expandedFindings.has(finding.id)}
-              onToggle={() => onToggleFinding(finding.id)}
-              onViewSource={onViewSource}
-            />
-          ))}
+      {/* Severity mini-badges (when not grouped by severity) */}
+      {groupMode !== 'severity' && (
+        <div className="flex items-center gap-1 ml-auto">
+          {(['critical', 'high', 'medium', 'warning', 'low', 'info'] as const).map((sev) => {
+            const count = groupSeverityCounts[sev]
+            if (!count) return null
+            return (
+              <SeverityBadge
+                key={sev}
+                severity={sev}
+                variant="subtle"
+                size="sm"
+                label={String(count)}
+              />
+            )
+          })}
         </div>
       )}
-    </div>
+    </button>
   )
 }
 
@@ -914,9 +1100,12 @@ interface FindingRowProps {
   onViewSource?: (filePath: string, line?: number) => void
 }
 
-function FindingRow({ finding, groupMode, isExpanded, onToggle, onViewSource }: FindingRowProps) {
+function FindingRow({ finding, groupMode, isExpanded, onToggle }: FindingRowProps) {
   const phaseConfig = PHASE_CONFIG[finding.phase]
 
+  // When virtualised, the detail panel renders as a separate row (kind:
+  // 'detail') so the list height recalculates correctly.  This button
+  // renders only the header; the chevron indicates expansion state.
   return (
     <div className="bg-card" data-finding-id={finding.id}>
       {/* Row header */}
@@ -973,11 +1162,6 @@ function FindingRow({ finding, groupMode, isExpanded, onToggle, onViewSource }: 
           )}
         </div>
       </button>
-
-      {/* Expanded detail */}
-      {isExpanded && (
-        <FindingDetail finding={finding} onViewSource={onViewSource} />
-      )}
     </div>
   )
 }
