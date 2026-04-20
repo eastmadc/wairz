@@ -309,7 +309,7 @@ class AssessmentService:
     async def _phase_sbom_vulnerability(self) -> int:
         """Generate SBOM and scan for known vulnerabilities."""
         from app.models.firmware import Firmware
-        from app.services.sbom_service import SbomService
+        from app.services.sbom import SbomService
         from app.services.vulnerability_service import VulnerabilityService
 
         # Check if SBOM already exists

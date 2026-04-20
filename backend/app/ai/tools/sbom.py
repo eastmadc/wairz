@@ -12,7 +12,7 @@ from sqlalchemy import func, select
 
 from app.ai.tool_registry import ToolContext, ToolRegistry
 from app.models.sbom import SbomComponent, SbomVulnerability
-from app.services.sbom_service import SbomService
+from app.services.sbom import SbomService
 from app.services.vulnerability_service import VulnerabilityService
 
 
@@ -541,7 +541,7 @@ async def _handle_check_component_cves(
         cpe = comp.cpe
     else:
         # Build a CPE from the component name
-        from app.services.sbom_service import CPE_VENDOR_MAP
+        from app.services.sbom import CPE_VENDOR_MAP
 
         vendor_product = CPE_VENDOR_MAP.get(component_name.lower())
         if vendor_product:
