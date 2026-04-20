@@ -39,7 +39,8 @@ from typing import Any
 import yaml
 
 from app.ai.tool_registry import ToolContext, ToolRegistry
-from app.services.ghidra_service import decompile_function, get_analysis_cache
+from app.services import ghidra_service
+from app.services.ghidra_service import decompile_function
 
 logger = logging.getLogger(__name__)
 
@@ -529,9 +530,8 @@ async def _handle_scan_taint_analysis(
     focus_cwe_raw = input.get("focus_cwe") or []
     focus_cwe = [c.strip() for c in focus_cwe_raw if isinstance(c, str)]
 
-    cache = get_analysis_cache()
     try:
-        binary_sha256 = await cache.ensure_analysis(
+        binary_sha256 = await ghidra_service.ensure_analysis(
             path, context.firmware_id, context.db
         )
     except Exception as exc:
@@ -541,26 +541,26 @@ async def _handle_scan_taint_analysis(
     cache_key = (
         f"taint_scan:{_hash_args(min_confidence, max_candidates, ','.join(focus_cwe))}"
     )
-    cached = await cache.get_cached(
+    cached = await ghidra_service.get_cached(
         context.firmware_id, binary_sha256, cache_key, context.db
     )
     if cached and isinstance(cached, dict) and cached.get("prompt"):
         return str(cached["prompt"])
 
-    # Gather imports + xrefs from cache.
+    # Gather imports + xrefs from ghidra_service.
     try:
-        imports = await cache.get_imports(path, context.firmware_id, context.db)
+        imports = await ghidra_service.get_imports(path, context.firmware_id, context.db)
     except Exception as exc:
         return f"Error: could not retrieve imports ({exc})"
 
-    xrefs_entry = await cache.get_cached(
+    xrefs_entry = await ghidra_service.get_cached(
         context.firmware_id, binary_sha256, "xrefs", context.db
     )
     xrefs = (xrefs_entry or {}).get("xrefs", {})
     if not xrefs:
         return (
             "Error: no xref data for this binary. "
-            "Run list_functions or list_imports first to populate the cache."
+            "Run list_functions or list_imports first to populate the ghidra_service."
         )
 
     # Rank + gate.
@@ -607,7 +607,7 @@ async def _handle_scan_taint_analysis(
 
     # Cache the composed prompt. Uses flush() internally (rule 3).
     try:
-        await cache.store_cached(
+        await ghidra_service.store_cached(
             context.firmware_id,
             path,
             binary_sha256,
@@ -645,9 +645,8 @@ async def _handle_deep_dive_taint_analysis(
     if not os.path.isfile(path):
         return f"Error: Binary not found: {input['binary_path']}"
 
-    cache = get_analysis_cache()
     try:
-        binary_sha256 = await cache.ensure_analysis(
+        binary_sha256 = await ghidra_service.ensure_analysis(
             path, context.firmware_id, context.db
         )
     except Exception as exc:
@@ -657,7 +656,7 @@ async def _handle_deep_dive_taint_analysis(
         f"taint_deepdive:"
         f"{_hash_args(function_name, include_callers, include_callees, ','.join(focus_cwe))}"
     )
-    cached = await cache.get_cached(
+    cached = await ghidra_service.get_cached(
         context.firmware_id, binary_sha256, cache_key, context.db
     )
     if cached and isinstance(cached, dict) and cached.get("prompt"):
@@ -680,7 +679,7 @@ async def _handle_deep_dive_taint_analysis(
         return f"Error: {exc}"
 
     # Gather xrefs.
-    xrefs_entry = await cache.get_cached(
+    xrefs_entry = await ghidra_service.get_cached(
         context.firmware_id, binary_sha256, "xrefs", context.db
     )
     xrefs = (xrefs_entry or {}).get("xrefs", {})
@@ -772,7 +771,7 @@ async def _handle_deep_dive_taint_analysis(
     )
 
     try:
-        await cache.store_cached(
+        await ghidra_service.store_cached(
             context.firmware_id,
             path,
             binary_sha256,

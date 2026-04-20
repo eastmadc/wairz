@@ -844,7 +844,7 @@ async def diff_decompilation(
     """
     import difflib
 
-    from app.services.ghidra_service import get_analysis_cache
+    from app.services import ghidra_service
 
     result: dict = {
         "function_name": function_name,
@@ -857,16 +857,15 @@ async def diff_decompilation(
         "error": None,
     }
 
-    cache = get_analysis_cache()
 
     try:
-        code_a = await cache.decompile_function(path_a, function_name, firmware_a_id, db)
+        code_a = await ghidra_service.decompile_function(path_a, function_name, firmware_a_id, db)
     except Exception as exc:
         result["error"] = f"Error decompiling from firmware A: {exc}"
         return result
 
     try:
-        code_b = await cache.decompile_function(path_b, function_name, firmware_b_id, db)
+        code_b = await ghidra_service.decompile_function(path_b, function_name, firmware_b_id, db)
     except Exception as exc:
         result["error"] = f"Error decompiling from firmware B: {exc}"
         return result

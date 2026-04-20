@@ -11,10 +11,8 @@ from app.database import get_db
 from app.routers.deps import resolve_firmware
 from app.services.analysis_service import check_binary_protections
 from app.services.file_service import FileService
-from app.services.ghidra_service import (
-    decompile_function as ghidra_decompile,
-    get_analysis_cache,
-)
+from app.services import ghidra_service
+from app.services.ghidra_service import decompile_function as ghidra_decompile
 
 logger = logging.getLogger(__name__)
 
@@ -57,9 +55,8 @@ async def list_functions(
     except Exception:
         raise HTTPException(403, "Invalid path")
 
-    cache = get_analysis_cache()
     try:
-        functions = await cache.get_functions(full_path, firmware.id, db)
+        functions = await ghidra_service.get_functions(full_path, firmware.id, db)
     except TimeoutError:
         raise HTTPException(504, "Binary analysis timed out")
     except Exception as e:
@@ -222,9 +219,8 @@ async def disassemble_function(
     except Exception:
         raise HTTPException(403, "Invalid path")
 
-    cache = get_analysis_cache()
     try:
-        disasm = await cache.get_disassembly(
+        disasm = await ghidra_service.get_disassembly(
             full_path, function, firmware.id, db, max_instructions,
         )
     except TimeoutError:
@@ -251,9 +247,8 @@ async def get_binary_info(
     except Exception:
         raise HTTPException(403, "Invalid path")
 
-    cache = get_analysis_cache()
     try:
-        info = await cache.get_binary_info(full_path, firmware.id, db)
+        info = await ghidra_service.get_binary_info(full_path, firmware.id, db)
     except TimeoutError:
         raise HTTPException(504, "Binary analysis timed out")
     except Exception as e:
@@ -282,10 +277,9 @@ async def get_cleaned_code(
     except Exception:
         raise HTTPException(403, "Invalid path")
 
-    cache = get_analysis_cache()
-    binary_sha256 = await cache.get_binary_sha256(full_path)
+    binary_sha256 = await ghidra_service.get_binary_sha256(full_path)
     operation = f"code_cleanup:{function}"
-    cached = await cache.get_cached(firmware.id, binary_sha256, operation, db)
+    cached = await ghidra_service.get_cached(firmware.id, binary_sha256, operation, db)
 
     if cached and cached.get("cleaned_code"):
         return {"available": True, "cleaned_code": cached["cleaned_code"]}

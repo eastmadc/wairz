@@ -7,6 +7,11 @@ instantly from the DB.
 
 Falls back to DecompileFunction.java for single-function decompilation requests
 on functions not covered in the initial batch (top 200 by size).
+
+Module-level API replaced the previous ``GhidraAnalysisCache`` singleton
+(Q4, 2026-04-19) — callers use ``ghidra_service.get_functions(...)`` etc.
+directly. Module-scope ``_analysis_locks`` + ``_lock`` preserve the
+concurrency guard so only one Ghidra process runs per binary SHA.
 """
 
 import asyncio
@@ -195,491 +200,428 @@ async def run_ghidra_subprocess(
         return stdout_text
 
 
-class GhidraAnalysisCache:
-    """Cache for full-binary Ghidra analysis results.
+# ---------------------------------------------------------------------------
+# Concurrency guard: one Ghidra full-analysis per (binary_sha256) at a time.
+# Locks are created lazily (on first use) so module import does not require
+# a running event loop.
+# ---------------------------------------------------------------------------
 
-    Runs Ghidra once per binary via AnalyzeBinary.java, stores all extracted
-    data in the analysis_cache table, and serves subsequent queries from DB.
+_analysis_locks: dict[str, asyncio.Event] = {}
+_lock: asyncio.Lock | None = None
 
-    Includes a concurrency guard: if two requests hit the same binary
-    simultaneously, only one runs Ghidra and the other waits.
-    """
 
-    def __init__(self) -> None:
-        # Concurrency guard: binary_sha256 → asyncio.Event
-        self._analysis_locks: dict[str, asyncio.Event] = {}
-        self._lock = asyncio.Lock()
+def _get_lock() -> asyncio.Lock:
+    """Lazily construct the module-level asyncio.Lock on first call."""
+    global _lock
+    if _lock is None:
+        _lock = asyncio.Lock()
+    return _lock
 
-    async def _get_binary_sha256(self, binary_path: str) -> str:
-        """Compute SHA256 in a thread."""
-        loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(None, compute_file_sha256, binary_path)
 
-    async def get_binary_sha256(self, binary_path: str) -> str:
-        """Public wrapper: compute SHA256 in a thread."""
-        return await self._get_binary_sha256(binary_path)
+# ---------------------------------------------------------------------------
+# Low-level cache + SHA helpers
+# ---------------------------------------------------------------------------
 
-    async def _is_analysis_complete(
-        self,
-        firmware_id: uuid.UUID,
-        binary_sha256: str,
-        db: AsyncSession,
-    ) -> bool:
-        """Check if full analysis has been completed for this binary."""
-        return await _cache.exists_cached(
-            db,
-            firmware_id,
-            "ghidra_full_analysis",
-            binary_sha256=binary_sha256,
+
+async def _get_binary_sha256(binary_path: str) -> str:
+    """Compute SHA256 in a thread."""
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(None, compute_file_sha256, binary_path)
+
+
+async def get_binary_sha256(binary_path: str) -> str:
+    """Public wrapper: compute SHA256 in a thread."""
+    return await _get_binary_sha256(binary_path)
+
+
+async def _is_analysis_complete(
+    firmware_id: uuid.UUID,
+    binary_sha256: str,
+    db: AsyncSession,
+) -> bool:
+    """Check if full analysis has been completed for this binary."""
+    return await _cache.exists_cached(
+        db,
+        firmware_id,
+        "ghidra_full_analysis",
+        binary_sha256=binary_sha256,
+    )
+
+
+async def get_cached(
+    firmware_id: uuid.UUID,
+    binary_sha256: str,
+    operation: str,
+    db: AsyncSession,
+) -> dict | None:
+    """Get a cached result by operation key (public API)."""
+    return await _get_cached(firmware_id, binary_sha256, operation, db)
+
+
+async def _get_cached(
+    firmware_id: uuid.UUID,
+    binary_sha256: str,
+    operation: str,
+    db: AsyncSession,
+) -> dict | None:
+    """Get a cached result by operation key."""
+    return await _cache.get_cached(
+        db, firmware_id, operation, binary_sha256=binary_sha256,
+    )
+
+
+async def store_cached(
+    firmware_id: uuid.UUID,
+    binary_path: str,
+    binary_sha256: str,
+    operation: str,
+    result_data: dict,
+    db: AsyncSession,
+) -> None:
+    """Store a result in the cache (public API)."""
+    await _store_cached(
+        firmware_id, binary_path, binary_sha256, operation, result_data, db,
+    )
+
+
+async def _store_cached(
+    firmware_id: uuid.UUID,
+    binary_path: str,
+    binary_sha256: str,
+    operation: str,
+    result_data: dict,
+    db: AsyncSession,
+) -> None:
+    """Store a result in the cache (delete-then-insert upsert)."""
+    await _cache.store_cached(
+        db,
+        firmware_id,
+        operation,
+        result_data,
+        binary_sha256=binary_sha256,
+        binary_path=binary_path,
+    )
+
+
+async def _run_full_analysis(
+    binary_path: str,
+    firmware_id: uuid.UUID,
+    binary_sha256: str,
+    db: AsyncSession,
+) -> None:
+    """Run AnalyzeBinary.java and store all results in DB."""
+    raw_output = await run_ghidra_subprocess(binary_path, "AnalyzeBinary.java")
+
+    data = _parse_analysis_output(raw_output)
+    if data is None:
+        raise RuntimeError(
+            "Ghidra full analysis produced no parseable output. "
+            "Check Ghidra installation and binary compatibility."
         )
 
-    async def get_cached(
-        self,
-        firmware_id: uuid.UUID,
-        binary_sha256: str,
-        operation: str,
-        db: AsyncSession,
-    ) -> dict | None:
-        """Get a cached result by operation key (public API)."""
-        return await self._get_cached(firmware_id, binary_sha256, operation, db)
+    # Store each section as a separate cache entry
+    sections = [
+        ("functions", "functions"),
+        ("imports", "imports"),
+        ("exports", "exports"),
+        ("binary_info", "binary_info"),
+        ("xrefs", "xrefs"),
+        ("main_detection", "main_detection"),
+    ]
 
-    async def _get_cached(
-        self,
-        firmware_id: uuid.UUID,
-        binary_sha256: str,
-        operation: str,
-        db: AsyncSession,
-    ) -> dict | None:
-        """Get a cached result by operation key."""
-        return await _cache.get_cached(
-            db, firmware_id, operation, binary_sha256=binary_sha256,
-        )
-
-    async def store_cached(
-        self,
-        firmware_id: uuid.UUID,
-        binary_path: str,
-        binary_sha256: str,
-        operation: str,
-        result_data: dict,
-        db: AsyncSession,
-    ) -> None:
-        """Store a result in the cache (public API)."""
-        await self._store_cached(
-            firmware_id, binary_path, binary_sha256, operation, result_data, db,
-        )
-
-    async def _store_cached(
-        self,
-        firmware_id: uuid.UUID,
-        binary_path: str,
-        binary_sha256: str,
-        operation: str,
-        result_data: dict,
-        db: AsyncSession,
-    ) -> None:
-        """Store a result in the cache (delete-then-insert upsert)."""
-        await _cache.store_cached(
-            db,
-            firmware_id,
-            operation,
-            result_data,
-            binary_sha256=binary_sha256,
-            binary_path=binary_path,
-        )
-
-    async def _run_full_analysis(
-        self,
-        binary_path: str,
-        firmware_id: uuid.UUID,
-        binary_sha256: str,
-        db: AsyncSession,
-    ) -> None:
-        """Run AnalyzeBinary.java and store all results in DB."""
-        raw_output = await run_ghidra_subprocess(binary_path, "AnalyzeBinary.java")
-
-        data = _parse_analysis_output(raw_output)
-        if data is None:
-            raise RuntimeError(
-                "Ghidra full analysis produced no parseable output. "
-                "Check Ghidra installation and binary compatibility."
-            )
-
-        # Store each section as a separate cache entry
-        sections = [
-            ("functions", "functions"),
-            ("imports", "imports"),
-            ("exports", "exports"),
-            ("binary_info", "binary_info"),
-            ("xrefs", "xrefs"),
-            ("main_detection", "main_detection"),
-        ]
-
-        for key, operation in sections:
-            if key in data:
-                await self._store_cached(
-                    firmware_id, binary_path, binary_sha256,
-                    operation, {key: data[key]}, db,
-                )
-
-        # Store disassembly per function
-        disassembly = data.get("disassembly", {})
-        for func_name, disasm_text in disassembly.items():
-            await self._store_cached(
+    for key, operation in sections:
+        if key in data:
+            await _store_cached(
                 firmware_id, binary_path, binary_sha256,
-                f"disasm:{func_name}",
-                {"disassembly": disasm_text},
-                db,
+                operation, {key: data[key]}, db,
             )
 
-        # Store decompilation per function
-        decompilation = data.get("decompilation", {})
-        for func_name, code in decompilation.items():
-            await self._store_cached(
-                firmware_id, binary_path, binary_sha256,
-                f"decompile:{func_name}",
-                {"decompiled_code": code},
-                db,
-            )
-
-        # Store sentinel marking analysis as complete
-        function_count = len(data.get("functions", []))
-        decompile_count = len(decompilation)
-        await self._store_cached(
+    # Store disassembly per function
+    disassembly = data.get("disassembly", {})
+    for func_name, disasm_text in disassembly.items():
+        await _store_cached(
             firmware_id, binary_path, binary_sha256,
-            "ghidra_full_analysis",
-            {
-                "status": "complete",
-                "function_count": function_count,
-                "decompiled_count": decompile_count,
-            },
+            f"disasm:{func_name}",
+            {"disassembly": disasm_text},
             db,
         )
 
-        logger.info(
-            "Ghidra full analysis complete for %s: %d functions, %d decompiled",
-            os.path.basename(binary_path),
-            function_count,
-            decompile_count,
+    # Store decompilation per function
+    decompilation = data.get("decompilation", {})
+    for func_name, code in decompilation.items():
+        await _store_cached(
+            firmware_id, binary_path, binary_sha256,
+            f"decompile:{func_name}",
+            {"decompiled_code": code},
+            db,
         )
 
-    async def ensure_analysis(
-        self,
-        binary_path: str,
-        firmware_id: uuid.UUID,
-        db: AsyncSession,
-    ) -> str:
-        """Ensure full analysis has been run for this binary. Returns binary_sha256.
+    # Store sentinel marking analysis as complete
+    function_count = len(data.get("functions", []))
+    decompile_count = len(decompilation)
+    await _store_cached(
+        firmware_id, binary_path, binary_sha256,
+        "ghidra_full_analysis",
+        {
+            "status": "complete",
+            "function_count": function_count,
+            "decompiled_count": decompile_count,
+        },
+        db,
+    )
 
-        Uses a concurrency guard so only one Ghidra process runs per binary.
-        """
-        if not os.path.isfile(binary_path):
-            raise FileNotFoundError(f"Binary not found: {binary_path}")
+    logger.info(
+        "Ghidra full analysis complete for %s: %d functions, %d decompiled",
+        os.path.basename(binary_path),
+        function_count,
+        decompile_count,
+    )
 
-        binary_sha256 = await self._get_binary_sha256(binary_path)
 
-        # Fast path: already analyzed
-        if await self._is_analysis_complete(firmware_id, binary_sha256, db):
-            return binary_sha256
+async def ensure_analysis(
+    binary_path: str,
+    firmware_id: uuid.UUID,
+    db: AsyncSession,
+) -> str:
+    """Ensure full analysis has been run for this binary. Returns binary_sha256.
 
-        # Concurrency guard
-        should_analyze = False
-        async with self._lock:
-            event = self._analysis_locks.get(binary_sha256)
-            if event is not None:
-                # Another coroutine is already analyzing this binary — wait for it
-                pass
-            else:
-                # We're the leader — create the event and do the analysis
-                event = asyncio.Event()
-                self._analysis_locks[binary_sha256] = event
-                should_analyze = True
+    Uses a concurrency guard so only one Ghidra process runs per binary.
+    """
+    if not os.path.isfile(binary_path):
+        raise FileNotFoundError(f"Binary not found: {binary_path}")
 
-        if not should_analyze:
-            # Wait for the leader coroutine to finish
-            await event.wait()
-            return binary_sha256
+    binary_sha256 = await _get_binary_sha256(binary_path)
 
-        # We're responsible for running the analysis
-        try:
-            # Double-check after acquiring — might have been completed
-            # between our first check and acquiring the lock
-            if not await self._is_analysis_complete(firmware_id, binary_sha256, db):
-                await self._run_full_analysis(
-                    binary_path, firmware_id, binary_sha256, db,
-                )
-        finally:
-            async with self._lock:
-                self._analysis_locks.pop(binary_sha256, None)
-            event.set()
-
+    # Fast path: already analyzed
+    if await _is_analysis_complete(firmware_id, binary_sha256, db):
         return binary_sha256
 
-    async def get_functions(
-        self,
-        binary_path: str,
-        firmware_id: uuid.UUID,
-        db: AsyncSession,
-    ) -> list[dict]:
-        """Get function list for a binary (sorted by size desc)."""
-        binary_sha256 = await self.ensure_analysis(binary_path, firmware_id, db)
+    # Concurrency guard
+    should_analyze = False
+    lock = _get_lock()
+    async with lock:
+        event = _analysis_locks.get(binary_sha256)
+        if event is not None:
+            # Another coroutine is already analyzing this binary — wait for it
+            pass
+        else:
+            # We're the leader — create the event and do the analysis
+            event = asyncio.Event()
+            _analysis_locks[binary_sha256] = event
+            should_analyze = True
 
-        cached = await self._get_cached(firmware_id, binary_sha256, "functions", db)
-        if cached:
-            functions = cached.get("functions", [])
-            # Apply main detection: if main was detected, update the list
-            main_cached = await self._get_cached(
-                firmware_id, binary_sha256, "main_detection", db,
+    if not should_analyze:
+        # Wait for the leader coroutine to finish
+        await event.wait()
+        return binary_sha256
+
+    # We're responsible for running the analysis
+    try:
+        # Double-check after acquiring — might have been completed
+        # between our first check and acquiring the lock
+        if not await _is_analysis_complete(firmware_id, binary_sha256, db):
+            await _run_full_analysis(
+                binary_path, firmware_id, binary_sha256, db,
             )
-            if main_cached:
-                main_info = main_cached.get("main_detection", {})
-                if main_info.get("found") and main_info.get("method") == "libc_start_main_arg":
-                    main_addr = main_info.get("address")
-                    for func in functions:
-                        if func.get("address") == main_addr and func["name"].startswith("FUN_"):
-                            func["name"] = "main"
-                            break
-            return functions
-        return []
+    finally:
+        async with lock:
+            _analysis_locks.pop(binary_sha256, None)
+        event.set()
 
-    async def get_disassembly(
-        self,
-        binary_path: str,
-        function_name: str,
-        firmware_id: uuid.UUID,
-        db: AsyncSession,
-        max_instructions: int = 200,
-    ) -> str:
-        """Get disassembly for a function."""
-        binary_sha256 = await self.ensure_analysis(binary_path, firmware_id, db)
+    return binary_sha256
 
-        cached = await self._get_cached(
-            firmware_id, binary_sha256, f"disasm:{function_name}", db,
+
+# ---------------------------------------------------------------------------
+# Public per-binary query API (all cache-backed)
+# ---------------------------------------------------------------------------
+
+
+async def get_functions(
+    binary_path: str,
+    firmware_id: uuid.UUID,
+    db: AsyncSession,
+) -> list[dict]:
+    """Get function list for a binary (sorted by size desc)."""
+    binary_sha256 = await ensure_analysis(binary_path, firmware_id, db)
+
+    cached = await _get_cached(firmware_id, binary_sha256, "functions", db)
+    if cached:
+        functions = cached.get("functions", [])
+        # Apply main detection: if main was detected, update the list
+        main_cached = await _get_cached(
+            firmware_id, binary_sha256, "main_detection", db,
         )
-        if cached:
-            disasm = cached.get("disassembly", "")
-            # Apply max_instructions limit
-            lines = disasm.split("\n")
-            if len(lines) > max_instructions:
-                lines = lines[:max_instructions]
-                lines.append(f"... (truncated at {max_instructions} instructions)")
-            return "\n".join(lines)
+        if main_cached:
+            main_info = main_cached.get("main_detection", {})
+            if main_info.get("found") and main_info.get("method") == "libc_start_main_arg":
+                main_addr = main_info.get("address")
+                for func in functions:
+                    if func.get("address") == main_addr and func["name"].startswith("FUN_"):
+                        func["name"] = "main"
+                        break
+        return functions
+    return []
 
-        return f"No disassembly found for function '{function_name}'. Use list_functions to see available function names."
 
-    async def get_imports(
-        self,
-        binary_path: str,
-        firmware_id: uuid.UUID,
-        db: AsyncSession,
-    ) -> list[dict]:
-        """Get import list for a binary."""
-        binary_sha256 = await self.ensure_analysis(binary_path, firmware_id, db)
+async def get_disassembly(
+    binary_path: str,
+    function_name: str,
+    firmware_id: uuid.UUID,
+    db: AsyncSession,
+    max_instructions: int = 200,
+) -> str:
+    """Get disassembly for a function."""
+    binary_sha256 = await ensure_analysis(binary_path, firmware_id, db)
 
-        cached = await self._get_cached(firmware_id, binary_sha256, "imports", db)
-        if cached:
-            return cached.get("imports", [])
+    cached = await _get_cached(
+        firmware_id, binary_sha256, f"disasm:{function_name}", db,
+    )
+    if cached:
+        disasm = cached.get("disassembly", "")
+        # Apply max_instructions limit
+        lines = disasm.split("\n")
+        if len(lines) > max_instructions:
+            lines = lines[:max_instructions]
+            lines.append(f"... (truncated at {max_instructions} instructions)")
+        return "\n".join(lines)
+
+    return f"No disassembly found for function '{function_name}'. Use list_functions to see available function names."
+
+
+async def get_imports(
+    binary_path: str,
+    firmware_id: uuid.UUID,
+    db: AsyncSession,
+) -> list[dict]:
+    """Get import list for a binary."""
+    binary_sha256 = await ensure_analysis(binary_path, firmware_id, db)
+
+    cached = await _get_cached(firmware_id, binary_sha256, "imports", db)
+    if cached:
+        return cached.get("imports", [])
+    return []
+
+
+async def get_exports(
+    binary_path: str,
+    firmware_id: uuid.UUID,
+    db: AsyncSession,
+) -> list[dict]:
+    """Get export list for a binary."""
+    binary_sha256 = await ensure_analysis(binary_path, firmware_id, db)
+
+    cached = await _get_cached(firmware_id, binary_sha256, "exports", db)
+    if cached:
+        return cached.get("exports", [])
+    return []
+
+
+async def get_xrefs_to(
+    binary_path: str,
+    target: str,
+    firmware_id: uuid.UUID,
+    db: AsyncSession,
+) -> list[dict]:
+    """Get cross-references to a function/symbol.
+
+    First checks for direct 'to' xrefs under the target name. If none
+    found (common for imported symbols like doSystemCmd, system, etc.),
+    performs a reverse scan of all functions' outgoing ('from') xrefs to
+    find callers whose 'to_func' matches the target.
+    """
+    binary_sha256 = await ensure_analysis(binary_path, firmware_id, db)
+
+    cached = await _get_cached(firmware_id, binary_sha256, "xrefs", db)
+    if not cached:
         return []
 
-    async def get_exports(
-        self,
-        binary_path: str,
-        firmware_id: uuid.UUID,
-        db: AsyncSession,
-    ) -> list[dict]:
-        """Get export list for a binary."""
-        binary_sha256 = await self.ensure_analysis(binary_path, firmware_id, db)
+    xrefs = cached.get("xrefs", {})
 
-        cached = await self._get_cached(firmware_id, binary_sha256, "exports", db)
-        if cached:
-            return cached.get("exports", [])
-        return []
+    # Direct lookup
+    func_xrefs = xrefs.get(target, {})
+    direct_results = func_xrefs.get("to", [])
+    if direct_results:
+        return direct_results
 
-    async def get_xrefs_to(
-        self,
-        binary_path: str,
-        target: str,
-        firmware_id: uuid.UUID,
-        db: AsyncSession,
-    ) -> list[dict]:
-        """Get cross-references to a function/symbol.
+    # Reverse scan: check all functions' outgoing xrefs for calls to target
+    reverse_results: list[dict] = []
+    for func_name, func_data in xrefs.items():
+        for ref in func_data.get("from", []):
+            if ref.get("to_func") == target:
+                reverse_results.append({
+                    "from": ref.get("from", ref.get("address", "unknown")),
+                    "type": ref.get("type", "CALL"),
+                    "from_func": func_name,
+                })
+    return reverse_results
 
-        First checks for direct 'to' xrefs under the target name. If none
-        found (common for imported symbols like doSystemCmd, system, etc.),
-        performs a reverse scan of all functions' outgoing ('from') xrefs to
-        find callers whose 'to_func' matches the target.
-        """
-        binary_sha256 = await self.ensure_analysis(binary_path, firmware_id, db)
 
-        cached = await self._get_cached(firmware_id, binary_sha256, "xrefs", db)
-        if not cached:
-            return []
+async def get_xrefs_from(
+    binary_path: str,
+    target: str,
+    firmware_id: uuid.UUID,
+    db: AsyncSession,
+) -> list[dict]:
+    """Get cross-references from a function/symbol."""
+    binary_sha256 = await ensure_analysis(binary_path, firmware_id, db)
 
+    cached = await _get_cached(firmware_id, binary_sha256, "xrefs", db)
+    if cached:
         xrefs = cached.get("xrefs", {})
-
-        # Direct lookup
         func_xrefs = xrefs.get(target, {})
-        direct_results = func_xrefs.get("to", [])
-        if direct_results:
-            return direct_results
-
-        # Reverse scan: check all functions' outgoing xrefs for calls to target
-        reverse_results: list[dict] = []
-        for func_name, func_data in xrefs.items():
-            for ref in func_data.get("from", []):
-                if ref.get("to_func") == target:
-                    reverse_results.append({
-                        "from": ref.get("from", ref.get("address", "unknown")),
-                        "type": ref.get("type", "CALL"),
-                        "from_func": func_name,
-                    })
-        return reverse_results
-
-    async def get_xrefs_from(
-        self,
-        binary_path: str,
-        target: str,
-        firmware_id: uuid.UUID,
-        db: AsyncSession,
-    ) -> list[dict]:
-        """Get cross-references from a function/symbol."""
-        binary_sha256 = await self.ensure_analysis(binary_path, firmware_id, db)
-
-        cached = await self._get_cached(firmware_id, binary_sha256, "xrefs", db)
-        if cached:
-            xrefs = cached.get("xrefs", {})
-            func_xrefs = xrefs.get(target, {})
-            return func_xrefs.get("from", [])
-        return []
-
-    async def get_binary_info(
-        self,
-        binary_path: str,
-        firmware_id: uuid.UUID,
-        db: AsyncSession,
-    ) -> dict:
-        """Get binary metadata in r2-compatible shape for frontend compatibility.
-
-        Returns a dict shaped like: {"core": {}, "bin": {"arch": ..., "libs": [...]}}
-        """
-        binary_sha256 = await self.ensure_analysis(binary_path, firmware_id, db)
-
-        cached = await self._get_cached(firmware_id, binary_sha256, "binary_info", db)
-        if not cached:
-            return {}
-
-        info = cached.get("binary_info", {})
-
-        # Map to r2-compatible shape
-        arch = _map_architecture(info.get("arch", "unknown"))
-        bits = info.get("bits", 0)
-        endian = info.get("endian", "unknown")
-        fmt = info.get("format", "unknown")
-        libs = info.get("libraries", [])
-        entry = info.get("entry_point", "unknown")
-        compiler = info.get("compiler", "unknown")
-        image_base = info.get("image_base", "unknown")
-
-        return {
-            "core": {
-                "format": fmt,
-                "file": binary_path,
-            },
-            "bin": {
-                "file": binary_path,
-                "bintype": "elf" if "elf" in fmt.lower() else fmt.lower(),
-                "arch": arch,
-                "bits": bits,
-                "endian": endian,
-                "os": "linux",
-                "machine": info.get("arch", "unknown"),
-                "class": f"ELF{bits}" if "elf" in fmt.lower() else fmt,
-                "lang": compiler if compiler != "unknown" else "c",
-                "stripped": False,  # Ghidra doesn't report this directly; pyelftools handles it
-                "static": len(libs) == 0,
-                "libs": libs,
-                "entry_point": entry,
-                "image_base": image_base,
-            },
-        }
-
-    async def decompile_function(
-        self,
-        binary_path: str,
-        function_name: str,
-        firmware_id: uuid.UUID,
-        db: AsyncSession,
-    ) -> str:
-        """Decompile a function, using cached results or falling back to single-function Ghidra.
-
-        First tries the full-analysis cache. If the function wasn't in the top 200
-        decompiled, falls back to running DecompileFunction.java for that specific function.
-        """
-        if not os.path.isfile(binary_path):
-            raise FileNotFoundError(f"Binary not found: {binary_path}")
-
-        binary_sha256 = await self._get_binary_sha256(binary_path)
-        operation = f"decompile:{function_name}"
-
-        # Check cache (works for both full-analysis and single-function cache entries)
-        cached = await self._get_cached(firmware_id, binary_sha256, operation, db)
-        if cached:
-            code = cached.get("decompiled_code")
-            if code:
-                logger.info(
-                    "Cache hit for %s:%s",
-                    os.path.basename(binary_path),
-                    function_name,
-                )
-                return code
-
-        # If full analysis was done but this function wasn't decompiled,
-        # fall back to single-function decompilation
-        raw_output = await run_ghidra_subprocess(
-            binary_path,
-            "DecompileFunction.java",
-            script_args=[function_name],
-        )
-
-        decompiled = _parse_decompile_output(raw_output)
-        if decompiled is None:
-            if "ERROR: Function" in raw_output and "not found" in raw_output:
-                lines = raw_output.split("\n")
-                func_lines = [
-                    line.strip()
-                    for line in lines
-                    if line.strip().startswith("  ") and "@" in line
-                ]
-                suggestion = ""
-                if func_lines:
-                    suggestion = "\n\nAvailable functions:\n" + "\n".join(func_lines[:20])
-                return f"Function '{function_name}' not found in binary.{suggestion}"
-            return "Decompilation produced no output. The function may be too small or a thunk."
-
-        # Store in cache for future use
-        await self._store_cached(
-            firmware_id, binary_path, binary_sha256, operation,
-            {"decompiled_code": decompiled}, db,
-        )
-
-        return decompiled
+        return func_xrefs.get("from", [])
+    return []
 
 
-# ---------------------------------------------------------------------------
-# Module-level singleton
-# ---------------------------------------------------------------------------
+async def get_binary_info(
+    binary_path: str,
+    firmware_id: uuid.UUID,
+    db: AsyncSession,
+) -> dict:
+    """Get binary metadata in r2-compatible shape for frontend compatibility.
 
-_analysis_cache = GhidraAnalysisCache()
+    Returns a dict shaped like: {"core": {}, "bin": {"arch": ..., "libs": [...]}}
+    """
+    binary_sha256 = await ensure_analysis(binary_path, firmware_id, db)
 
+    cached = await _get_cached(firmware_id, binary_sha256, "binary_info", db)
+    if not cached:
+        return {}
 
-def get_analysis_cache() -> GhidraAnalysisCache:
-    """Get the module-level GhidraAnalysisCache singleton."""
-    return _analysis_cache
+    info = cached.get("binary_info", {})
 
+    # Map to r2-compatible shape
+    arch = _map_architecture(info.get("arch", "unknown"))
+    bits = info.get("bits", 0)
+    endian = info.get("endian", "unknown")
+    fmt = info.get("format", "unknown")
+    libs = info.get("libraries", [])
+    entry = info.get("entry_point", "unknown")
+    compiler = info.get("compiler", "unknown")
+    image_base = info.get("image_base", "unknown")
 
-# ---------------------------------------------------------------------------
-# Legacy wrapper — maintains backward compatibility
-# ---------------------------------------------------------------------------
+    return {
+        "core": {
+            "format": fmt,
+            "file": binary_path,
+        },
+        "bin": {
+            "file": binary_path,
+            "bintype": "elf" if "elf" in fmt.lower() else fmt.lower(),
+            "arch": arch,
+            "bits": bits,
+            "endian": endian,
+            "os": "linux",
+            "machine": info.get("arch", "unknown"),
+            "class": f"ELF{bits}" if "elf" in fmt.lower() else fmt,
+            "lang": compiler if compiler != "unknown" else "c",
+            "stripped": False,  # Ghidra doesn't report this directly; pyelftools handles it
+            "static": len(libs) == 0,
+            "libs": libs,
+            "entry_point": entry,
+            "image_base": image_base,
+        },
+    }
 
 
 async def decompile_function(
@@ -688,9 +630,56 @@ async def decompile_function(
     firmware_id: uuid.UUID,
     db: AsyncSession,
 ) -> str:
-    """Decompile a function using Ghidra headless, with caching.
+    """Decompile a function, using cached results or falling back to single-function Ghidra.
 
-    This is a convenience wrapper around GhidraAnalysisCache.decompile_function().
+    First tries the full-analysis cache. If the function wasn't in the top 200
+    decompiled, falls back to running DecompileFunction.java for that specific function.
     """
-    cache = get_analysis_cache()
-    return await cache.decompile_function(binary_path, function_name, firmware_id, db)
+    if not os.path.isfile(binary_path):
+        raise FileNotFoundError(f"Binary not found: {binary_path}")
+
+    binary_sha256 = await _get_binary_sha256(binary_path)
+    operation = f"decompile:{function_name}"
+
+    # Check cache (works for both full-analysis and single-function cache entries)
+    cached = await _get_cached(firmware_id, binary_sha256, operation, db)
+    if cached:
+        code = cached.get("decompiled_code")
+        if code:
+            logger.info(
+                "Cache hit for %s:%s",
+                os.path.basename(binary_path),
+                function_name,
+            )
+            return code
+
+    # If full analysis was done but this function wasn't decompiled,
+    # fall back to single-function decompilation
+    raw_output = await run_ghidra_subprocess(
+        binary_path,
+        "DecompileFunction.java",
+        script_args=[function_name],
+    )
+
+    decompiled = _parse_decompile_output(raw_output)
+    if decompiled is None:
+        if "ERROR: Function" in raw_output and "not found" in raw_output:
+            lines = raw_output.split("\n")
+            func_lines = [
+                line.strip()
+                for line in lines
+                if line.strip().startswith("  ") and "@" in line
+            ]
+            suggestion = ""
+            if func_lines:
+                suggestion = "\n\nAvailable functions:\n" + "\n".join(func_lines[:20])
+            return f"Function '{function_name}' not found in binary.{suggestion}"
+        return "Decompilation produced no output. The function may be too small or a thunk."
+
+    # Store in cache for future use
+    await _store_cached(
+        firmware_id, binary_path, binary_sha256, operation,
+        {"decompiled_code": decompiled}, db,
+    )
+
+    return decompiled

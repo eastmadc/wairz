@@ -8,7 +8,7 @@ from sqlalchemy import select
 from app.ai.tool_registry import ToolContext, ToolRegistry
 from app.models.firmware import Firmware
 from app.services.comparison_service import diff_binary, diff_filesystems
-from app.services.ghidra_service import get_analysis_cache
+from app.services import ghidra_service
 from app.utils.sandbox import validate_path
 from app.utils.truncation import truncate_output
 
@@ -251,16 +251,15 @@ async def _handle_diff_decompilation(input: dict, context: ToolContext) -> str:
         return f"Error: binary not found in firmware B: {binary_path}"
 
     # Decompile from both versions
-    cache = get_analysis_cache()
     try:
-        code_a = await cache.decompile_function(
+        code_a = await ghidra_service.decompile_function(
             path_a, function_name, fw_a.id, context.db,
         )
     except Exception as exc:
         return f"Error decompiling from firmware A: {exc}"
 
     try:
-        code_b = await cache.decompile_function(
+        code_b = await ghidra_service.decompile_function(
             path_b, function_name, fw_b.id, context.db,
         )
     except Exception as exc:

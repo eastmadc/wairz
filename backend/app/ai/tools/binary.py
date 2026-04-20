@@ -13,11 +13,8 @@ from elftools.elf.sections import SymbolTableSection
 
 from app.ai.tool_registry import ToolContext, ToolRegistry
 from app.services.analysis_service import check_binary_protections
-from app.services.ghidra_service import (
-    decompile_function,
-    get_analysis_cache,
-    run_ghidra_subprocess,
-)
+from app.services import ghidra_service
+from app.services.ghidra_service import decompile_function, run_ghidra_subprocess
 from app.utils.sandbox import safe_walk, validate_path
 
 logger = logging.getLogger(__name__)
@@ -119,8 +116,7 @@ async def _handle_list_functions(input: dict, context: ToolContext) -> str:
     path = context.resolve_path(input["binary_path"])
     limit = min(input.get("limit", 100), 500)
 
-    cache = get_analysis_cache()
-    functions = await cache.get_functions(path, context.firmware_id, context.db)
+    functions = await ghidra_service.get_functions(path, context.firmware_id, context.db)
 
     if not functions:
         return "No functions found in binary."
@@ -151,8 +147,7 @@ async def _handle_disassemble_function(input: dict, context: ToolContext) -> str
     function_name = input["function_name"]
     max_insn = input.get("num_instructions", 100)
 
-    cache = get_analysis_cache()
-    disasm = await cache.get_disassembly(
+    disasm = await ghidra_service.get_disassembly(
         path, function_name, context.firmware_id, context.db, max_insn,
     )
 
@@ -163,8 +158,7 @@ async def _handle_list_imports(input: dict, context: ToolContext) -> str:
     """List imported symbols, grouped by library."""
     path = context.resolve_path(input["binary_path"])
 
-    cache = get_analysis_cache()
-    imports = await cache.get_imports(path, context.firmware_id, context.db)
+    imports = await ghidra_service.get_imports(path, context.firmware_id, context.db)
 
     if not imports:
         return "No imports found."
@@ -190,8 +184,7 @@ async def _handle_list_exports(input: dict, context: ToolContext) -> str:
     """List exported symbols."""
     path = context.resolve_path(input["binary_path"])
 
-    cache = get_analysis_cache()
-    exports = await cache.get_exports(path, context.firmware_id, context.db)
+    exports = await ghidra_service.get_exports(path, context.firmware_id, context.db)
 
     if not exports:
         return "No exports found."
@@ -210,8 +203,7 @@ async def _handle_xrefs_to(input: dict, context: ToolContext) -> str:
     path = context.resolve_path(input["binary_path"])
     target = input["address_or_symbol"]
 
-    cache = get_analysis_cache()
-    xrefs = await cache.get_xrefs_to(path, target, context.firmware_id, context.db)
+    xrefs = await ghidra_service.get_xrefs_to(path, target, context.firmware_id, context.db)
 
     if not xrefs:
         return f"No cross-references to '{target}' found."
@@ -232,8 +224,7 @@ async def _handle_xrefs_from(input: dict, context: ToolContext) -> str:
     path = context.resolve_path(input["binary_path"])
     target = input["address_or_symbol"]
 
-    cache = get_analysis_cache()
-    xrefs = await cache.get_xrefs_from(path, target, context.firmware_id, context.db)
+    xrefs = await ghidra_service.get_xrefs_from(path, target, context.firmware_id, context.db)
 
     if not xrefs:
         return f"No cross-references from '{target}' found."
@@ -368,10 +359,9 @@ async def _handle_get_binary_info(input: dict, context: ToolContext) -> str:
     """Get binary metadata: architecture, format, entry point, etc."""
     path = context.resolve_path(input["binary_path"])
 
-    cache = get_analysis_cache()
     info = None
     try:
-        info = await cache.get_binary_info(path, context.firmware_id, context.db)
+        info = await ghidra_service.get_binary_info(path, context.firmware_id, context.db)
     except Exception:
         pass  # Fall through to LIEF/raw analysis
 
@@ -624,12 +614,11 @@ async def _handle_find_string_refs(input: dict, context: ToolContext) -> str:
     path = context.resolve_path(input["binary_path"])
     pattern = input["pattern"]
 
-    cache = get_analysis_cache()
-    binary_sha256 = await cache.get_binary_sha256(path)
+    binary_sha256 = await ghidra_service.get_binary_sha256(path)
     cache_key = f"string_refs:{hashlib.md5(pattern.encode()).hexdigest()[:12]}"
 
     # Check cache
-    cached = await cache.get_cached(
+    cached = await ghidra_service.get_cached(
         context.firmware_id, binary_sha256, cache_key, context.db,
     )
     if cached:
@@ -663,7 +652,7 @@ async def _handle_find_string_refs(input: dict, context: ToolContext) -> str:
             return "Error parsing Ghidra output."
 
         # Cache results
-        await cache.store_cached(
+        await ghidra_service.store_cached(
             context.firmware_id, path, binary_sha256, cache_key,
             {"results": results}, context.db,
         )
@@ -917,15 +906,14 @@ async def _handle_trace_dataflow(input: dict, context: ToolContext) -> str:
     sources_csv = ",".join(sources)
     sinks_csv = ",".join(sinks)
 
-    cache = get_analysis_cache()
-    binary_sha256 = await cache.get_binary_sha256(path)
+    binary_sha256 = await ghidra_service.get_binary_sha256(path)
     cache_key = (
         f"taint_analysis:"
         f"{hashlib.md5((sources_csv + '|' + sinks_csv).encode()).hexdigest()[:12]}"
     )
 
     # Check cache
-    cached = await cache.get_cached(
+    cached = await ghidra_service.get_cached(
         context.firmware_id, binary_sha256, cache_key, context.db,
     )
     if cached:
@@ -959,7 +947,7 @@ async def _handle_trace_dataflow(input: dict, context: ToolContext) -> str:
             return "Error parsing Ghidra output."
 
         # Cache results
-        await cache.store_cached(
+        await ghidra_service.store_cached(
             context.firmware_id, path, binary_sha256, cache_key,
             {"paths": paths}, context.db,
         )
@@ -1017,10 +1005,9 @@ async def _handle_find_callers(input: dict, context: ToolContext) -> str:
     target = input["function_name"]
     include_aliases = input.get("include_aliases", True)
 
-    cache = get_analysis_cache()
-    binary_sha256 = await cache.ensure_analysis(path, context.firmware_id, context.db)
+    binary_sha256 = await ghidra_service.ensure_analysis(path, context.firmware_id, context.db)
 
-    cached = await cache.get_cached(
+    cached = await ghidra_service.get_cached(
         context.firmware_id, binary_sha256, "xrefs", context.db,
     )
     if not cached:
@@ -1094,14 +1081,13 @@ async def _handle_search_binary_content(input: dict, context: ToolContext) -> st
     if max_results <= 0:
         max_results = 100000
 
-    cache = get_analysis_cache()
 
     if mode == "disasm":
         # Search cached disassembly text with a regex
-        binary_sha256 = await cache.ensure_analysis(
+        binary_sha256 = await ghidra_service.ensure_analysis(
             path, context.firmware_id, context.db,
         )
-        functions = await cache.get_functions(path, context.firmware_id, context.db)
+        functions = await ghidra_service.get_functions(path, context.firmware_id, context.db)
         if not functions:
             return "No functions found (binary not analyzed)."
 
@@ -1113,7 +1099,7 @@ async def _handle_search_binary_content(input: dict, context: ToolContext) -> st
         matches: list[dict] = []
         for fn in functions:
             fn_name = fn.get("name", "unknown")
-            disasm_cached = await cache.get_cached(
+            disasm_cached = await ghidra_service.get_cached(
                 context.firmware_id, binary_sha256,
                 f"disasm:{fn_name}", context.db,
             )
@@ -1159,7 +1145,7 @@ async def _handle_search_binary_content(input: dict, context: ToolContext) -> st
     # Get function address ranges for mapping offsets to functions
     func_ranges: list[tuple[int, int, str]] = []
     try:
-        functions = await cache.get_functions(path, context.firmware_id, context.db)
+        functions = await ghidra_service.get_functions(path, context.firmware_id, context.db)
         for fn in functions:
             addr_str = fn.get("address", "0")
             size = fn.get("size", 0)
@@ -1239,12 +1225,11 @@ async def _handle_get_stack_layout(input: dict, context: ToolContext) -> str:
     path = context.resolve_path(input["binary_path"])
     function_name = input["function_name"]
 
-    cache = get_analysis_cache()
-    binary_sha256 = await cache.get_binary_sha256(path)
+    binary_sha256 = await ghidra_service.get_binary_sha256(path)
     cache_key = f"stack_layout:{function_name}"
 
     # Check cache
-    cached = await cache.get_cached(
+    cached = await ghidra_service.get_cached(
         context.firmware_id, binary_sha256, cache_key, context.db,
     )
     if cached:
@@ -1276,7 +1261,7 @@ async def _handle_get_stack_layout(input: dict, context: ToolContext) -> str:
             return "Error parsing Ghidra output."
 
         # Cache
-        await cache.store_cached(
+        await ghidra_service.store_cached(
             context.firmware_id, path, binary_sha256, cache_key,
             result, context.db,
         )
@@ -1330,12 +1315,11 @@ async def _handle_get_global_layout(input: dict, context: ToolContext) -> str:
     path = context.resolve_path(input["binary_path"])
     symbol_name = input["symbol_name"]
 
-    cache = get_analysis_cache()
-    binary_sha256 = await cache.get_binary_sha256(path)
+    binary_sha256 = await ghidra_service.get_binary_sha256(path)
     cache_key = f"global_layout:{symbol_name}"
 
     # Check cache
-    cached = await cache.get_cached(
+    cached = await ghidra_service.get_cached(
         context.firmware_id, binary_sha256, cache_key, context.db,
     )
     if cached:
@@ -1367,7 +1351,7 @@ async def _handle_get_global_layout(input: dict, context: ToolContext) -> str:
             return "Error parsing Ghidra output."
 
         # Cache
-        await cache.store_cached(
+        await ghidra_service.store_cached(
             context.firmware_id, path, binary_sha256, cache_key,
             result, context.db,
         )
@@ -1408,7 +1392,6 @@ async def _handle_cross_binary_dataflow(input: dict, context: ToolContext) -> st
     mechanisms = input.get("mechanisms")  # Optional filter
 
     ELF_MAGIC = b"\x7fELF"
-    cache = get_analysis_cache()
 
     # Step 1: Find all analyzed ELF binaries
     analyzed_binaries: list[tuple[str, str]] = []  # (abs_path, rel_path)
@@ -1432,8 +1415,8 @@ async def _handle_cross_binary_dataflow(input: dict, context: ToolContext) -> st
 
             # Check if this binary has been Ghidra-analyzed
             try:
-                sha = await cache.get_binary_sha256(abs_path)
-                is_analyzed = await cache.get_cached(
+                sha = await ghidra_service.get_binary_sha256(abs_path)
+                is_analyzed = await ghidra_service.get_cached(
                     context.firmware_id, sha, "ghidra_full_analysis", context.db,
                 )
                 if is_analyzed:
@@ -1459,10 +1442,10 @@ async def _handle_cross_binary_dataflow(input: dict, context: ToolContext) -> st
         }
 
     for abs_path, rel_path in analyzed_binaries:
-        sha = await cache.get_binary_sha256(abs_path)
+        sha = await ghidra_service.get_binary_sha256(abs_path)
 
         # Get imports
-        imports_cached = await cache.get_cached(
+        imports_cached = await ghidra_service.get_cached(
             context.firmware_id, sha, "imports", context.db,
         )
         if not imports_cached:
@@ -1472,7 +1455,7 @@ async def _handle_cross_binary_dataflow(input: dict, context: ToolContext) -> st
         }
 
         # Get xrefs
-        xrefs_cached = await cache.get_cached(
+        xrefs_cached = await ghidra_service.get_cached(
             context.firmware_id, sha, "xrefs", context.db,
         )
         xrefs_data = xrefs_cached.get("xrefs", {}) if xrefs_cached else {}
@@ -1962,7 +1945,7 @@ def register_binary_tools(registry: ToolRegistry) -> None:
             "(largest first). Large custom functions are often the most "
             "interesting for security analysis. Max 500 functions. "
             "First call for a binary triggers Ghidra analysis (1-3 minutes); "
-            "subsequent calls are instant from cache."
+            "subsequent calls are instant from ghidra_service."
         ),
         input_schema={
             "type": "object",
@@ -1990,7 +1973,7 @@ def register_binary_tools(registry: ToolRegistry) -> None:
         description=(
             "Disassemble a function from an ELF binary. Shows the assembly "
             "instructions with addresses. Use list_functions first to find "
-            "function names. Results come from Ghidra analysis cache."
+            "function names. Results come from Ghidra analysis ghidra_service."
         ),
         input_schema={
             "type": "object",
@@ -2046,7 +2029,7 @@ def register_binary_tools(registry: ToolRegistry) -> None:
         description=(
             "List imported symbols from an ELF binary, grouped by library. "
             "Useful for identifying dangerous functions (system, strcpy, "
-            "gets) and external dependencies. Uses Ghidra analysis cache."
+            "gets) and external dependencies. Uses Ghidra analysis ghidra_service."
         ),
         input_schema={
             "type": "object",
@@ -2065,7 +2048,7 @@ def register_binary_tools(registry: ToolRegistry) -> None:
         name="list_exports",
         description=(
             "List exported symbols from an ELF binary. Shows symbol names "
-            "and addresses. Uses Ghidra analysis cache."
+            "and addresses. Uses Ghidra analysis ghidra_service."
         ),
         input_schema={
             "type": "object",
