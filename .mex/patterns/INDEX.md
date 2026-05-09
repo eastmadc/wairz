@@ -12,3 +12,4 @@ Lookup table for all pattern files in this directory. Check here before starting
 | [layout-containment.md](layout-containment.md) | Split-pane page layout, sidebar form controls, long content, floating action docking — preventing pane bleed and overlap |
 | [add-jsonb-column.md](add-jsonb-column.md) | Adding a new JSONB column to any model — normaliser + schema_version discipline (Rule #35c) |
 | [add-router-test.md](add-router-test.md) | Adding a router-level test file (HTTP / WebSocket layer + Rule #35b live-canary) for any new or existing FastAPI router |
+| [add-alembic-migration.md](add-alembic-migration.md) | Authoring an alembic migration — revision-ID collision pre-check + table-creator / column-adder / check-extender shape selection + Rule #20 fast-iteration apply path |
