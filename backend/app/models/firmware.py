@@ -1066,6 +1066,70 @@ class Firmware(Base):
         JSONB, nullable=True
     )
 
+    # Q1 Python AST walker columns (CLAUDE.md Rule #33 contract).
+    # Background runner ``run_python_ast_walk_background`` performs static
+    # AST + import-graph analysis of Python source files in the firmware
+    # extraction. ``ast.parse(source, mode='exec')`` per Rule #45 + Rule
+    # #36 — PARSE-ONLY (the syntactic parser does NOT execute code; wairz
+    # NEVER calls compile/exec/runpy.run_path/importlib.import_module on
+    # firmware-extracted source). For each (module, callable) pair the
+    # walker determines reachability from a "rooted" entry-point set
+    # (Flask app factories, FastAPI route registrations) and stamps the
+    # JSON aggregate onto ``python_ast_walk_result`` for downstream
+    # consumption by the cve-assessment-framework (narrows Python CVE
+    # applicability via deployed-script grep precedent).
+    # Rule #33 .c CHECK enforces the 5-state machine; Rule #33 .d —
+    # asyncio.create_task dispatch (in-process pure-Python ast.parse).
+    python_ast_walk_status: Mapped[str] = mapped_column(
+        String(20), nullable=False, server_default="idle"
+    )
+    python_ast_walk_started_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    python_ast_walk_finished_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    python_ast_walk_error: Mapped[str | None] = mapped_column(
+        Text, nullable=True
+    )
+    python_ast_walk_result: Mapped[dict | None] = mapped_column(
+        JSONB, nullable=True
+    )
+
+    # Q2 entrypoint_setup binary call-graph walker columns (CLAUDE.md Rule #33
+    # contract). Background runner
+    # ``run_entrypoint_setup_callgraph_walk_background`` performs static binary
+    # call-graph analysis (Ghidra headless first, radare2 + r2pipe
+    # fallback) of the entrypoint_setup network-facing binary (Python
+    # interpreter + statically-linked C modules from the Yocto recipe)
+    # on DEVICE_A firmware. Per Rule #36 + Rule #45 PARSE-ONLY — the binary
+    # is analysed AS DATA; wairz NEVER invokes the extracted binary via
+    # ``exec()`` / ``subprocess.run([binary_path, ...])`` /
+    # ``runpy.run_path``. For each native symbol the walker determines
+    # reachability from main() and enumerates FFmpeg / Pillow compile-
+    # flag fingerprints via string-scan. The cve-assessment-framework
+    # consumes the JSON aggregate to narrow FFmpeg DNN-backend + Pillow
+    # decoder reachability for ~42 FFmpeg EXPL CVEs + Pillow long-tail.
+    # Rule #33 .c CHECK enforces the 5-state machine; Rule #33 .d —
+    # asyncio.create_task dispatch (Ghidra subprocess is owned by
+    # ``ghidra_service.ensure_analysis`` which already caches in
+    # analysis_cache; the walker layer is in-process JSONB aggregation).
+    entrypoint_setup_callgraph_walk_status: Mapped[str] = mapped_column(
+        String(20), nullable=False, server_default="idle"
+    )
+    entrypoint_setup_callgraph_walk_started_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    entrypoint_setup_callgraph_walk_finished_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    entrypoint_setup_callgraph_walk_error: Mapped[str | None] = mapped_column(
+        Text, nullable=True
+    )
+    entrypoint_setup_callgraph_walk_result: Mapped[dict | None] = mapped_column(
+        JSONB, nullable=True
+    )
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
