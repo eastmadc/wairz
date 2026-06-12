@@ -969,15 +969,6 @@ wheels = [
 ]
 
 [[package]]
-name = "future"
-version = "1.0.0"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/a7/b2/4140c69c6a66432916b26158687e821ba631a4c9273c474343badf84d3ba/future-1.0.0.tar.gz", hash = "sha256:bd2968309307861edae1458a4f8a4f3598c03be43b97521076aebf5d94c07b05", size = 1228490, upload-time = "2024-02-21T11:52:38.461Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/da/71/ae30dadffc90b9006d77af76b393cb9dfbfc9629f339fc1574a1c52e6806/future-1.0.0-py3-none-any.whl", hash = "sha256:929292d34f5872e70396626ef385ec22355a1fae8ad29e1a734c3e43f9fbc216", size = 491326, upload-time = "2024-02-21T11:52:35.956Z" },
-]
-
-[[package]]
 name = "glom"
 version = "25.12.0"
 source = { registry = "https://pypi.org/simple" }
@@ -3572,29 +3563,6 @@ wheels = [
 ]
 
 [[package]]
-name = "uefi-firmware"
-version = "1.11"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "future" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/26/ca/139ef1b190af2280e3a149391ed43028c1d19283ad556aa090c49aab3f36/uefi_firmware-1.11.tar.gz", hash = "sha256:30e2a9d138ac1608bdfc1783a936931eb6f4292723919f1db2c1509ec18a6041", size = 183189, upload-time = "2023-08-10T20:02:19.798Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/ea/20/1f56471e7f882f92b6b5be80674ddded92a39da483b648120eb61bd2e362/uefi_firmware-1.11-cp312-cp312-macosx_10_9_universal2.whl", hash = "sha256:c927563154ce2e6ff522bda07c99ff3b4feba7167bf59fb516f755565a7523e7", size = 274569, upload-time = "2023-08-10T20:00:43.503Z" },
-    { url = "https://files.pythonhosted.org/packages/72/28/137c6163823bb6f02a384c0a9dc0963dc70b0a89b077e2f3a2ed2f9f1f48/uefi_firmware-1.11-cp312-cp312-macosx_10_9_x86_64.whl", hash = "sha256:fe45376980d1533e8faf80af1a19e8dcd1b8170a447e1fa39934f4fa91ea0a35", size = 217112, upload-time = "2023-08-10T20:00:44.617Z" },
-    { url = "https://files.pythonhosted.org/packages/50/1e/a5e52142e0d50979ae6cb148348fa4c1d66eb06932dacade4057025a7d7e/uefi_firmware-1.11-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:1cf627f257f14ed1bb63290c658e9adb772292927ad399ef70366801dc0cb9a5", size = 211054, upload-time = "2023-08-10T20:00:45.745Z" },
-    { url = "https://files.pythonhosted.org/packages/4f/58/37ba11ff39707b919b590dd7a8c0cae613bdc7171631963af16ef29b1f79/uefi_firmware-1.11-cp312-cp312-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:e4253b57873fc6127a50ca92797741a74b774d1aa3c994011bd196b21033ddc1", size = 340474, upload-time = "2023-08-10T20:00:47.492Z" },
-    { url = "https://files.pythonhosted.org/packages/e9/ab/b37ade211fc5ed704f685352fe0947cbeaf9165924fe2c0048120da4ccd4/uefi_firmware-1.11-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:9e71095839db1733d77e0001f906104e3084c6bc433dcc5ff8240a65a58d2945", size = 346344, upload-time = "2023-08-10T20:00:48.771Z" },
-    { url = "https://files.pythonhosted.org/packages/e6/a9/7ead995a7f5ffe77d21e3479e95ca857b7cc9c241271999cb780a2cfc950/uefi_firmware-1.11-cp312-cp312-manylinux_2_5_i686.manylinux1_i686.manylinux_2_17_i686.manylinux2014_i686.whl", hash = "sha256:da64a6cedea68934dab6186b13a48df55027429490f3be02bc910803d040d733", size = 346173, upload-time = "2023-08-10T20:00:50.386Z" },
-    { url = "https://files.pythonhosted.org/packages/49/e2/5d0c396fab59b6c16e41271b9c74820c0107163be967db0474226ffa31dd/uefi_firmware-1.11-cp312-cp312-musllinux_1_1_aarch64.whl", hash = "sha256:07a891147c10a6112c6ae4d76efbd07e422ceb1b34e6aa1236d9beb21a6d48b6", size = 358477, upload-time = "2023-08-10T20:00:51.627Z" },
-    { url = "https://files.pythonhosted.org/packages/e7/8c/32adad2dddd768ec0a44aa2174a44864e03e5eab68c59c047148b8e3b2d2/uefi_firmware-1.11-cp312-cp312-musllinux_1_1_i686.whl", hash = "sha256:75b2de62978767e2263f3299f3ed2d5daaee47cfeb77496769c531e35c2c3393", size = 352574, upload-time = "2023-08-10T20:00:52.811Z" },
-    { url = "https://files.pythonhosted.org/packages/59/98/04155a6f6eded9d184692533ec55fd711d9a2e5ae4a5ed416689f48beb11/uefi_firmware-1.11-cp312-cp312-musllinux_1_1_x86_64.whl", hash = "sha256:5a45d398edbb985952ee4dc1987f40aecf9af2b151a783eaa70ee0447e7a8052", size = 363547, upload-time = "2023-08-10T20:00:54.55Z" },
-    { url = "https://files.pythonhosted.org/packages/20/61/6e63948588d4bf75e94e45b57205113322972d3b87c3b1ea0062e8e26f0f/uefi_firmware-1.11-cp312-cp312-win32.whl", hash = "sha256:cda1eec452581e6a1fdca9b62c9e4fe9ab6284ef16334fab47b9f3426bbeb841", size = 186877, upload-time = "2023-08-10T20:00:55.693Z" },
-    { url = "https://files.pythonhosted.org/packages/d6/ea/8189bac9bf10dccc6690712aa5695bbd0b82bc5cd4f20defe5892912d364/uefi_firmware-1.11-cp312-cp312-win_amd64.whl", hash = "sha256:0d544e25dab9cefa23a9c2f43226f94d50f85b3b625fe47ce3df12b530e1a1fa", size = 193424, upload-time = "2023-08-10T20:00:57.007Z" },
-    { url = "https://files.pythonhosted.org/packages/43/0e/778e3e72005711e6e886caa3f2a6e33dba4073f679df46c4204740761cc8/uefi_firmware-1.11-cp312-cp312-win_arm64.whl", hash = "sha256:25ddff80fc4d95199ad48e304f32566447acf7a593d0cd4d293629f2e3eabd45", size = 190861, upload-time = "2023-08-10T20:00:58.12Z" },
-]
-
-[[package]]
 name = "urllib3"
 version = "2.7.0"
 source = { registry = "https://pypi.org/simple" }
@@ -3748,7 +3716,6 @@ dependencies = [
     { name = "slowapi" },
     { name = "sqlalchemy", extra = ["asyncio"] },
     { name = "structlog" },
-    { name = "uefi-firmware" },
     { name = "uvicorn", extra = ["standard"] },
     { name = "weasyprint" },
     { name = "windowsprefetch" },
@@ -3811,7 +3778,6 @@ requires-dist = [
     { name = "slowapi", specifier = ">=0.1.9" },
     { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0.0" },
     { name = "structlog", specifier = ">=24.4.0" },
-    { name = "uefi-firmware", specifier = ">=1.11" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.30.0" },
     { name = "weasyprint", specifier = ">=62.0" },
     { name = "windowsprefetch", specifier = ">=4.0.3" },
