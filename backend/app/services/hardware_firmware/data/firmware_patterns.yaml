@@ -760,12 +760,12 @@ patterns:
     format: signed_archive
     source: nvidia-tegra-l4t
 
-  # DEVICE_A / Jetson custom system image (vendor-specific naming pattern;
-  # MEDIUM confidence because the prefix is operator-supplied — content
-  # parsing via Android boot.img magic refines downstream).
-  - pattern: "^ds[0-9]*-(image|boot|system)(?:-jetson-[a-z0-9-]+)?(?:\\.[a-z]+)?\\.(img|dataimg)$"
+  # Jetson custom system image with an operator-supplied prefix (vendor-
+  # customised naming; MEDIUM confidence because the prefix is arbitrary —
+  # content parsing via Android boot.img magic refines downstream).
+  - pattern: "^[a-z][a-z0-9_]*-(image|boot|system)(?:-jetson-[a-z0-9-]+)?(?:\\.[a-z]+)?\\.(img|dataimg)$"
     vendor: nvidia
-    product: "Jetson/DEVICE_A custom system image"
+    product: "Jetson custom system image"
     category: other
     confidence: medium
     source: jetson-customisation
@@ -1047,7 +1047,7 @@ patterns:
 # Added 2026-05-15 after the DEVICE_A Moto-G32 + Moto-G30 follow-up surfaced
 # 517 qualcomm blobs in radio.img_extract bucketed as "other" because
 # the qcom-prefix if-chain (_category_from_qcom_name) didn't know about
-# RFNV / EFS / FSG / carrier-config shapes. See postmortem-DEVICE_A-moto-g32-
+# RFNV / EFS / FSG / carrier-config shapes. See postmortem-device_a-moto-g32-
 # hardware-firmware-adaptive-detect-2026-05-15 for the bug taxonomy.
 # =====================================================================
 

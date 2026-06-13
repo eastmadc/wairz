@@ -229,12 +229,12 @@ def test_jetson_device_a_image_classification() -> None:
     """Vendor-customised image names get MEDIUM confidence because the
     prefix is operator-supplied — downstream content parsing
     (ANDROID! magic check) refines to high."""
-    m_boot = PL.match("DEVICE_A-boot.img")
+    m_boot = PL.match("device_a-boot.img")
     assert m_boot is not None
     assert m_boot.vendor == "nvidia"
     assert m_boot.confidence == "medium"
 
-    m_image = PL.match("DEVICE_A-image.img")
+    m_image = PL.match("device_a-image.img")
     assert m_image is not None
     assert m_image.vendor == "nvidia"
 
@@ -251,7 +251,7 @@ def test_jetson_device_a_image_classification() -> None:
         "tz.mbn",
         "BTFM.bin",
         "wcnss.bin",
-        "boot.img",  # generic Android boot.img, not Jetson DEVICE_A-*
+        "boot.img",  # generic Android boot.img, not Jetson device_a-*
         "system.img",
         "modem.bin",
     ],
