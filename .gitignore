@@ -70,3 +70,9 @@ backend/vol3-symbols/*.zip.tmp
 # repo root would otherwise leak the private repo's existence + commit pointer
 # to public GitHub.
 cve-assessment-framework/
+
+# Local Claude / planning scratch output
+.planning/**/_*.txt
+.planning/scratch_*.py
+backend/.claude/
+output/
