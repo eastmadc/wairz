@@ -212,11 +212,18 @@ services:
       # The λ.α.B memory-image enumerator is unaffected — it never needs
       # the symbol bundle.
       VOL3_SYMBOLS_PATH: /opt/wairz/vol3-symbols
+      # Rule #37: pinned NVD cache for reproducible + offline CVE lookup. Too
+      # large to bake into the image (369k files, ~2GB) — lives on the
+      # nvd_cache_data named volume, populated out-of-band by
+      # scripts/refresh-nvd-cache.sh. Live NVD is an explicit opt-in fallback only.
+      NVD_CACHE_PATH: /opt/wairz/nvd-cache
+      NVD_ALLOW_LIVE_FALLBACK: "false"
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
       - firmware_data:/data/firmware
       - kernel_vulns_data:/data/kernel-vulns
+      - nvd_cache_data:/opt/wairz/nvd-cache
       - ./ghidra/scripts:/opt/ghidra_scripts:ro
       - ./emulation/kernels:/opt/kernels:rw
       - /tmp/wairz-dumps:/tmp/wairz-dumps
@@ -282,11 +289,18 @@ services:
       # Phase λ.α.C: see backend service block above for the offline Vol3
       # ISF symbol bundle rationale.
       VOL3_SYMBOLS_PATH: /opt/wairz/vol3-symbols
+      # Rule #37: pinned NVD cache for reproducible + offline CVE lookup. Too
+      # large to bake into the image (369k files, ~2GB) — lives on the
+      # nvd_cache_data named volume, populated out-of-band by
+      # scripts/refresh-nvd-cache.sh. Live NVD is an explicit opt-in fallback only.
+      NVD_CACHE_PATH: /opt/wairz/nvd-cache
+      NVD_ALLOW_LIVE_FALLBACK: "false"
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
       - firmware_data:/data/firmware
       - kernel_vulns_data:/data/kernel-vulns
+      - nvd_cache_data:/opt/wairz/nvd-cache
       - ./ghidra/scripts:/opt/ghidra_scripts:ro
       - ./emulation/kernels:/opt/kernels:rw
       - /tmp/wairz-dumps:/tmp/wairz-dumps
@@ -493,6 +507,7 @@ volumes:
   redisdata:
   firmware_data:
   kernel_vulns_data:
+  nvd_cache_data:
   clamav-db:
 
 networks:

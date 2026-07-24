@@ -354,6 +354,42 @@ async def lifespan(app: FastAPI):
             "LOLDrivers bundle probe failed unexpectedly", exc_info=True,
         )
 
+    # Probe the pinned NVD cache (Rule #37). Unlike DBX/LOLDrivers (baked into the
+    # image), the NVD cache is ~369k files / ~2GB and lives on the nvd_cache_data
+    # volume populated by scripts/refresh-nvd-cache.sh. Logging presence + manifest
+    # sha + cve_count at boot lets operators confirm the volume was populated;
+    # when absent, CVE lookups degrade to "no enrichment" (or live fallback if
+    # opted in) — surface the state so it is not invisible.
+    try:
+        import logging
+
+        from app.services.nvd_cache_service import probe as nvd_probe
+        nvd_path = os.environ.get("NVD_CACHE_PATH", "/opt/wairz/nvd-cache")
+        live_fb = os.environ.get("NVD_ALLOW_LIVE_FALLBACK", "false").lower() in (
+            "1", "true", "yes",
+        )
+        log = logging.getLogger(__name__)
+        # noqa: ASYNC240 — one-shot lifespan startup probe; not on a request hot path
+        status = nvd_probe(nvd_path)
+        if status["ready"]:
+            log.info(
+                "NVD cache ready: path=%s manifest_sha=%s populated_at=%s cve_count=%s",
+                status["path"], status["manifest_sha"],
+                status["populated_at"], status["cve_count"],
+            )
+        else:
+            log.warning(
+                "NVD cache NOT READY at path=%s (manifest/index missing) — CVE "
+                "lookups run without pinned enrichment (live fallback %s). "
+                "Populate it: scripts/refresh-nvd-cache.sh --apply (Rule #37).",
+                status["path"], "ON" if live_fb else "OFF",
+            )
+    except Exception:
+        import logging
+        logging.getLogger(__name__).warning(
+            "NVD cache probe failed unexpectedly", exc_info=True,
+        )
+
     # CLAUDE.md Rule #52 instance #3 / Phase 4 — ICS protocol catalog
     # plugin registration + freeze (W2-β §SC5-NEW-ICS-S2-α HARDENED).
     # AFTER any catalog mtime-cache warmup AND BEFORE the FastAPI yield
