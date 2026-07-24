@@ -33,9 +33,14 @@ SRC_URL="$(tr -d '[:space:]' < "${URL_FILE}")"
   exit 3
 }
 
-if [[ "${APPLY}" -eq 1 ]]; then
+# Best-effort pull to pick up the latest feed. Failure is NON-FATAL (this is an
+# offline-first Rule #37 tool — an air-gapped host populates from the existing
+# clone at its pinned commit). Set NVD_SKIP_PULL=1 to skip the network attempt.
+if [[ "${APPLY}" -eq 1 && "${NVD_SKIP_PULL:-0}" != "1" ]]; then
   echo "[refresh-nvd] git pull ${FEED_DIR} ..."
-  git -C "${FEED_DIR}" pull --ff-only --quiet || { echo "ERROR: git pull failed" >&2; exit 3; }
+  git -C "${FEED_DIR}" pull --ff-only --quiet \
+    || echo "[refresh-nvd] WARNING: git pull failed (offline?) — populating from the" \
+            "current checkout $(git -C "${FEED_DIR}" rev-parse --short HEAD)" >&2
 fi
 
 HEAD_COMMIT="$(git -C "${FEED_DIR}" rev-parse HEAD)"
