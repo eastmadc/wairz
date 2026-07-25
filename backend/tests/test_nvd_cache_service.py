@@ -29,9 +29,48 @@ def _cpe(vendor, product, version="*"):
     return f"cpe:2.3:a:{vendor}:{product}:{version}:*:*:*:*:*:*:*"
 
 
+def _feed_layout_path(cve_id: str, cache: Path) -> Path:
+    """INDEPENDENT oracle for the EMBA nvd-json-data-feeds on-disk layout.
+
+    Every fixture writes through THIS, never through the production
+    ``_cve_path`` — otherwise the fixture and the code under test share the
+    same (possibly wrong) formula and every cache-*hit* test is TAUTOLOGICAL:
+    a broken ``_cve_path`` writes the file to the wrong place and then looks
+    for it in that same wrong place, so the test passes. That is exactly what
+    happened with the leading-zero bug (`int(num) // 100`, ~8% of the cache
+    silently unreachable): under a re-introduction canary the whole cache-hit
+    suite stayed GREEN and only the hand-written layout table went red.
+
+    Re-derived from the feed itself, not from the production source:
+
+        CVE-2021-44228 → CVE-2021/CVE-2021-442xx/CVE-2021-44228.json
+        CVE-1999-0001  → CVE-1999/CVE-1999-00xx/CVE-1999-0001.json
+
+    The bucket is the id's numeric component with its LAST TWO CHARACTERS
+    replaced by ``xx`` — a character-level substitution, deliberately using
+    NO integer arithmetic, so no implementation detail (and no leading-zero
+    stripping) can be shared with ``_cve_path``.
+    """
+    prefix, year, num = cve_id.split("-")
+    assert prefix == "CVE" and year.isdigit() and num.isdigit(), cve_id
+    # Real NVD ids are >= 4 digits; the oracle deliberately refuses shorter
+    # input rather than guessing a layout the feed never exercises.
+    assert len(num) >= 4, f"{cve_id}: NVD ids carry >= 4 digits"
+    chars = list(num)
+    chars[-1] = "x"
+    chars[-2] = "x"
+    bucket = f"CVE-{year}-{''.join(chars)}"
+    return cache / f"CVE-{year}" / bucket / f"{cve_id}.json"
+
+
 def _write_cve(cache: Path, cve_id: str, *, vendor="acme", product="widget", version_end=None):
-    """Write a bare NVD API-2.0 CVE object at the feed layout path."""
-    path = _cve_path(cve_id, cache)
+    """Write a bare NVD API-2.0 CVE object at the feed layout path.
+
+    Path comes from the INDEPENDENT ``_feed_layout_path`` oracle above — never
+    from ``_cve_path`` — so a wrong production formula fails to FIND what the
+    fixture wrote instead of silently agreeing with it.
+    """
+    path = _feed_layout_path(cve_id, cache)
     path.parent.mkdir(parents=True, exist_ok=True)
     cpe_match = {"criteria": _cpe(vendor, product), "vulnerable": True}
     if version_end is not None:
@@ -200,7 +239,7 @@ def test_skipped_candidate_files_mark_the_lookup_degraded(tmp_path):
         _write_cve(tmp_path, f"CVE-2021-000{i}", vendor="acme", product="widget")
     build_cpe_index(tmp_path)
     _write_manifest(tmp_path, count=3)
-    (_cve_path("CVE-2021-0002", tmp_path)).unlink()
+    (_feed_layout_path("CVE-2021-0002", tmp_path)).unlink()
 
     cves, prov = asyncio.run(lookup_cves_for_cpe(_cpe("acme", "widget"), tmp_path))
     assert {c.id for c in cves} == {"CVE-2021-0001", "CVE-2021-0003"}
@@ -270,8 +309,7 @@ def test_probe_not_ready_on_degraded_cache(tmp_path):
     # Zero-padded ids are the case the ORIGINAL formula got wrong: int("0001")//100
     # == 0 -> "CVE-1999-0xx", a directory that does not exist. These expectations are
     # written by HAND from the real EMBA feed layout, NOT derived from _cve_path, so
-    # a wrong formula cannot satisfy them (the previous fixture called _cve_path to
-    # decide where to write, making every cache-hit test tautological).
+    # a wrong formula cannot satisfy them.
     ("CVE-1999-0001", "CVE-1999/CVE-1999-00xx/CVE-1999-0001.json"),
     ("CVE-1999-0250", "CVE-1999/CVE-1999-02xx/CVE-1999-0250.json"),
     ("CVE-2019-0773", "CVE-2019/CVE-2019-07xx/CVE-2019-0773.json"),
@@ -291,6 +329,27 @@ def test_cve_path_never_strips_leading_zeros():
         bucket = p.parent.name
         assert bucket == f"CVE-2020-{num[:-2]}xx"
         assert len(bucket.split("-")[-1]) == len(num) - 2 + 2
+
+
+@pytest.mark.parametrize("num", [
+    # Every id-width + zero-padding shape the real feed carries. Widths 4-7
+    # (CVE-2024-1000000 exists), leading zeros in every position, and the
+    # boundary values (…00, …99) where an arithmetic bucket rounds wrongly.
+    "0001", "0010", "0099", "0100", "0250", "0773", "1000", "9999",
+    "10000", "10099", "26581", "44228", "100000", "100099", "1000000",
+])
+def test_cve_path_agrees_with_the_independent_feed_oracle(num, tmp_path):
+    """``_cve_path`` must equal the fixture's independently-derived layout.
+
+    This is the bridge that makes every cache-*hit* test in this file a real
+    oracle rather than a tautology: the fixtures write via
+    ``_feed_layout_path`` (character substitution, no arithmetic) and the
+    service reads via ``_cve_path`` (slicing). If the two ever disagree the
+    lookups miss and the hit tests go red — this test names the disagreement
+    directly instead of leaving it to be inferred from a mode assertion.
+    """
+    cve_id = f"CVE-2020-{num}"
+    assert _cve_path(cve_id, tmp_path) == _feed_layout_path(cve_id, tmp_path)
 
 
 # ── provenance SURFACING (the truthfulness guarantee end-to-end) ──────
