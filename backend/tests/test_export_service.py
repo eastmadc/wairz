@@ -140,6 +140,12 @@ def _make_mock_firmware(project_id, tmp_path=None):
     fw.version_label = "v1.0"
     fw.unpack_log = "Success"
     fw.created_at = datetime(2024, 1, 1, tzinfo=UTC)
+    # Explicit, not MagicMock auto-attributes: _firmware_to_dict serialises
+    # these to JSON, and a bare MagicMock raises TypeError there. Under
+    # specifying the mock is the Rule #35b shape — the live-DB suite in
+    # test_export_enrichment_marker.py is what actually proves value flow.
+    fw.vuln_scan_status = "idle"
+    fw.vuln_scan_provenance = None
     if tmp_path:
         storage = tmp_path / "firmware.bin"
         storage.write_bytes(b"\x7fELF" + b"\x00" * 100)
