@@ -978,3 +978,184 @@ async def test_live_canary_mcp_tool_handler_healthy_scan_has_no_warning(
         assert "UNDER-REPORT" not in out and "DID NOT RUN" not in out
         # The tool renders the generation identity truncated to 12 chars.
         assert "live-mcp-ok-" in out and "enrichment: complete" in out
+
+
+# ── Rule #37 content integrity: a pin that is re-derivable from the volume ────
+#
+# The defect these guard: `MANIFEST.json`'s field was NAMED `sha256` but held
+# the upstream feed's git COMMIT, and `refresh-nvd-cache.sh --apply` overwrote
+# the pin with whatever HEAD happened to be. Nothing was ever re-derived from
+# the bytes on the volume, so the pin was a provenance label wearing an
+# integrity field's name. A feed that silently REMOVES CVEs still matches its
+# own commit, and every downstream verdict then reads `enrichment_status:
+# complete` over a cache with holes.
+
+from app.services.nvd_cache_service import (  # noqa: E402
+    compute_content_digest,
+    verify_content_digest,
+)
+
+
+def _populate(cache: Path, ids=("CVE-2021-0001", "CVE-2021-0002", "CVE-2022-1234")):
+    for cid in ids:
+        _write_cve(cache, cid, vendor="acme", product="widget")
+    return cache
+
+
+def test_content_digest_is_deterministic_and_counts_the_volume(tmp_path):
+    _populate(tmp_path)
+    a = compute_content_digest(tmp_path)
+    b = compute_content_digest(tmp_path)
+    assert a == b
+    assert a["content_sha256"] == b["content_sha256"]
+    assert len(a["content_sha256"]) == 64
+    assert a["file_count"] == 3
+    assert a["total_bytes"] == sum(
+        p.stat().st_size for p in tmp_path.rglob("CVE-*.json")
+    )
+    assert a["digest_version"] == 1 and a["algo"] == "sha256"
+
+
+def test_content_digest_is_independent_of_creation_order(tmp_path):
+    """Two volumes with the same payloads must pin identically.
+
+    The digest sorts by relative path, so a `tar -x` that lands files in a
+    different order (or a different filesystem's walk order) does not produce
+    a spurious drift — otherwise the gate would cry wolf and get switched off.
+    """
+    a, b = tmp_path / "a", tmp_path / "b"
+    _populate(a, ids=("CVE-2021-0001", "CVE-2021-0002", "CVE-2022-1234"))
+    _populate(b, ids=("CVE-2022-1234", "CVE-2021-0002", "CVE-2021-0001"))
+    assert (
+        compute_content_digest(a)["content_sha256"]
+        == compute_content_digest(b)["content_sha256"]
+    )
+
+
+def test_content_digest_ignores_the_derived_artefacts(tmp_path):
+    """cpe_index.json + MANIFEST.json must NOT feed the digest.
+
+    The manifest RECORDS the digest and the index is rebuilt from the
+    payloads, so including either would make the digest depend on itself and
+    no pin could ever be stable across a re-index.
+    """
+    _populate(tmp_path)
+    before = compute_content_digest(tmp_path)["content_sha256"]
+    build_cpe_index(tmp_path)
+    _write_manifest(tmp_path, sha=before, count=3)
+    assert compute_content_digest(tmp_path)["content_sha256"] == before
+
+
+# Rule #46: an absence-asserting gate ("no drift") is worthless without a
+# canary that synthesizes each drift shape and confirms the gate FIRES.
+# These are that canary, one per shape the threat model names.
+
+def test_content_digest_detects_a_single_byte_edit(tmp_path):
+    """Tampering: a record rewritten in place."""
+    _populate(tmp_path)
+    before = compute_content_digest(tmp_path)["content_sha256"]
+    target = _feed_layout_path("CVE-2021-0001", tmp_path)
+    raw = bytearray(target.read_bytes())
+    raw[-2] = raw[-2] ^ 0x01
+    target.write_bytes(bytes(raw))
+    assert compute_content_digest(tmp_path)["content_sha256"] != before
+
+
+def test_content_digest_detects_a_removed_cve(tmp_path):
+    """The branch's own threat model: a feed that silently REMOVES CVEs."""
+    _populate(tmp_path)
+    before = compute_content_digest(tmp_path)["content_sha256"]
+    _feed_layout_path("CVE-2021-0002", tmp_path).unlink()
+    after = compute_content_digest(tmp_path)
+    assert after["content_sha256"] != before and after["file_count"] == 2
+
+
+def test_content_digest_detects_an_added_cve(tmp_path):
+    _populate(tmp_path)
+    before = compute_content_digest(tmp_path)["content_sha256"]
+    _write_cve(tmp_path, "CVE-2023-9999", vendor="acme", product="widget")
+    assert compute_content_digest(tmp_path)["content_sha256"] != before
+
+
+def test_content_digest_detects_a_file_in_the_wrong_bucket(tmp_path):
+    """Same bytes, wrong path — the leading-zero class of defect.
+
+    A byte-only digest would call this clean; the cache would still be
+    unreachable for ~8% of ids. The relative path is hashed alongside the
+    bytes precisely so a misplaced file is drift.
+
+    Deliberately ONE file: with several, moving one also permutes the sorted
+    order, so the digest would change even for a path-blind construction and
+    the test would pass for the wrong reason. (It did — caught by neutralizing
+    the path from the digest and watching this test stay green. Rule #46
+    applies to the canary itself.)
+    """
+    _populate(tmp_path, ids=("CVE-2021-0001",))
+    before = compute_content_digest(tmp_path)["content_sha256"]
+    src = _feed_layout_path("CVE-2021-0001", tmp_path)
+    wrong = tmp_path / "CVE-2021" / "CVE-2021-0xx" / "CVE-2021-0001.json"
+    wrong.parent.mkdir(parents=True, exist_ok=True)
+    src.rename(wrong)
+    after = compute_content_digest(tmp_path)
+    # Same payload, same count, same bytes — ONLY the layout moved.
+    assert after["file_count"] == 1
+    assert after["total_bytes"] == wrong.stat().st_size
+    assert after["content_sha256"] != before  # ...different layout ⇒ drift
+
+
+def test_verify_content_digest_match_and_drift(tmp_path):
+    _populate(tmp_path)
+    pinned = compute_content_digest(tmp_path)["content_sha256"]
+
+    ok = verify_content_digest(tmp_path, pinned)
+    assert ok["ok"] is True and ok["status"] == "match"
+    assert ok["expected"] == ok["actual"] == pinned
+
+    # Case-insensitive + whitespace-tolerant: the pin arrives from a file.
+    assert verify_content_digest(tmp_path, f"  {pinned.upper()}\n ")["ok"] is True
+
+    _feed_layout_path("CVE-2021-0002", tmp_path).unlink()
+    drift = verify_content_digest(tmp_path, pinned)
+    assert drift["ok"] is False and drift["status"] == "drift"
+    assert drift["expected"] == pinned and drift["actual"] != pinned
+
+
+def test_verify_content_digest_absent_pin_is_not_a_pass(tmp_path):
+    """Rule #53: a verifier must key on evidence, never on absence of a claim.
+
+    "We never pinned it" is not evidence of integrity. Returning ok=True for a
+    missing pin would let an unpinned volume launder straight through the gate
+    — the shape this whole rule family exists to prevent.
+    """
+    _populate(tmp_path)
+    for empty in (None, "", "   \n"):
+        out = verify_content_digest(tmp_path, empty)
+        assert out["ok"] is False and out["status"] == "not_pinned"
+        assert out["expected"] is None and len(out["actual"]) == 64
+
+
+def test_probe_reports_content_verifiability_without_re_deriving(tmp_path):
+    """A legacy feed-commit-only manifest must NOT read as content-verifiable."""
+    _populate(tmp_path)
+    build_cpe_index(tmp_path)
+    # Legacy shape: identity is the upstream git commit, nothing re-derivable.
+    _write_manifest(tmp_path, sha="a1f38452d7df90df6f6b27d5e4762e0f6b4c4a90", count=3)
+    legacy = probe(tmp_path)
+    assert legacy["ready"] is True          # populated — usable
+    assert legacy["content_verifiable"] is False   # ...but not verifiable
+    assert legacy["content_sha256"] is None
+
+    digest = compute_content_digest(tmp_path)["content_sha256"]
+    (tmp_path / ncs._MANIFEST_NAME).write_text(json.dumps({
+        "sha256": digest,
+        "content_sha256": digest,
+        "feed_commit": "a1f38452d7df90df6f6b27d5e4762e0f6b4c4a90",
+        "populated_at": "2026-07-25T00:00:00Z",
+        "cve_count": 3,
+    }), encoding="utf-8")
+    ncs._INDEX_CACHE.clear()
+    ncs._INTEGRITY_CACHE.clear()
+    pinned = probe(tmp_path)
+    assert pinned["content_verifiable"] is True
+    assert pinned["content_sha256"] == digest
+    assert pinned["feed_commit"] == "a1f38452d7df90df6f6b27d5e4762e0f6b4c4a90"

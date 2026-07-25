@@ -24,6 +24,7 @@ candidate CVE files (Rule #5 — never walk 369k files per lookup).
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 from collections import defaultdict
@@ -35,6 +36,15 @@ logger = logging.getLogger(__name__)
 _INDEX_NAME = "cpe_index.json"
 _MANIFEST_NAME = "MANIFEST.json"
 _INDEX_SCHEMA_VERSION = 1
+
+# Version of the CONTENT-DIGEST construction below. Bumping it changes every
+# derived digest, so it is part of the pinned value's meaning: a pin recorded
+# under v1 is not comparable to a v2 digest, and the verifier says so instead
+# of reporting a bogus drift.
+CONTENT_DIGEST_VERSION = 1
+# Read size for the per-file hash — bounded so a corrupt/huge file cannot pull
+# the whole cache into memory.
+_DIGEST_CHUNK = 1 << 20
 
 # Module-memoised index keyed by cache dir; invalidated on manifest-sha change.
 _INDEX_CACHE: dict[str, dict] = {}
@@ -379,6 +389,96 @@ def build_cpe_index(cache_dir: str | Path) -> dict:
     return {"cves_indexed": n, "vendor_products": len(vp_map)}
 
 
+def _iter_cve_files(cache_dir: Path):
+    """Every CVE payload file under the cache, as (relative_posix_path, Path).
+
+    Excludes the two DERIVED artefacts (``cpe_index.json``, ``MANIFEST.json``):
+    the index is rebuilt from the payloads and the manifest RECORDS the digest,
+    so including either would make the digest depend on itself.
+    """
+    for path in cache_dir.rglob("CVE-*.json"):
+        if path.name in (_INDEX_NAME, _MANIFEST_NAME) or not path.is_file():
+            continue
+        yield path.relative_to(cache_dir).as_posix(), path
+
+
+def compute_content_digest(cache_dir: str | Path) -> dict:
+    """Re-derive a SHA-256 over the cache's ACTUAL bytes (Rule #37 integrity).
+
+    The pin exists to make a tampered / truncated / rewritten feed detectable.
+    A pin that records the upstream git commit cannot do that — it is a
+    *provenance* label the refresh script copies from whatever HEAD happened to
+    be, never re-derived from what landed on the volume. A feed that silently
+    REMOVES CVEs still matches its own commit, and every downstream verdict
+    then reports ``enrichment_status: complete`` over a cache with holes.
+
+    This digest is re-derivable from the volume alone:
+
+        outer = sha256()
+        for relpath, file in sorted-by-relpath(CVE-*.json):
+            outer.update(f"{relpath}\\0{sha256(file bytes)}\\n")
+
+    Sorting by relative path makes it independent of filesystem walk order;
+    including the path makes a file MOVED to a wrong bucket (the leading-zero
+    class of bug) change the digest even though its bytes did not; hashing the
+    bytes makes a truncated or edited record change it too.
+
+    Returns ``{digest_version, algo, content_sha256, file_count, total_bytes}``.
+    Walks the whole cache (~369k files / ~2 GB) — an OUT-OF-BAND operation only,
+    never called at scan time or from the lifespan probe (Rule #5).
+    """
+    cache_dir = Path(cache_dir)
+    outer = hashlib.sha256()
+    outer.update(f"nvd-cache-content-digest/v{CONTENT_DIGEST_VERSION}\n".encode())
+    file_count = 0
+    total_bytes = 0
+    for relpath, path in sorted(_iter_cve_files(cache_dir), key=lambda t: t[0]):
+        inner = hashlib.sha256()
+        size = 0
+        with path.open("rb") as fh:
+            while chunk := fh.read(_DIGEST_CHUNK):
+                inner.update(chunk)
+                size += len(chunk)
+        outer.update(f"{relpath}\0{inner.hexdigest()}\n".encode())
+        file_count += 1
+        total_bytes += size
+    return {
+        "digest_version": CONTENT_DIGEST_VERSION,
+        "algo": "sha256",
+        "content_sha256": outer.hexdigest(),
+        "file_count": file_count,
+        "total_bytes": total_bytes,
+    }
+
+
+def verify_content_digest(cache_dir: str | Path, expected: str | None) -> dict:
+    """Re-derive the content digest and compare it to a pinned value.
+
+    ``ok`` is True ONLY when a non-empty ``expected`` was supplied AND the
+    freshly-derived digest equals it. An absent pin returns
+    ``ok=False, status="not_pinned"`` — deliberately NOT "ok": "we never pinned
+    it" is not evidence of integrity, and a verifier that passes on a missing
+    pin is the Rule #53 laundering shape (matching the absence of a claim
+    instead of the evidence behind it).
+    """
+    derived = compute_content_digest(cache_dir)
+    pinned = (expected or "").strip().lower()
+    actual = derived["content_sha256"]
+    if not pinned:
+        status = "not_pinned"
+    elif pinned == actual:
+        status = "match"
+    else:
+        status = "drift"
+    return {
+        **derived,
+        "ok": status == "match",
+        "status": status,
+        "expected": pinned or None,
+        "actual": actual,
+    }
+
+
 def probe(cache_dir: str | Path) -> dict:
     """Presence + integrity probe for the lifespan startup log.
 
@@ -406,6 +506,16 @@ def probe(cache_dir: str | Path) -> dict:
         "manifest_sha": manifest.get("sha256"),
         "populated_at": manifest.get("populated_at"),
         "cve_count": manifest.get("cve_count"),
+        # Rule #37 integrity identity, reported WITHOUT re-deriving it (a
+        # re-derivation reads ~2 GB and has no business in a boot probe).
+        # ``content_verifiable`` says whether this generation carries a digest
+        # that scripts/refresh-nvd-cache.sh --verify can check at all: a legacy
+        # manifest whose only identity is the upstream feed commit is a
+        # provenance label, not an integrity gate, and the probe must not let
+        # that pass for one.
+        "content_sha256": manifest.get("content_sha256"),
+        "feed_commit": manifest.get("feed_commit"),
+        "content_verifiable": bool(manifest.get("content_sha256")),
         "index_present": index_path.exists(),
         "manifest_present": bool(manifest),
         "degraded": bool(integrity["degraded"]),
