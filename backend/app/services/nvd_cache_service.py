@@ -2,7 +2,7 @@
 
 Resolves the CVEs affecting a CPE from a BUILD-TIME-PINNED local NVD cache
 (mirroring the EMBA ``nvd-json-data-feeds`` layout: one JSON per CVE at
-``CVE-{year}/CVE-{year}-{n//100}xx/CVE-{year}-{n}.json``, the bare NVD API-2.0
+``CVE-{year}/CVE-{year}-{nn}xx/CVE-{year}-{n}.json`` (zero-padding preserved), the bare NVD API-2.0
 CVE object) instead of a live NVD API call. This makes firmware assessments:
 
 - **reproducible** — same firmware + same pinned cache ⇒ identical CVE set;
@@ -58,12 +58,19 @@ class CacheProvenance:
 
 
 def _cve_path(cve_id: str, cache_dir: Path) -> Path | None:
-    """Resolve CVE-{year}/CVE-{year}-{n//100}xx/CVE-{year}-{n}.json."""
+    """Resolve CVE-{year}/CVE-{year}-{nn}xx/CVE-{year}-{n}.json."""
     parts = cve_id.strip().upper().split("-")
     if len(parts) != 3 or parts[0] != "CVE" or not parts[2].isdigit():
         return None
     year, num = parts[1], parts[2]
-    bucket = f"CVE-{year}-{int(num) // 100}xx"
+    # Bucket = the CVE number with its last two digits replaced by "xx", PRESERVING
+    # zero padding: CVE-1999-0001 lives in CVE-1999-00xx and CVE-2019-0773 in
+    # CVE-2019-07xx. The original `int(num) // 100` stripped leading zeros and
+    # produced CVE-1999-0xx / CVE-2019-7xx — directories that do not exist — so
+    # every zero-padded CVE was silently unreachable (measured: 24,616 of 306,918,
+    # ~8%). _lookup_sync skips a missing file and still reports cache_hit, so the
+    # loss was invisible. Caught by an independent audit, 2026-07-25.
+    bucket = f"CVE-{year}-{num[:-2]}xx" if len(num) > 2 else f"CVE-{year}-{num}"
     return Path(cache_dir) / f"CVE-{year}" / bucket / f"CVE-{year}-{num}.json"
 
 

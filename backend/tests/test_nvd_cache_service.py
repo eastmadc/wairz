@@ -13,6 +13,8 @@ import asyncio
 import json
 from pathlib import Path
 
+import pytest
+
 from app.services import nvd_cache_service as ncs
 from app.services.nvd_cache_service import (
     _cpe_vendor_product,
@@ -135,3 +137,32 @@ def test_probe_ready_and_not_ready(tmp_path):
     p = probe(tmp_path)
     assert p["ready"] is True
     assert p["manifest_sha"] == "s1" and p["cve_count"] == 1 and p["index_present"] is True
+
+
+# ── independent path oracle (the self-referential-fixture fix) ───────
+
+@pytest.mark.parametrize("cve_id,expected_rel", [
+    # Zero-padded ids are the case the ORIGINAL formula got wrong: int("0001")//100
+    # == 0 -> "CVE-1999-0xx", a directory that does not exist. These expectations are
+    # written by HAND from the real EMBA feed layout, NOT derived from _cve_path, so
+    # a wrong formula cannot satisfy them (the previous fixture called _cve_path to
+    # decide where to write, making every cache-hit test tautological).
+    ("CVE-1999-0001", "CVE-1999/CVE-1999-00xx/CVE-1999-0001.json"),
+    ("CVE-1999-0250", "CVE-1999/CVE-1999-02xx/CVE-1999-0250.json"),
+    ("CVE-2019-0773", "CVE-2019/CVE-2019-07xx/CVE-2019-0773.json"),
+    ("CVE-2015-0045", "CVE-2015/CVE-2015-00xx/CVE-2015-0045.json"),
+    ("CVE-2021-44228", "CVE-2021/CVE-2021-442xx/CVE-2021-44228.json"),
+    ("CVE-2024-26581", "CVE-2024/CVE-2024-265xx/CVE-2024-26581.json"),
+])
+def test_cve_path_matches_hand_written_feed_layout(cve_id, expected_rel):
+    assert _cve_path(cve_id, Path("/c")) == Path("/c") / expected_rel
+
+
+def test_cve_path_never_strips_leading_zeros():
+    """Regression guard for the ~8% silent data loss: a bucket must keep the number's
+    zero padding, so the directory component is always len(num)-2 digits + 'xx'."""
+    for num in ("0001", "0099", "0100", "44228"):
+        p = _cve_path(f"CVE-2020-{num}", Path("/c"))
+        bucket = p.parent.name
+        assert bucket == f"CVE-2020-{num[:-2]}xx"
+        assert len(bucket.split("-")[-1]) == len(num) - 2 + 2
