@@ -452,3 +452,93 @@ def test_scan_status_summary_healthy_provenance_has_no_warning():
     out = asyncio.run(_build_vuln_scan_summary(_fake_db(18), fw))
     assert out.nvd_enrichment_status == "complete"
     assert out.nvd_enrichment_warning is None
+
+
+# ── a RAISING lookup must not read as a clean scan (review 2026-07-25) ────────
+#
+# The defect these guard: the per-file guard in _lookup_sync covered only
+# (OSError, json.JSONDecodeError) around the READ, while nvdlib's
+# CVE(...)/getvars() construction sat outside the try entirely. Two reachable
+# escapes — a torn write truncated mid-UTF-8 (UnicodeDecodeError, a ValueError)
+# and an unexpected record shape (AttributeError) — aborted the WHOLE lookup for
+# that CPE. scan_components swallows per-component exceptions, so the component
+# disappeared from the scan AND from the provenance histogram: with every lookup
+# raising, lookups==0 → enrichment_status "not_applicable" + warning None, i.e.
+# a false clean verdict. Both layers are now closed; these are the canaries.
+
+
+def test_torn_write_record_is_skipped_not_raised(tmp_path):
+    """Truncated mid-UTF-8 (interrupted tar -x) ⇒ degraded+skipped, never a raise."""
+    p = _write_cve(tmp_path, "CVE-2021-0001", vendor="acme", product="widget")
+    _write_cve(tmp_path, "CVE-2021-0002", vendor="acme", product="widget")
+    build_cpe_index(tmp_path)
+    _write_manifest(tmp_path, sha="s1", count=2)
+    doc = json.loads(p.read_text(encoding="utf-8"))
+    doc["descriptions"] = [{"lang": "en", "value": "héllo"}]
+    raw = json.dumps(doc, ensure_ascii=False).encode("utf-8")
+    p.write_bytes(raw[: raw.find("é".encode()) + 1])  # cut mid multi-byte char
+
+    cves, prov = asyncio.run(lookup_cves_for_cpe(_cpe("acme", "widget"), tmp_path))
+    assert {c.id for c in cves} == {"CVE-2021-0002"}
+    assert prov.mode == "cache_degraded" and prov.degraded is True
+    assert (prov.candidates, prov.resolved, prov.skipped) == (2, 1, 1)
+
+
+def test_unexpected_record_shape_is_skipped_not_raised(tmp_path):
+    """nvdlib CVE(...)/getvars() failure ⇒ degraded+skipped, never a raise."""
+    p = _write_cve(tmp_path, "CVE-2021-0001", vendor="acme", product="widget")
+    _write_cve(tmp_path, "CVE-2021-0002", vendor="acme", product="widget")
+    build_cpe_index(tmp_path)
+    _write_manifest(tmp_path, sha="s1", count=2)
+    doc = json.loads(p.read_text(encoding="utf-8"))
+    doc["metrics"] = {"cvssMetricV31": "not-a-list"}  # AttributeError in getvars()
+    p.write_text(json.dumps(doc), encoding="utf-8")
+
+    cves, prov = asyncio.run(lookup_cves_for_cpe(_cpe("acme", "widget"), tmp_path))
+    assert {c.id for c in cves} == {"CVE-2021-0002"}
+    assert prov.mode == "cache_degraded" and prov.skipped == 1
+
+
+def test_every_lookup_raising_is_partial_not_not_applicable(monkeypatch):
+    """Backstop layer: even if a lookup raises, the scan must NOT verdict clean.
+
+    ``not_applicable`` (warning None) means "no CPE-bearing component existed".
+    A component that WAS looked up and whose lookup blew up must never collapse
+    into that verdict — that is the false-clean-verdict failure mode.
+    """
+    from app.models.sbom import SbomComponent
+    from app.services import vulnerability_service as vs
+
+    async def _boom(*_a, **_k):
+        raise RuntimeError("volume unreadable")
+
+    monkeypatch.setattr(vs, "lookup_cves_for_cpe", _boom)
+
+    comp = SbomComponent(
+        id=uuid.uuid4(), name="widget", version="1.0", cpe=_cpe("acme", "widget"),
+        type="library", detection_source="test", detection_confidence="high",
+    )
+    svc = VulnerabilityService.__new__(VulnerabilityService)
+    svc._api_key = None
+    svc._nvd_cache_path = "/nonexistent"
+    svc._allow_live_fallback = False
+    svc._nvd_provenance = None
+    svc._rate_delay = 0
+    svc._create_findings_from_vulns = AsyncMock(return_value=0)
+
+    db = AsyncMock()
+    db.scalar = AsyncMock(side_effect=[0, 1])       # existing vulns, comp count
+    comps = MagicMock()
+    comps.scalars = MagicMock(return_value=MagicMock(all=MagicMock(return_value=[comp])))
+    sev = MagicMock(all=MagicMock(return_value=[]))
+    db.execute = AsyncMock(side_effect=[comps, sev])
+    svc.db = db
+
+    summary = asyncio.run(svc.scan_components(uuid.uuid4(), uuid.uuid4()))
+    assert summary["total_vulnerabilities_found"] == 0
+    assert summary["nvd_enrichment_status"] == "partial"
+    assert summary["nvd_enrichment_status"] != "not_applicable"
+    w = summary["nvd_enrichment_warning"]
+    assert w and "UNDER-REPORT" in w and "RuntimeError" in str(
+        summary["nvd_provenance"]["degraded_reasons"]
+    )

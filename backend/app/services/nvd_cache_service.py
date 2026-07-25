@@ -266,11 +266,32 @@ def _lookup_sync(cpe: str, cache_dir: Path) -> tuple[list | None, CacheProvenanc
             continue
         try:
             cve_data = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            skipped += 1  # present but unreadable — still a silent under-report
+            cve_obj = CVE({k: _to_obj(v) for k, v in cve_data.items()})
+            cve_obj.getvars()
+        except Exception:  # noqa: BLE001 — see below; a bad record must not abort the lookup
+            # DELIBERATELY broad, and construction is INSIDE the guard.
+            #
+            # The narrow `(OSError, json.JSONDecodeError)` guard covered only the
+            # read+parse, and only those two types. Two reachable escapes:
+            #   * a torn write (interrupted `tar -x` in refresh-nvd-cache.sh, the
+            #     exact failure this module's degrade detection exists for) leaves
+            #     a file truncated mid-UTF-8 → UnicodeDecodeError (a ValueError,
+            #     NOT a JSONDecodeError) → uncaught;
+            #   * nvdlib's CVE(...)/getvars() sat outside the try entirely and
+            #     raises AttributeError on an unexpected record shape
+            #     (reproduced: "'str' object has no attribute 'cvssData'").
+            # Either one aborted the WHOLE lookup for that CPE, and
+            # VulnerabilityService.scan_components swallows per-component
+            # exceptions — so the component vanished from the scan AND from the
+            # provenance histogram, yielding lookups=0 → "not_applicable" with a
+            # null warning: a false clean verdict, the one outcome this module
+            # exists to make impossible.
+            #
+            # Counting it as `skipped` instead routes it through the existing
+            # honest path: skipped ⇒ degraded ⇒ mode cache_degraded ⇒
+            # enrichment_status "partial" ⇒ UNDER-REPORT warning.
+            skipped += 1
             continue
-        cve_obj = CVE({k: _to_obj(v) for k, v in cve_data.items()})
-        cve_obj.getvars()
         cves.append(cve_obj)
 
     if skipped:
