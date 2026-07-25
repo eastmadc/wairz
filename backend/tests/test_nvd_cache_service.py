@@ -601,3 +601,380 @@ def test_every_lookup_raising_is_partial_not_not_applicable(monkeypatch):
     assert w and "UNDER-REPORT" in w and "RuntimeError" in str(
         summary["nvd_provenance"]["degraded_reasons"]
     )
+
+
+# ── Rule #35b LIVE CANARIES for firmware.vuln_scan_provenance ─────────────────
+#
+# Everything above this line asserts against MagicMock rows: they prove
+# "the writer assigned something", never "the column round-trips through the
+# real ORM in the shape the normaliser and the reader expect". That gap is the
+# documented cause of the months-long confidence=None bug in this repo
+# (CLAUDE.md Rule #35b) — a mock replaced the SESSION, so no test ever observed
+# the constructor arguments.
+#
+# These drive the REAL writers (the 202+polling background runner AND the MCP
+# tool handler — a third writer that had NO test at all) against real Project /
+# Firmware / SbomComponent rows created through the production ORM, then
+# expunge the identity map and re-SELECT so the assertions read bytes that
+# actually went through JSONB bind/result serialization.
+
+from sqlalchemy import select as _select  # noqa: E402
+
+from tests._live_db import make_live_db  # noqa: E402
+
+
+class _SessionHandle:
+    """``async_session_factory()`` stand-in that hands back the live session.
+
+    The background runner owns its own session via ``async_session_factory()``
+    (Rule #39 outer-wrapper shape), which under pytest would try to reach
+    ``db:5432``. Handing it the live SQLite session lets the REAL runner code
+    execute unmodified. ``__aexit__`` deliberately does NOT close — the test
+    still has to SELECT the row the runner persisted.
+    """
+
+    def __init__(self, db):
+        self._db = db
+
+    async def __aenter__(self):
+        return self._db
+
+    async def __aexit__(self, *_exc):
+        return False
+
+
+def _patch_settings(monkeypatch, cache_dir):
+    """Point BOTH get_settings bindings at a fixture cache, NVD backend.
+
+    ``vulnerability_service`` binds ``get_settings`` at module scope; the
+    background runner lazy-imports it from ``app.config`` inside the function
+    body (Rule #30 — the patch target differs per binding site), so both are
+    patched. ``grype_available`` is likewise lazy-imported by the runner, so
+    it is patched on its SOURCE module.
+    """
+    from types import SimpleNamespace
+
+    from app import config as app_config
+    from app.services import grype_service
+    from app.services import vulnerability_service as vs
+
+    fake = SimpleNamespace(
+        nvd_api_key=None,
+        nvd_cache_path=str(cache_dir),
+        nvd_allow_live_fallback=False,
+        vulnerability_backend="nvd",
+    )
+    monkeypatch.setattr(app_config, "get_settings", lambda: fake)
+    monkeypatch.setattr(vs, "get_settings", lambda: fake)
+    monkeypatch.setattr(grype_service, "grype_available", lambda: False)
+    return fake
+
+
+async def _seed_scan_target(db, *, cpe: str):
+    """Create Project + Firmware + one CPE-bearing SbomComponent for real."""
+    from app.models.firmware import Firmware
+    from app.models.project import Project
+    from app.models.sbom import SbomComponent
+
+    project = Project(name="live-canary", description="Rule #35b")
+    db.add(project)
+    await db.flush()
+    fw = Firmware(
+        project_id=project.id,
+        original_filename="canary.bin",
+        storage_path="/tmp/canary.bin",
+        sha256="c" * 64,
+        file_size=4096,
+        vuln_scan_status="queued",
+    )
+    db.add(fw)
+    await db.flush()
+    db.add(SbomComponent(
+        firmware_id=fw.id,
+        name="widget",
+        version="1.0",
+        type="library",
+        cpe=cpe,
+        detection_source="live-canary",
+        detection_confidence="high",
+    ))
+    await db.commit()
+    return project.id, fw.id
+
+
+async def _reselect_firmware(db, firmware_id):
+    """Re-read the row from the DATABASE, not the identity map.
+
+    ``expire_on_commit=False`` (wairz's session config, Rule #32) means a plain
+    re-SELECT would hand back the same in-memory instance with the values the
+    writer assigned — proving nothing about persistence. Expunging first forces
+    a real load, so the assertions below observe the value AFTER a JSONB
+    serialize/deserialize round-trip.
+    """
+    from app.models.firmware import Firmware
+
+    db.expunge_all()
+    return (await db.execute(
+        _select(Firmware).where(Firmware.id == firmware_id)
+    )).scalar_one()
+
+
+def _assert_canonical_stamp(prov: dict):
+    """Every sub-key the Rule #35c canonical shape declares must be present.
+
+    A stamp missing ``modes`` / ``lookups`` / ``degraded_reasons`` still reads
+    as a dict to the normaliser and still renders a status to the REST summary
+    — it just silently drops the evidence an operator needs to judge the
+    verdict. Assert the SHAPE, not merely truthiness.
+    """
+    from app.services.jsonb_normalizers import (
+        FIRMWARE_VULN_SCAN_PROVENANCE_SCHEMA_VERSION,
+        _normalize_firmware_vuln_scan_provenance,
+    )
+
+    assert _normalize_firmware_vuln_scan_provenance(prov) == prov
+    assert prov["schema_version"] == FIRMWARE_VULN_SCAN_PROVENANCE_SCHEMA_VERSION
+    assert prov["engine"] == "nvd_pinned_cache"
+    for key in (
+        "enrichment_status", "warning", "modes", "lookups", "degraded",
+        "worst_mode", "manifest_sha",
+    ):
+        assert key in prov, f"canonical stamp lost '{key}' in persistence"
+    assert isinstance(prov["modes"], dict) and isinstance(prov["lookups"], int)
+
+
+async def test_live_canary_background_runner_persists_degraded_provenance(
+    tmp_path, monkeypatch
+):
+    """The REAL 202+polling writer, a REAL firmware row, a re-SELECT.
+
+    Degraded (half-populated) cache ⇒ the persisted row must carry
+    enrichment_status "partial" + the UNDER-REPORT warning ALONGSIDE
+    vuln_scan_status "completed". "completed with 0 vulns and no marker" is
+    precisely the false-clean verdict this branch exists to prevent, and until
+    now nothing proved the marker survived the write.
+    """
+    from app.routers import sbom as sbom_router
+
+    for i in (1, 2, 3):
+        _write_cve(tmp_path, f"CVE-2021-000{i}", vendor="acme", product="widget")
+    build_cpe_index(tmp_path)
+    _write_manifest(tmp_path, sha="live-degraded-sha", count=3)
+    _wipe_cve_files(tmp_path)
+    ncs._INDEX_CACHE.clear()
+    ncs._INTEGRITY_CACHE.clear()
+
+    _patch_settings(monkeypatch, tmp_path)
+    async with make_live_db() as db:
+        project_id, firmware_id = await _seed_scan_target(
+            db, cpe=_cpe("acme", "widget")
+        )
+        monkeypatch.setattr(
+            sbom_router, "async_session_factory", lambda: _SessionHandle(db)
+        )
+        await sbom_router._run_vuln_scan_background(firmware_id, project_id, False)
+
+        fw = await _reselect_firmware(db, firmware_id)
+        assert fw.vuln_scan_status == "completed"
+        assert fw.vuln_scan_error is None
+        assert fw.vuln_scan_started_at is not None
+        assert fw.vuln_scan_finished_at is not None
+
+        prov = fw.vuln_scan_provenance
+        assert isinstance(prov, dict), "JSONB round-trip did not yield a dict"
+        _assert_canonical_stamp(prov)
+        assert prov["enrichment_status"] == "partial"
+        assert prov["degraded"] is True
+        assert prov["worst_mode"] == "cache_degraded"
+        assert prov["manifest_sha"] == "live-degraded-sha"
+        assert "UNDER-REPORT" in prov["warning"]
+        assert prov["lookups"] == 1
+        assert prov["modes"].get("cache_degraded") == 1
+        assert prov["degraded_reasons"]
+
+        # The reader the frontend/polling endpoint actually calls, against the
+        # PERSISTED row — closes the write→read loop rather than asserting the
+        # writer and reader agree on a mock.
+        summary = await sbom_router._build_vuln_scan_summary(db, fw)
+        assert summary.total_vulnerabilities_found == 0
+        assert summary.nvd_enrichment_status == "partial"
+        assert "UNDER-REPORT" in summary.nvd_enrichment_warning
+        assert summary.nvd_provenance["manifest_sha"] == "live-degraded-sha"
+
+
+async def test_live_canary_background_runner_persists_complete_provenance(
+    tmp_path, monkeypatch
+):
+    """Healthy cache ⇒ persisted "complete" + warning None + real CVE rows.
+
+    The Rule #46 companion to the degraded canary: without it, a writer that
+    stamped "partial" unconditionally would satisfy the suite.
+    """
+    from app.models.sbom import SbomVulnerability
+    from app.routers import sbom as sbom_router
+
+    _write_cve(tmp_path, "CVE-2021-0001", vendor="acme", product="widget")
+    _write_cve(tmp_path, "CVE-2021-0002", vendor="acme", product="widget")
+    build_cpe_index(tmp_path)
+    _write_manifest(tmp_path, sha="live-healthy-sha", count=2)
+
+    _patch_settings(monkeypatch, tmp_path)
+    async with make_live_db() as db:
+        project_id, firmware_id = await _seed_scan_target(
+            db, cpe=_cpe("acme", "widget")
+        )
+        monkeypatch.setattr(
+            sbom_router, "async_session_factory", lambda: _SessionHandle(db)
+        )
+        await sbom_router._run_vuln_scan_background(firmware_id, project_id, False)
+
+        fw = await _reselect_firmware(db, firmware_id)
+        assert fw.vuln_scan_status == "completed"
+        prov = fw.vuln_scan_provenance
+        _assert_canonical_stamp(prov)
+        assert prov["enrichment_status"] == "complete"
+        assert prov["warning"] is None
+        assert prov["degraded"] is False
+        assert prov["manifest_sha"] == "live-healthy-sha"
+        assert prov["populated_at"] == "2026-07-24T00:00:00Z"
+        assert prov["cve_count"] == 2
+        assert prov["modes"] == {"cache_hit": 1}
+
+        # The count the summary reports must equal the rows actually persisted
+        # — the value-flow assertion a mock cannot make.
+        persisted = (await db.execute(
+            _select(SbomVulnerability).where(
+                SbomVulnerability.firmware_id == firmware_id
+            )
+        )).scalars().all()
+        assert {v.cve_id for v in persisted} == {"CVE-2021-0001", "CVE-2021-0002"}
+        summary = await sbom_router._build_vuln_scan_summary(db, fw)
+        assert summary.total_vulnerabilities_found == len(persisted) == 2
+        assert summary.nvd_enrichment_status == "complete"
+        assert summary.nvd_enrichment_warning is None
+
+
+async def test_live_canary_background_runner_persists_unavailable_provenance(
+    tmp_path, monkeypatch
+):
+    """No cache at all ⇒ persisted "none" + DID-NOT-RUN warning, not NULL.
+
+    A NULL column reads as "unknown" — truthful but weaker. The runner must
+    record the affirmative "enrichment did not run" so a 0-vulnerability
+    result is never attributable to a clean firmware.
+    """
+    from app.routers import sbom as sbom_router
+
+    _patch_settings(monkeypatch, tmp_path / "does-not-exist")
+    async with make_live_db() as db:
+        project_id, firmware_id = await _seed_scan_target(
+            db, cpe=_cpe("acme", "widget")
+        )
+        monkeypatch.setattr(
+            sbom_router, "async_session_factory", lambda: _SessionHandle(db)
+        )
+        await sbom_router._run_vuln_scan_background(firmware_id, project_id, False)
+
+        fw = await _reselect_firmware(db, firmware_id)
+        assert fw.vuln_scan_status == "completed"
+        prov = fw.vuln_scan_provenance
+        assert prov is not None, "unavailable cache persisted NULL provenance"
+        _assert_canonical_stamp(prov)
+        assert prov["enrichment_status"] == "none"
+        assert prov["worst_mode"] == "cache_unavailable"
+        assert "DID NOT RUN" in prov["warning"]
+        assert prov["manifest_sha"] is None
+
+
+async def test_live_canary_mcp_tool_handler_persists_provenance(
+    tmp_path, monkeypatch
+):
+    """The THIRD writer — the MCP ``run_vulnerability_scan`` handler.
+
+    Untested entirely before this: it stamps provenance on its own (Rule #47
+    consumer enumeration) with ``flush()`` rather than ``commit()`` (Rule #3,
+    the MCP dispatch owns the transaction), so a regression here would leave
+    the REST status endpoint reporting an older run's provenance next to rows
+    this scan just wrote. Asserts the persisted row AND the rendered text.
+    """
+    from dataclasses import dataclass
+
+    from app.ai.tools.sbom import _handle_run_vulnerability_scan
+
+    @dataclass
+    class _Ctx:
+        db: object
+        firmware_id: uuid.UUID
+        project_id: uuid.UUID
+
+    for i in (1, 2, 3):
+        _write_cve(tmp_path, f"CVE-2021-000{i}", vendor="acme", product="widget")
+    build_cpe_index(tmp_path)
+    _write_manifest(tmp_path, sha="live-mcp-sha", count=3)
+    _wipe_cve_files(tmp_path)
+    ncs._INDEX_CACHE.clear()
+    ncs._INTEGRITY_CACHE.clear()
+
+    _patch_settings(monkeypatch, tmp_path)
+    async with make_live_db() as db:
+        project_id, firmware_id = await _seed_scan_target(
+            db, cpe=_cpe("acme", "widget")
+        )
+        out = await _handle_run_vulnerability_scan(
+            {}, _Ctx(db=db, firmware_id=firmware_id, project_id=project_id)
+        )
+        # Rule #3: the handler only flush()es — the dispatch commits. Commit
+        # here so the re-SELECT reads what the real dispatch would have stored.
+        await db.commit()
+
+        fw = await _reselect_firmware(db, firmware_id)
+        prov = fw.vuln_scan_provenance
+        assert prov is not None, "MCP handler did not persist provenance"
+        _assert_canonical_stamp(prov)
+        assert prov["enrichment_status"] == "partial"
+        assert prov["manifest_sha"] == "live-mcp-sha"
+        assert prov["degraded"] is True
+
+        # The assistant-facing text must lead with the warning, BEFORE the
+        # count it invalidates — a bare "0" is the false clean verdict.
+        assert "UNDER-REPORT" in out
+        assert out.index("UNDER-REPORT") < out.index("Total vulnerabilities found")
+        assert "live-mcp-sha" in out
+
+
+async def test_live_canary_mcp_tool_handler_healthy_scan_has_no_warning(
+    tmp_path, monkeypatch
+):
+    """Rule #46 companion: the MCP handler must not warn on a healthy cache."""
+    from dataclasses import dataclass
+
+    from app.ai.tools.sbom import _handle_run_vulnerability_scan
+
+    @dataclass
+    class _Ctx:
+        db: object
+        firmware_id: uuid.UUID
+        project_id: uuid.UUID
+
+    _write_cve(tmp_path, "CVE-2021-0001", vendor="acme", product="widget")
+    build_cpe_index(tmp_path)
+    _write_manifest(tmp_path, sha="live-mcp-ok-sha", count=1)
+
+    _patch_settings(monkeypatch, tmp_path)
+    async with make_live_db() as db:
+        project_id, firmware_id = await _seed_scan_target(
+            db, cpe=_cpe("acme", "widget")
+        )
+        out = await _handle_run_vulnerability_scan(
+            {}, _Ctx(db=db, firmware_id=firmware_id, project_id=project_id)
+        )
+        await db.commit()
+
+        fw = await _reselect_firmware(db, firmware_id)
+        prov = fw.vuln_scan_provenance
+        _assert_canonical_stamp(prov)
+        assert prov["enrichment_status"] == "complete"
+        assert prov["warning"] is None
+        assert "UNDER-REPORT" not in out and "DID NOT RUN" not in out
+        # The tool renders the generation identity truncated to 12 chars.
+        assert "live-mcp-ok-" in out and "enrichment: complete" in out
