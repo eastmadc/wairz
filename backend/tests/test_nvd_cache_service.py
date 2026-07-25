@@ -291,3 +291,164 @@ def test_cve_path_never_strips_leading_zeros():
         bucket = p.parent.name
         assert bucket == f"CVE-2020-{num[:-2]}xx"
         assert len(bucket.split("-")[-1]) == len(num) - 2 + 2
+
+
+# ── provenance SURFACING (the truthfulness guarantee end-to-end) ──────
+#
+# The defect these guard: the provenance aggregate was computed and then read by
+# NOBODY — the router logged a count, assessment_service took findings_created,
+# the MCP tool printed severities. So a completed scan against an unavailable
+# cache persisted "0 vulnerabilities" that no consumer could distinguish from a
+# genuinely clean firmware.
+
+import uuid  # noqa: E402
+from unittest.mock import AsyncMock, MagicMock  # noqa: E402
+
+from app.services.vulnerability_service import (  # noqa: E402
+    VulnerabilityService,
+    summarise_nvd_provenance,
+)
+
+
+def _scan_component(cache: Path, cpe_str: str):
+    """Drive the REAL service lookup path against a fixture cache; return the
+    scan-level provenance verdict the summary would carry."""
+    from app.models.sbom import SbomComponent
+
+    svc = VulnerabilityService.__new__(VulnerabilityService)  # skip get_settings
+    svc.db = MagicMock()
+    svc._api_key = None
+    svc._nvd_cache_path = str(cache)
+    svc._allow_live_fallback = False
+    svc._nvd_provenance = None
+    svc._rate_delay = 0
+    comp = SbomComponent(
+        id=uuid.uuid4(), name="widget", version="1.0", cpe=cpe_str,
+        type="library", detection_source="test", detection_confidence="high",
+    )
+    asyncio.run(svc._query_nvd_for_component(comp, uuid.uuid4()))
+    return summarise_nvd_provenance(svc._nvd_provenance)
+
+
+def test_summary_verdict_unavailable_cache_says_enrichment_did_not_run(tmp_path):
+    prov = _scan_component(tmp_path, _cpe("acme", "widget"))  # no manifest at all
+    assert prov["enrichment_status"] == "none"
+    assert prov["worst_mode"] == "cache_unavailable"
+    w = prov["warning"]
+    # Rule #46 style assertion on the MESSAGE, not just the flag: an operator
+    # reading this must not be able to mistake it for a clean verdict.
+    assert w and "DID NOT RUN" in w and "not looked up" in w
+
+
+def test_summary_verdict_degraded_cache_says_under_report(tmp_path):
+    for i in (1, 2, 3):
+        _write_cve(tmp_path, f"CVE-2021-000{i}", vendor="acme", product="widget")
+    build_cpe_index(tmp_path)
+    _write_manifest(tmp_path, sha="s1", count=3)
+    _wipe_cve_files(tmp_path)
+    prov = _scan_component(tmp_path, _cpe("acme", "widget"))
+    assert prov["enrichment_status"] == "partial"
+    assert prov["degraded"] is True and prov["worst_mode"] == "cache_degraded"
+    assert "UNDER-REPORT" in prov["warning"]
+    assert prov["manifest_sha"] == "s1"  # generation identity still attributable
+
+
+def test_summary_verdict_healthy_cache_is_complete_with_no_warning(tmp_path):
+    _write_cve(tmp_path, "CVE-2021-0001", vendor="acme", product="widget")
+    build_cpe_index(tmp_path)
+    _write_manifest(tmp_path, sha="s1", count=1)
+    prov = _scan_component(tmp_path, _cpe("acme", "widget"))
+    assert prov["enrichment_status"] == "complete"
+    assert prov["warning"] is None and prov["degraded"] is False
+    assert prov["manifest_sha"] == "s1"
+
+
+def test_summary_verdict_healthy_miss_is_complete_not_a_warning(tmp_path):
+    """A miss on a HEALTHY cache is the reproducible answer — no false alarm."""
+    _write_cve(tmp_path, "CVE-2021-0001", vendor="acme", product="widget")
+    build_cpe_index(tmp_path)
+    _write_manifest(tmp_path, sha="s1", count=1)
+    prov = _scan_component(tmp_path, _cpe("nobody", "nothing"))
+    assert prov["enrichment_status"] == "complete" and prov["warning"] is None
+
+
+def test_summarise_no_lookups_is_not_applicable():
+    prov = summarise_nvd_provenance(None)
+    assert prov["enrichment_status"] == "not_applicable" and prov["warning"] is None
+
+
+# ── router persistence + surfacing ───────────────────────────────────
+
+
+def test_provenance_stamp_skipped_for_cached_short_circuit():
+    """A cached (no-op) run must NOT overwrite a real manifest sha."""
+    from app.routers.sbom import _vuln_scan_provenance_from_summary
+
+    assert _vuln_scan_provenance_from_summary({"status": "cached"}, grype=False) is None
+    assert _vuln_scan_provenance_from_summary({"status": "cached"}, grype=True) is None
+
+
+def test_provenance_stamp_records_grype_engine_rather_than_null():
+    from app.routers.sbom import _vuln_scan_provenance_from_summary
+
+    stamp = _vuln_scan_provenance_from_summary(
+        {"status": "success", "total_components_scanned": 4}, grype=True
+    )
+    assert stamp["engine"] == "grype" and stamp["schema_version"] == 1
+    assert stamp["enrichment_status"] == "unpinned"
+    assert "not the pinned nvd cache" in stamp["warning"].lower()
+
+
+def _fake_db(total_vulns: int):
+    db = AsyncMock()
+    db.scalar = AsyncMock(side_effect=[1, total_vulns, 0])  # comps, vulns, findings
+    db.execute = AsyncMock(return_value=MagicMock(all=MagicMock(return_value=[])))
+    return db
+
+
+def test_scan_status_summary_surfaces_persisted_degraded_provenance():
+    """The polling endpoint's summary must carry the warning, not a bare 0."""
+    from app.routers.sbom import _build_vuln_scan_summary
+
+    fw = MagicMock()
+    fw.id = uuid.uuid4()
+    fw.vuln_scan_provenance = {
+        "schema_version": 1,
+        "engine": "nvd_pinned_cache",
+        "manifest_sha": "a1f38452d7df",
+        "enrichment_status": "none",
+        "warning": "CVE ENRICHMENT DID NOT RUN — the pinned NVD cache was unavailable",
+    }
+    out = asyncio.run(_build_vuln_scan_summary(_fake_db(0), fw))
+    assert out.total_vulnerabilities_found == 0
+    assert out.nvd_enrichment_status == "none"
+    assert "DID NOT RUN" in out.nvd_enrichment_warning
+    assert out.nvd_provenance["manifest_sha"] == "a1f38452d7df"
+
+
+def test_scan_status_summary_null_provenance_is_unknown_with_warning():
+    """A pre-provenance scan reports 'unknown' + a warning — never 'complete'."""
+    from app.routers.sbom import _build_vuln_scan_summary
+
+    fw = MagicMock()
+    fw.id = uuid.uuid4()
+    fw.vuln_scan_provenance = None
+    out = asyncio.run(_build_vuln_scan_summary(_fake_db(5104), fw))
+    assert out.nvd_enrichment_status == "unknown"
+    assert out.nvd_enrichment_warning and "NOT RECORDED" in out.nvd_enrichment_warning
+    assert out.nvd_provenance is None
+
+
+def test_scan_status_summary_healthy_provenance_has_no_warning():
+    from app.routers.sbom import _build_vuln_scan_summary
+
+    fw = MagicMock()
+    fw.id = uuid.uuid4()
+    fw.vuln_scan_provenance = {
+        "schema_version": 1, "engine": "nvd_pinned_cache",
+        "manifest_sha": "a1f38452d7df", "enrichment_status": "complete",
+        "warning": None,
+    }
+    out = asyncio.run(_build_vuln_scan_summary(_fake_db(18), fw))
+    assert out.nvd_enrichment_status == "complete"
+    assert out.nvd_enrichment_warning is None
