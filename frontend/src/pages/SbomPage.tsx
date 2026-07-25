@@ -38,6 +38,7 @@ import FirmwareSelector from '@/components/projects/FirmwareSelector'
 import { FormatBanner } from '@/components/firmware/FormatBanner'
 import { usePollingBackoff } from '@/hooks/usePollingBackoff'
 import VulnerabilityRowVirtual, { COLUMN_TEMPLATE } from '@/components/sbom/VulnerabilityRowVirtual'
+import { EnrichmentBanner, EnrichmentInlineNote } from '@/components/sbom/EnrichmentBanner'
 import { List, useDynamicRowHeight } from 'react-window'
 import type {
   SbomComponent,
@@ -49,6 +50,7 @@ import type {
   VulnerabilityScanResult,
   VulnerabilityScanStatus,
 } from '@/types'
+import { isEnrichmentSubstantiated } from '@/types'
 import { SEVERITY_CONFIG } from '@/constants/statusConfig'
 
 
@@ -89,18 +91,35 @@ export default function SbomPage() {
   const resolutionFilter = useVulnerabilityStore((s) => s.resolutionFilter)
   const sevFilter = useVulnerabilityStore((s) => s.sevFilter)
 
+  // CVE-enrichment verdict for the LAST completed scan (Rule #37 / review D2).
+  // `scanResult` is populated both by the polling effect after an in-session
+  // scan AND by loadData below, so the banner is present on a cold page load —
+  // not only immediately after the operator clicks Scan.
+  const enrichment = useMemo(() => ({
+    status: scanResult?.nvd_enrichment_status ?? null,
+    warning: scanResult?.nvd_enrichment_warning ?? null,
+    provenance: scanResult?.nvd_provenance ?? null,
+  }), [scanResult])
+  // Rule #53: positive evidence only. `null` (never scanned) is NOT clean, but
+  // it is also not a claim — callers distinguish via `enrichment.status`.
+  const enrichmentClean = isEnrichmentSubstantiated(enrichment.status)
+
   // Load data on mount or firmware change
   const loadData = useCallback(async () => {
     if (!projectId) return
     setLoading(true)
     try {
       const fwId = selectedFirmwareId || undefined
-      const [comps, s] = await Promise.all([
+      const [comps, s, scanStatus] = await Promise.all([
         getAllSbomComponents(projectId, { firmware_id: fwId }).catch(() => []),
         getVulnerabilitySummary(projectId, fwId).catch(() => null),
+        // Carries nvd_enrichment_status / _warning / _provenance for the last
+        // completed scan; without it a cold load renders a bare count.
+        getVulnerabilityScanStatus(projectId, fwId).catch(() => null),
       ])
       setComponents(comps)
       setSummary(s)
+      setScanResult(scanStatus?.summary ?? null)
 
       if (s && s.total_vulnerabilities > 0) {
         await useVulnerabilityStore.getState().loadVulnerabilities(projectId, fwId)
@@ -489,6 +508,17 @@ export default function SbomPage() {
         />
       )}
 
+      {/* Rule #37 truthfulness — MUST precede the counts it invalidates.
+          A scan run against a missing or half-populated pinned NVD cache
+          persists 0 vulnerabilities, byte-identical to a genuinely clean
+          firmware. Without this banner the summary cards below present an
+          unenriched scan as a clean one (review D2). */}
+      <EnrichmentBanner
+        status={enrichment.status}
+        warning={enrichment.warning}
+        provenance={enrichment.provenance}
+      />
+
       {/* Summary cards */}
       {summary && summary.total_components > 0 && (
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
@@ -502,8 +532,16 @@ export default function SbomPage() {
           <SummaryCard
             label="Vulnerabilities"
             value={summary.total_vulnerabilities}
-            detail={summary.total_vulnerabilities > 0 ? `${summary.components_with_vulns} affected components` : 'No scan results yet'}
-            alert={summary.total_vulnerabilities > 0}
+            detail={
+              !enrichment.status
+                ? 'No scan results yet'
+                : !enrichmentClean
+                  ? 'CVE enrichment incomplete — NOT a clean result'
+                  : summary.total_vulnerabilities > 0
+                    ? `${summary.components_with_vulns} affected components`
+                    : 'No known CVEs in the pinned NVD cache'
+            }
+            alert={summary.total_vulnerabilities > 0 || (!!enrichment.status && !enrichmentClean)}
           />
           <SummaryCard
             label="Critical / High"
@@ -542,9 +580,14 @@ export default function SbomPage() {
             </span>
           )}
           {scanResult && !scanning && (
-            <span className="text-xs text-muted-foreground">
-              Found {scanResult.total_vulnerabilities_found} CVEs across {scanResult.total_components_scanned} components
-              {scanResult.findings_created > 0 && ` \u00b7 ${scanResult.findings_created} findings created`}
+            // The marker precedes the count it qualifies (review D2): an
+            // unenriched scan reports "Found 0 CVEs", which reads as clean.
+            <span className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+              <EnrichmentInlineNote status={enrichment.status} />
+              <span>
+                Found {scanResult.total_vulnerabilities_found} CVEs across {scanResult.total_components_scanned} components
+                {scanResult.findings_created > 0 && ` \u00b7 ${scanResult.findings_created} findings created`}
+              </span>
             </span>
           )}
         </div>
