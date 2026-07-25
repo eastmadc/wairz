@@ -110,6 +110,40 @@ def test_cve_path_rejects_malformed():
     assert _cve_path("CVE-2021-abc", Path("/x")) is None
 
 
+@pytest.mark.parametrize("cve_id", [
+    "CVE-../../etc/passwd-123",   # 3-tuple, CVE prefix, digit tail — passed pre-fix
+    "CVE-..-1234",
+    "CVE-../2021-1234",
+    "CVE-/etc-1234",
+    "CVE-2021/../..-1234",
+])
+def test_cve_path_rejects_a_traversing_year(cve_id):
+    """Rule #1: the YEAR component was unvalidated, so a crafted id escaped.
+
+    `"CVE-../../etc/passwd-123".split("-")` is `["CVE", "../../etc/passwd",
+    "123"]` — length 3, prefix "CVE", digit tail. Every pre-fix check passed
+    and the builder returned a path outside the cache root. Unreachable in
+    practice (ids come only from the service's own cpe_index.json) but a path
+    builder must not depend on its callers for containment.
+    """
+    assert _cve_path(cve_id, Path("/cache")) is None
+
+
+def test_cve_path_result_is_always_inside_the_cache_root():
+    """Companion containment assertion: whatever survives the parse stays in.
+
+    Rule #46 pairing for the rejection test above — without it, "reject
+    everything" would satisfy that test. This one proves valid ids still
+    resolve, and resolve UNDER the root.
+    """
+    root = Path("/cache")
+    for cve_id in ("CVE-1999-0001", "CVE-2021-44228", "CVE-2024-1000000"):
+        p = _cve_path(cve_id, root)
+        assert p is not None
+        assert root in p.parents
+        assert ".." not in p.parts
+
+
 def test_cpe_vendor_product():
     assert _cpe_vendor_product(_cpe("Apache", "Log4j")) == "apache:log4j"
     assert _cpe_vendor_product("cpe:2.3:o:linux:linux_kernel:5.4") == "linux:linux_kernel"

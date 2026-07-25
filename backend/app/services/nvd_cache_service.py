@@ -108,9 +108,34 @@ class CacheProvenance:
 
 
 def _cve_path(cve_id: str, cache_dir: Path) -> Path | None:
-    """Resolve CVE-{year}/CVE-{year}-{nn}xx/CVE-{year}-{n}.json."""
+    """Resolve CVE-{year}/CVE-{year}-{nn}xx/CVE-{year}-{n}.json.
+
+    Rule #1 containment: BOTH the year and the number must be all-digits. The
+    year was previously unchecked, so ``CVE-../../etc/passwd-123`` split into a
+    valid-looking 3-tuple (``["CVE", "../../etc/passwd", "123"]``) and produced
+    a path outside the cache root. Not reachable today — ids come only from the
+    service's own ``cpe_index.json``, never from firmware content (the
+    attacker-influenced CPE string is a dict KEY, never a path segment) — but
+    a path builder must not depend on its callers for containment.
+
+    ``str.isdigit()`` is the whole guard, and it is sufficient rather than
+    merely narrowing: no separator, ``.``, or NUL can survive it, so every
+    component is provably a bare path segment and the result is provably under
+    ``cache_dir``. That is why there is no ``realpath`` + prefix check here — a
+    per-candidate ``realpath`` would add a syscall to each of the up-to-18k
+    candidates a broad CPE resolves (Rule #5) to re-prove what the parse
+    already guarantees. Note ``isdigit()`` is Unicode-aware (superscripts,
+    Devanagari digits), which is harmless for containment: those characters are
+    still bare segments, and a non-ASCII year simply resolves to a directory
+    the feed never created — a miss, not an escape.
+    """
     parts = cve_id.strip().upper().split("-")
-    if len(parts) != 3 or parts[0] != "CVE" or not parts[2].isdigit():
+    if (
+        len(parts) != 3
+        or parts[0] != "CVE"
+        or not parts[1].isdigit()
+        or not parts[2].isdigit()
+    ):
         return None
     year, num = parts[1], parts[2]
     # Bucket = the CVE number with its last two digits replaced by "xx", PRESERVING
