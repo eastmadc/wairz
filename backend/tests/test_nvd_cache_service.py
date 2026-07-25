@@ -55,7 +55,8 @@ def _write_manifest(cache: Path, sha="abc123", count=2):
 
 
 def setup_function(_):
-    ncs._INDEX_CACHE.clear()  # reset the module memo between tests
+    ncs._INDEX_CACHE.clear()  # reset the module memos between tests
+    ncs._INTEGRITY_CACHE.clear()
 
 
 # ── path + cpe parsing ───────────────────────────────────────────────
@@ -107,10 +108,14 @@ def test_cache_unavailable_when_no_manifest(tmp_path):
 
 
 def test_unparseable_cpe_is_cache_miss_not_unavailable(tmp_path):
+    # Healthy (populated) cache + a garbage CPE ⇒ a plain miss, not unavailable
+    # and not degraded (the cache is fine; the input is not).
+    _write_cve(tmp_path, "CVE-2021-0001")
     build_cpe_index(tmp_path)
-    _write_manifest(tmp_path)
+    _write_manifest(tmp_path, count=1)
     cves, prov = asyncio.run(lookup_cves_for_cpe("garbage-cpe", tmp_path))
     assert cves == [] and prov.mode == "cache_miss"
+    assert prov.degraded is False
 
 
 def test_index_memo_invalidates_on_sha_change(tmp_path):
@@ -127,6 +132,112 @@ def test_index_memo_invalidates_on_sha_change(tmp_path):
     assert {c.id for c in cves} == {"CVE-2021-0001", "CVE-2021-0002"}
 
 
+# ── degraded (half-populated) cache detection ────────────────────────
+#
+# The defect these guard: a volume whose MANIFEST + cpe_index were written but
+# whose CVE files are absent (interrupted refresh, wiped volume, the pre-fix
+# zero-padding path bug) answered every lookup with the *valid reproducible*
+# `cache_miss`, so a scan persisted "0 vulnerabilities / completed" that was
+# indistinguishable from a genuinely clean firmware.
+
+
+def _wipe_cve_files(cache: Path) -> int:
+    """Delete every CVE json (keep MANIFEST + cpe_index) — the partial-cache shape."""
+    n = 0
+    for p in cache.rglob("CVE-*.json"):
+        if p.name in (ncs._INDEX_NAME, ncs._MANIFEST_NAME):
+            continue
+        p.unlink()
+        n += 1
+    return n
+
+
+def test_partial_cache_is_degraded_not_clean_miss(tmp_path):
+    """Index + manifest present, CVE files gone ⇒ cache_degraded, never cache_miss."""
+    for i in (1, 2, 3):
+        _write_cve(tmp_path, f"CVE-2021-000{i}", vendor="acme", product="widget")
+    build_cpe_index(tmp_path)
+    _write_manifest(tmp_path, sha="s1", count=3)
+    assert _wipe_cve_files(tmp_path) == 3
+
+    cves, prov = asyncio.run(lookup_cves_for_cpe(_cpe("acme", "widget"), tmp_path))
+    assert cves == []
+    assert prov.mode == "cache_degraded"
+    assert prov.degraded is True
+    assert prov.manifest_sha == "s1"  # provenance identity still reported
+    assert prov.integrity_reasons  # names WHY it is untrustworthy
+    # A degraded cache must NOT masquerade as unavailable either: returning None
+    # would hand the lookup to the live-NVD fallback path (Rule #37 opt-in only).
+    assert cves is not None
+
+
+def test_partial_cache_degrades_even_for_unrelated_product(tmp_path):
+    """The degrade is cache-level: a CPE with no index entry still reports degraded."""
+    _write_cve(tmp_path, "CVE-2021-0001", vendor="acme", product="widget")
+    build_cpe_index(tmp_path)
+    _write_manifest(tmp_path, count=1)
+    _wipe_cve_files(tmp_path)
+    cves, prov = asyncio.run(lookup_cves_for_cpe(_cpe("nobody", "nothing"), tmp_path))
+    assert cves == [] and prov.mode == "cache_degraded" and prov.degraded is True
+
+
+def test_empty_index_with_declared_cves_is_degraded(tmp_path):
+    """Manifest claims N CVEs but the index resolved nothing ⇒ degraded."""
+    build_cpe_index(tmp_path)  # nothing to index
+    _write_manifest(tmp_path, count=369356)
+    cves, prov = asyncio.run(lookup_cves_for_cpe(_cpe("acme", "widget"), tmp_path))
+    assert cves == [] and prov.mode == "cache_degraded" and prov.degraded is True
+    assert any("index empty" in r for r in prov.integrity_reasons)
+
+
+def test_skipped_candidate_files_mark_the_lookup_degraded(tmp_path):
+    """One missing candidate among many ⇒ degraded + skipped count (silent-loss guard).
+
+    This is the per-lookup signal, independent of the sampled integrity check:
+    the sample hits CVE-2021-0001 (present), only 0002 is removed.
+    """
+    for i in (1, 2, 3):
+        _write_cve(tmp_path, f"CVE-2021-000{i}", vendor="acme", product="widget")
+    build_cpe_index(tmp_path)
+    _write_manifest(tmp_path, count=3)
+    (_cve_path("CVE-2021-0002", tmp_path)).unlink()
+
+    cves, prov = asyncio.run(lookup_cves_for_cpe(_cpe("acme", "widget"), tmp_path))
+    assert {c.id for c in cves} == {"CVE-2021-0001", "CVE-2021-0003"}
+    assert prov.mode == "cache_degraded" and prov.degraded is True
+    assert (prov.candidates, prov.resolved, prov.skipped) == (3, 2, 1)
+
+
+def test_healthy_cache_is_not_flagged_degraded(tmp_path):
+    """Rule #46 companion canary: the gate must not flag a healthy cache.
+
+    Without this the degrade signal could be trivially satisfied by always
+    reporting degraded, which is as useless as never reporting it.
+    """
+    for i in range(1, 25):
+        _write_cve(tmp_path, f"CVE-2021-{i:04d}", vendor="acme", product=f"p{i % 5}")
+    build_cpe_index(tmp_path)
+    _write_manifest(tmp_path, count=24)
+    hit, prov_hit = asyncio.run(lookup_cves_for_cpe(_cpe("acme", "p1"), tmp_path))
+    miss, prov_miss = asyncio.run(lookup_cves_for_cpe(_cpe("acme", "absent"), tmp_path))
+    assert hit and prov_hit.mode == "cache_hit" and prov_hit.degraded is False
+    assert miss == [] and prov_miss.mode == "cache_miss" and prov_miss.degraded is False
+
+
+def test_integrity_verdict_memoised_per_manifest_sha(tmp_path):
+    """Integrity costs 16 stat()s ONCE per pinned generation, not per lookup."""
+    _write_cve(tmp_path, "CVE-2021-0001", vendor="acme", product="widget")
+    build_cpe_index(tmp_path)
+    _write_manifest(tmp_path, sha="s1", count=1)
+    asyncio.run(lookup_cves_for_cpe(_cpe("acme", "widget"), tmp_path))
+    assert ncs._INTEGRITY_CACHE[str(tmp_path)]["manifest_sha"] == "s1"
+    # New generation (sha bump) must re-judge rather than reuse the old verdict.
+    _wipe_cve_files(tmp_path)
+    _write_manifest(tmp_path, sha="s2", count=1)
+    _, prov = asyncio.run(lookup_cves_for_cpe(_cpe("acme", "widget"), tmp_path))
+    assert prov.mode == "cache_degraded" and prov.manifest_sha == "s2"
+
+
 # ── probe ────────────────────────────────────────────────────────────
 
 def test_probe_ready_and_not_ready(tmp_path):
@@ -137,6 +248,20 @@ def test_probe_ready_and_not_ready(tmp_path):
     p = probe(tmp_path)
     assert p["ready"] is True
     assert p["manifest_sha"] == "s1" and p["cve_count"] == 1 and p["index_present"] is True
+    assert p["degraded"] is False and p["degraded_reasons"] == []
+
+
+def test_probe_not_ready_on_degraded_cache(tmp_path):
+    """Half-populated volume ⇒ ready=False WITH reasons (boot-time visibility)."""
+    _write_cve(tmp_path, "CVE-2021-0001")
+    build_cpe_index(tmp_path)
+    _write_manifest(tmp_path, sha="s1", count=1)
+    _wipe_cve_files(tmp_path)
+    ncs._INTEGRITY_CACHE.clear()
+    p = probe(tmp_path)
+    assert p["manifest_present"] is True and p["index_present"] is True
+    assert p["ready"] is False and p["degraded"] is True
+    assert any("absent on disk" in r for r in p["degraded_reasons"])
 
 
 # ── independent path oracle (the self-referential-fixture fix) ───────

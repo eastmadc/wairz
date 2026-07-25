@@ -378,11 +378,20 @@ async def lifespan(app: FastAPI):
                 status["populated_at"], status["cve_count"],
             )
         else:
+            # Two distinct not-ready states, both loud: (a) absent cache, (b) a
+            # DEGRADED cache — manifest + index present but half-populated. (b)
+            # used to look identical to a healthy cache that simply matched
+            # nothing, so scans reported "0 vulnerabilities" against a broken
+            # volume. degraded_reasons names which one this is.
             log.warning(
-                "NVD cache NOT READY at path=%s (manifest/index missing) — CVE "
-                "lookups run without pinned enrichment (live fallback %s). "
-                "Populate it: scripts/refresh-nvd-cache.sh --apply (Rule #37).",
-                status["path"], "ON" if live_fb else "OFF",
+                "NVD cache NOT READY at path=%s (manifest_present=%s index_present=%s "
+                "degraded=%s: %s) — CVE lookups run without complete pinned "
+                "enrichment (live fallback %s). Populate it: "
+                "scripts/refresh-nvd-cache.sh --apply (Rule #37).",
+                status["path"], status.get("manifest_present"),
+                status.get("index_present"), status.get("degraded"),
+                "; ".join(status.get("degraded_reasons") or []) or "n/a",
+                "ON" if live_fb else "OFF",
             )
     except Exception:
         import logging

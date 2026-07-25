@@ -38,6 +38,30 @@ _INDEX_SCHEMA_VERSION = 1
 
 # Module-memoised index keyed by cache dir; invalidated on manifest-sha change.
 _INDEX_CACHE: dict[str, dict] = {}
+# Module-memoised integrity verdict keyed by cache dir; same invalidation rule.
+_INTEGRITY_CACHE: dict[str, dict] = {}
+# How many index-referenced CVE files to stat when judging cache integrity.
+# Deterministic even spread over the sorted index keys — 16 stat() calls ONCE per
+# manifest sha, not per lookup (Rule #5: never walk 369k files at scan time).
+_INTEGRITY_SAMPLE = 16
+
+MODE_CACHE_HIT = "cache_hit"
+MODE_CACHE_MISS = "cache_miss"
+MODE_CACHE_DEGRADED = "cache_degraded"
+MODE_CACHE_UNAVAILABLE = "cache_unavailable"
+MODE_LIVE_FALLBACK = "live_fallback"
+
+# Worst-first ordering used by consumers to reduce a per-component mode histogram
+# to one honest scan-level verdict. cache_hit/cache_miss are equally trustworthy
+# (a miss on a healthy cache IS the reproducible answer); everything above them
+# means the answer is either non-reproducible or incomplete.
+MODE_SEVERITY: dict[str, int] = {
+    MODE_CACHE_HIT: 0,
+    MODE_CACHE_MISS: 0,
+    MODE_LIVE_FALLBACK: 1,
+    MODE_CACHE_DEGRADED: 2,
+    MODE_CACHE_UNAVAILABLE: 3,
+}
 
 
 @dataclass(frozen=True)
@@ -46,15 +70,31 @@ class CacheProvenance:
 
     mode:
       cache_hit          — the pinned cache resolved candidate CVEs.
-      cache_miss         — the cache is present but no CVE matched the CPE.
+      cache_miss         — the cache is present, healthy, and no CVE matched the
+                           CPE (a VALID reproducible "no known CVEs").
+      cache_degraded     — the manifest + index are present but the cache is
+                           demonstrably incomplete (index empty while the
+                           manifest declares CVEs, sampled index-referenced CVE
+                           files absent on disk, or candidate files skipped
+                           mid-lookup). Results UNDER-REPORT; an empty result in
+                           this mode must NEVER be read as "no known CVEs".
       cache_unavailable  — no pinned cache (missing / malformed manifest).
       live_fallback      — the caller fell back to a live NVD query (opt-in).
+
+    ``degraded`` is the boolean consumers gate on; ``candidates``/``resolved``/
+    ``skipped`` quantify the per-lookup loss and ``integrity_reasons`` carries
+    the cache-level reasons (tuple so the dataclass stays hashable/frozen).
     """
 
     mode: str
     manifest_sha: str | None = None
     populated_at: str | None = None
     cve_count: int | None = None
+    degraded: bool = False
+    candidates: int = 0
+    resolved: int = 0
+    skipped: int = 0
+    integrity_reasons: tuple[str, ...] = ()
 
 
 def _cve_path(cve_id: str, cache_dir: Path) -> Path | None:
@@ -106,6 +146,85 @@ def _load_index_sync(cache_dir: Path, manifest_sha: str | None) -> dict:
     return vp
 
 
+def _sample_cve_ids(index: dict, n: int) -> list[str]:
+    """Pick up to ``n`` index-referenced CVE ids, evenly spread over sorted keys.
+
+    Deterministic (same cache ⇒ same sample ⇒ same verdict) and cheap: one id per
+    sampled vendor:product entry.
+    """
+    keys = sorted(index)
+    if not keys:
+        return []
+    step = max(1, len(keys) // n)
+    out: list[str] = []
+    for k in keys[::step][:n]:
+        ids = index.get(k) or []
+        if ids:
+            out.append(ids[0])
+    return out
+
+
+def _integrity_sync(cache_dir: Path, manifest: dict, index: dict) -> dict:
+    """Judge whether a present-looking cache is actually populated.
+
+    A half-populated volume (manifest + index written, CVE files missing or
+    wiped) previously reported the *valid reproducible* ``cache_miss`` for every
+    CPE — a clean verdict indistinguishable from "no known CVEs". Two cheap
+    signals close that:
+
+    1. index empty while the manifest declares CVEs (or index unreadable);
+    2. a deterministic 16-file sample of index-referenced CVE paths that are
+       absent on disk.
+
+    Memoised per (cache_dir, manifest_sha) — 16 ``stat()`` calls once per pinned
+    cache generation, never per lookup.
+    """
+    key = str(cache_dir)
+    sha = manifest.get("sha256")
+    cached = _INTEGRITY_CACHE.get(key)
+    if cached is not None and cached.get("manifest_sha") == sha:
+        return cached
+
+    declared = manifest.get("cve_count") or 0
+    reasons: list[str] = []
+    if not index:
+        reasons.append(
+            f"cpe index empty or unreadable while the manifest declares "
+            f"{declared} CVEs"
+            if declared
+            else "cpe index empty or unreadable"
+        )
+    sample = _sample_cve_ids(index, _INTEGRITY_SAMPLE)
+    present = 0
+    for cid in sample:
+        path = _cve_path(cid, cache_dir)
+        if path is not None and path.exists():
+            present += 1
+    if sample and present < len(sample):
+        reasons.append(
+            f"{len(sample) - present}/{len(sample)} sampled index-referenced "
+            f"CVE files are absent on disk"
+        )
+
+    verdict = {
+        "manifest_sha": sha,
+        "vendor_products": len(index),
+        "declared_cve_count": declared,
+        "sampled": len(sample),
+        "sampled_present": present,
+        "degraded": bool(reasons),
+        "reasons": reasons,
+    }
+    if reasons:
+        logger.warning(
+            "NVD cache at %s is DEGRADED (manifest_sha=%s): %s — CVE results "
+            "will UNDER-REPORT; repopulate with scripts/refresh-nvd-cache.sh --apply",
+            cache_dir, sha, "; ".join(reasons),
+        )
+    _INTEGRITY_CACHE[key] = verdict
+    return verdict
+
+
 def _lookup_sync(cpe: str, cache_dir: Path) -> tuple[list | None, CacheProvenance]:
     # Lazy import: reuse the exact CVE-object wrapping _search_nvd produces so the
     # downstream _cpe_is_vulnerable_in_cve / _parse_nvd_cve path is unchanged.
@@ -115,32 +234,69 @@ def _lookup_sync(cpe: str, cache_dir: Path) -> tuple[list | None, CacheProvenanc
 
     manifest = _read_manifest_sync(cache_dir)
     if not manifest:
-        return None, CacheProvenance(mode="cache_unavailable")
+        return None, CacheProvenance(mode=MODE_CACHE_UNAVAILABLE, degraded=True)
 
     prov_base = {
         "manifest_sha": manifest.get("sha256"),
         "populated_at": manifest.get("populated_at"),
         "cve_count": manifest.get("cve_count"),
     }
+    index = _load_index_sync(cache_dir, manifest.get("sha256"))
+    integrity = _integrity_sync(cache_dir, manifest, index)
+    reasons = tuple(integrity["reasons"])
+
     vp = _cpe_vendor_product(cpe)
     if vp is None:
-        return [], CacheProvenance(mode="cache_miss", **prov_base)
+        # Unparseable CPE — nothing to look up. Still honest about cache health:
+        # a degraded cache cannot produce a trustworthy "no CVEs" for anything.
+        return [], CacheProvenance(
+            mode=MODE_CACHE_DEGRADED if integrity["degraded"] else MODE_CACHE_MISS,
+            degraded=integrity["degraded"],
+            integrity_reasons=reasons,
+            **prov_base,
+        )
 
-    index = _load_index_sync(cache_dir, manifest.get("sha256"))
     cve_ids = index.get(vp, [])
     cves: list = []
+    skipped = 0
     for cid in cve_ids:
         path = _cve_path(cid, cache_dir)
         if path is None or not path.exists():
+            skipped += 1  # index says this CVE exists; the file does not
             continue
         try:
             cve_data = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
+            skipped += 1  # present but unreadable — still a silent under-report
             continue
         cve_obj = CVE({k: _to_obj(v) for k, v in cve_data.items()})
         cve_obj.getvars()
         cves.append(cve_obj)
-    return cves, CacheProvenance(mode="cache_hit" if cves else "cache_miss", **prov_base)
+
+    if skipped:
+        reasons = (
+            *reasons,
+            f"{skipped}/{len(cve_ids)} candidate CVE files for {vp} were "
+            f"missing or unparseable",
+        )
+    degraded = bool(integrity["degraded"] or skipped)
+    if degraded:
+        # Deliberately NOT cache_unavailable: a degraded cache still returns the
+        # CVEs it could resolve (partial > nothing) and must NOT trigger the
+        # live-NVD fallback path, which is reserved for a wholly absent cache.
+        # The mode + degraded flag make the incompleteness loud instead.
+        mode = MODE_CACHE_DEGRADED
+    else:
+        mode = MODE_CACHE_HIT if cves else MODE_CACHE_MISS
+    return cves, CacheProvenance(
+        mode=mode,
+        degraded=degraded,
+        candidates=len(cve_ids),
+        resolved=len(cves),
+        skipped=skipped,
+        integrity_reasons=reasons,
+        **prov_base,
+    )
 
 
 async def lookup_cves_for_cpe(
@@ -150,10 +306,13 @@ async def lookup_cves_for_cpe(
 
     Returns (cves, provenance):
       - cves is None  ⇒ mode cache_unavailable (caller decides live fallback).
-      - cves is []    ⇒ cache present, no match (a valid reproducible result —
-        do NOT live-fallback, that would break reproducibility).
+      - cves is []    ⇒ cache present, no match. A valid reproducible result ONLY
+        when ``provenance.degraded`` is False — do NOT live-fallback, that would
+        break reproducibility. When ``degraded`` is True (mode cache_degraded)
+        the empty result means "the cache could not answer", NOT "no CVEs".
       - cves is [..]  ⇒ candidate CVE objects (same shape _search_nvd returns);
-        the caller still runs _cpe_is_vulnerable_in_cve to refine.
+        the caller still runs _cpe_is_vulnerable_in_cve to refine. May STILL be
+        ``degraded`` (partial) — see CacheProvenance.
     """
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(None, _lookup_sync, cpe, Path(cache_dir))
@@ -192,23 +351,43 @@ def build_cpe_index(cache_dir: str | Path) -> dict:
         "vendor_product": {k: sorted(v) for k, v in sorted(vp_map.items())},
     }
     (cache_dir / _INDEX_NAME).write_text(json.dumps(out), encoding="utf-8")
+    # A rebuilt index invalidates both memos even if the manifest sha is unchanged
+    # (the refresh script writes the manifest after the index).
+    _INDEX_CACHE.pop(str(cache_dir), None)
+    _INTEGRITY_CACHE.pop(str(cache_dir), None)
     return {"cves_indexed": n, "vendor_products": len(vp_map)}
 
 
 def probe(cache_dir: str | Path) -> dict:
-    """Presence/size/mtime probe for the lifespan startup log.
+    """Presence + integrity probe for the lifespan startup log.
 
-    Returns {ready: bool, ...}. ready=False when the manifest or index is
-    absent/malformed — the operator must run scripts/refresh-nvd-cache.sh --apply.
+    Returns {ready: bool, ...}. ``ready`` is False when the manifest or index is
+    absent/malformed OR when the present-looking cache is DEGRADED (index empty,
+    or sampled index-referenced CVE files missing on disk) — in every one of
+    those states the operator must run scripts/refresh-nvd-cache.sh --apply.
+    ``degraded_reasons`` carries the why, so a half-populated volume is visible
+    at boot instead of masquerading as a healthy cache that finds nothing.
     """
     cache_dir = Path(cache_dir)
     manifest = _read_manifest_sync(cache_dir)
     index_path = cache_dir / _INDEX_NAME
+    present = bool(manifest) and index_path.exists()
+    integrity = (
+        _integrity_sync(
+            cache_dir, manifest, _load_index_sync(cache_dir, manifest.get("sha256"))
+        )
+        if present
+        else {"degraded": True, "reasons": ["manifest or cpe index absent"]}
+    )
     return {
-        "ready": bool(manifest) and index_path.exists(),
+        "ready": present and not integrity["degraded"],
         "path": str(cache_dir),
         "manifest_sha": manifest.get("sha256"),
         "populated_at": manifest.get("populated_at"),
         "cve_count": manifest.get("cve_count"),
         "index_present": index_path.exists(),
+        "manifest_present": bool(manifest),
+        "degraded": bool(integrity["degraded"]),
+        "degraded_reasons": list(integrity["reasons"]),
+        "integrity": integrity,
     }
