@@ -11,9 +11,14 @@ from datetime import UTC, datetime
 from sqlalchemy import func, select
 
 from app.ai.tool_registry import ToolContext, ToolRegistry
+from app.models.firmware import Firmware
 from app.models.sbom import SbomComponent, SbomVulnerability
+from app.services.jsonb_normalizers import _stamp_firmware_vuln_scan_provenance
 from app.services.sbom import SbomService
-from app.services.vulnerability_service import VulnerabilityService
+from app.services.vulnerability_service import (
+    VulnerabilityService,
+    summarise_nvd_provenance,
+)
 
 
 def register_sbom_tools(registry: ToolRegistry) -> None:
@@ -656,6 +661,21 @@ async def _handle_run_vulnerability_scan(
         return f"Vulnerability scan error: {e}"
 
     status = summary["status"]
+    # Rule #47 consumer enumeration: this tool is a THIRD writer of
+    # sbom_vulnerabilities rows, so it must refresh firmware.vuln_scan_provenance
+    # too — otherwise the REST status endpoint would report an older run's
+    # provenance alongside rows this scan just wrote. Rule #3: flush(), not
+    # commit() — the MCP dispatch owns the transaction.
+    if status != "cached":
+        fw_row = (await context.db.execute(
+            select(Firmware).where(Firmware.id == context.firmware_id)
+        )).scalar_one_or_none()
+        stamp = _stamp_firmware_vuln_scan_provenance(
+            summarise_nvd_provenance(summary.get("nvd_provenance"))
+        )
+        if fw_row is not None and stamp is not None:
+            fw_row.vuln_scan_provenance = stamp
+            await context.db.flush()
     total_scanned = summary["total_components_scanned"]
     total_vulns = summary["total_vulnerabilities_found"]
     findings_created = summary["findings_created"]
@@ -666,6 +686,26 @@ async def _handle_run_vulnerability_scan(
     lines.append(
         f"Vulnerability scan complete{cache_note}\n"
     )
+    # Rule #37 truthfulness FIRST, before any count: an unavailable or degraded
+    # pinned NVD cache yields "0 vulnerabilities", which an assistant would
+    # otherwise report as a clean firmware. The warning must precede the numbers
+    # it invalidates.
+    warning = summary.get("nvd_enrichment_warning")
+    if warning:
+        lines.append(f"!! {warning}\n")
+    prov = summary.get("nvd_provenance") or {}
+    if prov.get("engine") == "nvd_pinned_cache" and prov.get("manifest_sha"):
+        lines.append(
+            f"CVE source: pinned NVD cache manifest {prov['manifest_sha'][:12]} "
+            f"(populated {prov.get('populated_at')}, "
+            f"{prov.get('cve_count')} CVEs) — enrichment: "
+            f"{summary.get('nvd_enrichment_status')}"
+        )
+    elif summary.get("nvd_enrichment_status"):
+        lines.append(
+            f"CVE source: {prov.get('engine') or 'unknown'} — enrichment: "
+            f"{summary['nvd_enrichment_status']}"
+        )
     lines.append(f"Components scanned (with CPE): {total_scanned}")
     lines.append(f"Total vulnerabilities found: {total_vulns}")
 
@@ -682,9 +722,18 @@ async def _handle_run_vulnerability_scan(
             f"for components with critical/high CVEs."
         )
     elif status != "cached":
-        lines.append(
-            "\nNo findings auto-created (no components with critical/high CVEs)."
-        )
+        if summary.get("nvd_enrichment_status") in ("none", "partial", "unknown"):
+            # Never let "no findings" stand unqualified when the CVE source
+            # could not answer — that is the false-clean-verdict failure mode.
+            lines.append(
+                "\nNo findings auto-created — but CVE enrichment was "
+                f"{summary.get('nvd_enrichment_status')}, so this is NOT "
+                "evidence the components are free of known CVEs."
+            )
+        else:
+            lines.append(
+                "\nNo findings auto-created (no components with critical/high CVEs)."
+            )
 
     if total_vulns > 0:
         lines.append(

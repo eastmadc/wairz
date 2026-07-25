@@ -145,11 +145,25 @@ class VulnerabilityScanRequest(BaseModel):
 
 
 class VulnerabilityScanResponse(BaseModel):
+    """Vulnerability-scan result summary.
+
+    ``nvd_enrichment_status`` + ``nvd_enrichment_warning`` are load-bearing, not
+    decoration: without them a ``total_vulnerabilities_found: 0`` from a scan run
+    against an unavailable or half-populated pinned NVD cache (Rule #37) is
+    indistinguishable from a genuinely clean firmware. Clients MUST render the
+    warning whenever it is non-null and MUST NOT present the counts as a clean
+    verdict unless ``nvd_enrichment_status == "complete"``.
+    """
+
     status: str
     total_components_scanned: int
     total_vulnerabilities_found: int
     findings_created: int
     vulns_by_severity: dict[str, int]
+    # complete | live | partial | none | not_applicable | unknown
+    nvd_enrichment_status: str | None = None
+    nvd_enrichment_warning: str | None = None
+    nvd_provenance: dict | None = None
 
 
 # Rule #33 (c): both a Pydantic Literal AND a DB CHECK constraint.
