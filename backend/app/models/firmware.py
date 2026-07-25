@@ -66,6 +66,17 @@ class Firmware(Base):
     vuln_scan_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     vuln_scan_finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     vuln_scan_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # ...with ONE exception: WHICH CVE source enriched the last completed scan
+    # is NOT recoverable from the sbom_vulnerabilities rows. A scan run against
+    # an unavailable or half-populated pinned NVD cache persists
+    # vuln_scan_status='completed' with zero rows — byte-identical to a genuinely
+    # clean firmware. This column records the pinned-cache manifest sha /
+    # populated_at / per-mode histogram / degraded reasons / enrichment verdict
+    # (engine 'nvd_pinned_cache' or 'grype') so "scanned against pinned cache X"
+    # is distinguishable from "cache unavailable — no enrichment ran".
+    # Rule #35c pair: _normalize_firmware_vuln_scan_provenance /
+    # _stamp_firmware_vuln_scan_provenance in services/jsonb_normalizers.py.
+    vuln_scan_provenance: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     # SBOM /generate Rule #33 sync→202+polling state (Session 2a 2026-05-21).
     # Mirrors vuln_scan_status above for shape consistency; alembic revision
     # feab18c9d201 adds the DB CHECK constraint. NOT NULL DEFAULT 'idle' per

@@ -48,6 +48,7 @@ from app.services.jsonb_normalizers import (
     FIRMWARE_SRUM_WALK_RESULT_SCHEMA_VERSION,
     FIRMWARE_SYSTEMD_WALK_RESULT_SCHEMA_VERSION,
     FIRMWARE_USNJRNL_WALK_RESULT_SCHEMA_VERSION,
+    FIRMWARE_VULN_SCAN_PROVENANCE_SCHEMA_VERSION,
     FIRMWARE_WINDOWS_ARTIFACTS_SCHEMA_VERSION,
     FIRMWARE_WINDOWS_UPDATE_DIFF_RESULT_SCHEMA_VERSION,
     FIRMWARE_WMI_WALK_RESULT_SCHEMA_VERSION,
@@ -125,6 +126,7 @@ from app.services.jsonb_normalizers import (
     _normalize_firmware_usnjrnl_walk_result,
     _normalize_firmware_windows_artifacts,
     _normalize_firmware_windows_update_diff_result,
+    _normalize_firmware_vuln_scan_provenance,
     _normalize_firmware_wmi_walk_result,
     _normalize_fuzzing_campaigns_config,
     _normalize_fuzzing_campaigns_stats,
@@ -199,6 +201,7 @@ from app.services.jsonb_normalizers import (
     _stamp_firmware_usnjrnl_walk_result,
     _stamp_firmware_windows_artifacts,
     _stamp_firmware_windows_update_diff_result,
+    _stamp_firmware_vuln_scan_provenance,
     _stamp_firmware_wmi_walk_result,
     _stamp_fuzzing_campaigns_config,
     _stamp_fuzzing_campaigns_stats,
@@ -5738,3 +5741,69 @@ def test_stamp_firmware_android_posture_walk_result_enforces_provenance_walker()
         "_stamp_firmware_android_posture_walk_result MUST stamp "
         "provenance='walker' — sister-key gate for downstream consumers."
     )
+
+
+# ── _normalize/_stamp_firmware_vuln_scan_provenance (Rule #37 truthfulness) ──
+
+
+@pytest.mark.parametrize(
+    "value,expected",
+    [
+        (
+            {
+                "schema_version": 1,
+                "engine": "nvd_pinned_cache",
+                "manifest_sha": "a1f38452",
+                "modes": {"cache_hit": 3, "cache_miss": 69},
+                "degraded": False,
+                "enrichment_status": "complete",
+                "warning": None,
+            },
+            {
+                "schema_version": 1,
+                "engine": "nvd_pinned_cache",
+                "manifest_sha": "a1f38452",
+                "modes": {"cache_hit": 3, "cache_miss": 69},
+                "degraded": False,
+                "enrichment_status": "complete",
+                "warning": None,
+            },
+        ),
+        ({}, {}),
+        (None, None),
+        ("cache_hit", None),
+        ([{"engine": "grype"}], None),
+        (7, None),
+    ],
+)
+def test_normalize_firmware_vuln_scan_provenance(value, expected):
+    assert _normalize_firmware_vuln_scan_provenance(value) == expected
+
+
+def test_normalize_firmware_vuln_scan_provenance_none_is_unknown_not_healthy():
+    """A NULL column means 'nobody recorded which CVE source ran' — the whole
+    point of the column. It must never normalise to a shape a consumer could
+    read as a successful pinned-cache scan."""
+    out = _normalize_firmware_vuln_scan_provenance(None)
+    assert out is None
+    assert not isinstance(out, dict)  # no {} default that would read as "clean"
+
+
+def test_stamp_firmware_vuln_scan_provenance_adds_version():
+    out = _stamp_firmware_vuln_scan_provenance({"engine": "grype"})
+    assert out["schema_version"] == FIRMWARE_VULN_SCAN_PROVENANCE_SCHEMA_VERSION
+
+
+def test_stamp_firmware_vuln_scan_provenance_idempotent():
+    once = _stamp_firmware_vuln_scan_provenance({"engine": "nvd_pinned_cache"})
+    twice = _stamp_firmware_vuln_scan_provenance(once)
+    assert once == twice
+
+
+def test_stamp_firmware_vuln_scan_provenance_preserves_null_contract():
+    assert _stamp_firmware_vuln_scan_provenance(None) is None
+    assert _stamp_firmware_vuln_scan_provenance({}) is None
+
+
+def test_firmware_vuln_scan_provenance_schema_version_constant():
+    assert FIRMWARE_VULN_SCAN_PROVENANCE_SCHEMA_VERSION == 1
