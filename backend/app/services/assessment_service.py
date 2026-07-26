@@ -359,6 +359,15 @@ class AssessmentService:
             firmware_id=self.firmware_id,
             project_id=self.project_id,
         )
+        # Rule #37 truthfulness: an unavailable / degraded pinned NVD cache means
+        # this phase contributed ZERO CVE findings because it could not look,
+        # not because the firmware is clean. Surface it in the assessment log
+        # rather than letting a silent 0 imply a clean SBOM phase.
+        warning = summary.get("nvd_enrichment_warning")
+        if warning:
+            logger.warning(
+                "assessment %s SBOM phase: %s", self.firmware_id, warning,
+            )
 
         return summary.get("findings_created", 0)
 

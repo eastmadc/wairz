@@ -33,6 +33,7 @@ from app.models.firmware import Firmware
 from app.models.hardware_firmware import HardwareFirmwareBlob
 from app.models.sbom import SbomVulnerability
 from app.services.jsonb_normalizers import _normalize_hardware_firmware_blobs_metadata
+from app.services.nvd_provenance_surface import read_firmware_enrichment
 
 # CycloneDX v1.6 severity enum — any value outside this set is coerced to
 # "unknown" so downstream consumers validating against the schema don't
@@ -363,6 +364,40 @@ async def build_hbom(
     ]
 
     # ── Assemble the document ──────────────────────────────────────────
+    # Rule #37: an HBOM is consumed offline, by a tool or an auditor with no
+    # access to this database. A `vulnerabilities` array that is absent or
+    # short because the pinned NVD cache was unavailable is byte-identical to
+    # one that is absent because the hardware is clean. CycloneDX has no first
+    # class slot for scan provenance, so it rides metadata.properties — the
+    # spec's designated extension point — with an explicit trustworthy flag.
+    enrichment = read_firmware_enrichment(fw_row)
+    enrichment_props = [
+        {"name": "wairz:cve_enrichment:status", "value": enrichment.status},
+        {
+            "name": "wairz:cve_enrichment:trustworthy",
+            "value": "true" if enrichment.substantiated else "false",
+        },
+        {"name": "wairz:cve_enrichment:source", "value": enrichment.source_label},
+    ]
+    if enrichment.warning:
+        enrichment_props.append(
+            {"name": "wairz:cve_enrichment:warning", "value": enrichment.warning}
+        )
+    if not enrichment.substantiated:
+        # Stated in the imperative so a human skimming properties cannot miss
+        # what the flag above means for the vulnerabilities array.
+        enrichment_props.append(
+            {
+                "name": "wairz:cve_enrichment:advisory",
+                "value": (
+                    "The vulnerabilities array in this BOM is INCOMPLETE — CVE "
+                    "enrichment was "
+                    f"'{enrichment.status}'. Absence of a CVE entry is not "
+                    "evidence that it does not apply."
+                ),
+            }
+        )
+
     metadata: dict = {
         "timestamp": _iso_utc_now(),
         "tools": [
@@ -372,6 +407,7 @@ async def build_hbom(
                 "version": "0.1",
             },
         ],
+        "properties": enrichment_props,
     }
     if fw_row is not None:
         metadata["component"] = {

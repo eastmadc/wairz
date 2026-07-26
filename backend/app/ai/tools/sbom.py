@@ -11,9 +11,41 @@ from datetime import UTC, datetime
 from sqlalchemy import func, select
 
 from app.ai.tool_registry import ToolContext, ToolRegistry
+from app.models.firmware import Firmware
 from app.models.sbom import SbomComponent, SbomVulnerability
+from app.services.jsonb_normalizers import _stamp_firmware_vuln_scan_provenance
+from app.services.nvd_provenance_surface import read_firmware_enrichment
 from app.services.sbom import SbomService
-from app.services.vulnerability_service import VulnerabilityService
+from app.services.vulnerability_service import (
+    VulnerabilityService,
+    summarise_nvd_provenance,
+)
+
+
+async def _enrichment_prefix(context: ToolContext, count_noun: str) -> str:
+    """Rule #37 marker to prepend to any tool output that reports CVE counts.
+
+    Returns ``""`` when the last completed scan is backed by a healthy CVE
+    source, so clean output stays clean. Otherwise returns a banner ending in a
+    newline, meant to be the FIRST thing the assistant reads — an unenriched
+    scan reports "0 vulnerabilities", and an assistant that sees the count
+    before the caveat will summarise the firmware as clean.
+
+    Never raises: a tool that cannot resolve the firmware row degrades to no
+    banner rather than failing the operator's actual request.
+    """
+    try:
+        fw = (
+            await context.db.execute(
+                select(Firmware).where(Firmware.id == context.firmware_id)
+            )
+        ).scalar_one_or_none()
+    except Exception:  # pragma: no cover - defensive
+        return ""
+    if fw is None:
+        return ""
+    banner = read_firmware_enrichment(fw).banner(count_noun)
+    return f"{banner}\n\n" if banner else ""
 
 
 def register_sbom_tools(registry: ToolRegistry) -> None:
@@ -504,7 +536,11 @@ async def _handle_get_sbom_components(
         filter_str = f" (filters: {', '.join(filters)})" if filters else ""
         return f"No SBOM components found{filter_str}. Run generate_sbom first."
 
-    lines = [f"Found {len(components)} component(s):\n"]
+    # A component list is where an assistant judges "did we cover everything?" —
+    # if CVE enrichment never ran, the CPE column below is unverified against
+    # any CVE source, so say so before the listing (review D2).
+    prefix = await _enrichment_prefix(context, "component CVE coverage")
+    lines = [f"{prefix}Found {len(components)} component(s):\n"]
     for comp in components:
         version_str = f" {comp.version}" if comp.version else " (unknown version)"
         cpe_str = f"\n    CPE: {comp.cpe}" if comp.cpe else ""
@@ -574,13 +610,18 @@ async def _handle_check_component_cves(
         return f"Error querying NVD for {component_name} {version}: {e}"
 
     if not cves:
+        # The single most dangerous sentence this module can emit. _search_nvd
+        # returns [] both for "this component has no CVEs" and for "the CVE
+        # source could not answer" — qualify it, never assert it bare.
+        prefix = await _enrichment_prefix(context, "CVE result")
         return (
-            f"No known CVEs found for {component_name} {version} "
+            f"{prefix}No known CVEs found for {component_name} {version} "
             f"(CPE: {cpe}) in the NVD."
         )
 
+    prefix = await _enrichment_prefix(context, "CVE count")
     lines = [
-        f"Found {len(cves)} CVE(s) for {component_name} {version}:\n"
+        f"{prefix}Found {len(cves)} CVE(s) for {component_name} {version}:\n"
     ]
 
     for cve in cves[:50]:
@@ -656,6 +697,21 @@ async def _handle_run_vulnerability_scan(
         return f"Vulnerability scan error: {e}"
 
     status = summary["status"]
+    # Rule #47 consumer enumeration: this tool is a THIRD writer of
+    # sbom_vulnerabilities rows, so it must refresh firmware.vuln_scan_provenance
+    # too — otherwise the REST status endpoint would report an older run's
+    # provenance alongside rows this scan just wrote. Rule #3: flush(), not
+    # commit() — the MCP dispatch owns the transaction.
+    if status != "cached":
+        fw_row = (await context.db.execute(
+            select(Firmware).where(Firmware.id == context.firmware_id)
+        )).scalar_one_or_none()
+        stamp = _stamp_firmware_vuln_scan_provenance(
+            summarise_nvd_provenance(summary.get("nvd_provenance"))
+        )
+        if fw_row is not None and stamp is not None:
+            fw_row.vuln_scan_provenance = stamp
+            await context.db.flush()
     total_scanned = summary["total_components_scanned"]
     total_vulns = summary["total_vulnerabilities_found"]
     findings_created = summary["findings_created"]
@@ -666,6 +722,26 @@ async def _handle_run_vulnerability_scan(
     lines.append(
         f"Vulnerability scan complete{cache_note}\n"
     )
+    # Rule #37 truthfulness FIRST, before any count: an unavailable or degraded
+    # pinned NVD cache yields "0 vulnerabilities", which an assistant would
+    # otherwise report as a clean firmware. The warning must precede the numbers
+    # it invalidates.
+    warning = summary.get("nvd_enrichment_warning")
+    if warning:
+        lines.append(f"!! {warning}\n")
+    prov = summary.get("nvd_provenance") or {}
+    if prov.get("engine") == "nvd_pinned_cache" and prov.get("manifest_sha"):
+        lines.append(
+            f"CVE source: pinned NVD cache manifest {prov['manifest_sha'][:12]} "
+            f"(populated {prov.get('populated_at')}, "
+            f"{prov.get('cve_count')} CVEs) — enrichment: "
+            f"{summary.get('nvd_enrichment_status')}"
+        )
+    elif summary.get("nvd_enrichment_status"):
+        lines.append(
+            f"CVE source: {prov.get('engine') or 'unknown'} — enrichment: "
+            f"{summary['nvd_enrichment_status']}"
+        )
     lines.append(f"Components scanned (with CPE): {total_scanned}")
     lines.append(f"Total vulnerabilities found: {total_vulns}")
 
@@ -682,9 +758,18 @@ async def _handle_run_vulnerability_scan(
             f"for components with critical/high CVEs."
         )
     elif status != "cached":
-        lines.append(
-            "\nNo findings auto-created (no components with critical/high CVEs)."
-        )
+        if summary.get("nvd_enrichment_status") in ("none", "partial", "unknown"):
+            # Never let "no findings" stand unqualified when the CVE source
+            # could not answer — that is the false-clean-verdict failure mode.
+            lines.append(
+                "\nNo findings auto-created — but CVE enrichment was "
+                f"{summary.get('nvd_enrichment_status')}, so this is NOT "
+                "evidence the components are free of known CVEs."
+            )
+        else:
+            lines.append(
+                "\nNo findings auto-created (no components with critical/high CVEs)."
+            )
 
     if total_vulns > 0:
         lines.append(
@@ -754,10 +839,15 @@ async def _handle_list_vulnerabilities_for_assessment(
         if unassessed_only:
             filters.append("unassessed only")
         filter_str = f" ({', '.join(filters)})" if filters else ""
-        return f"No vulnerabilities found{filter_str}."
+        # "No vulnerabilities found" is a verdict, not a fact, unless the scan
+        # that produced the empty table actually consulted a CVE source.
+        prefix = await _enrichment_prefix(context, "empty result")
+        return f"{prefix}No vulnerabilities found{filter_str}."
 
+    prefix = await _enrichment_prefix(context, "vulnerability list")
     lines = [
-        f"Vulnerabilities for assessment ({offset + 1}-{offset + len(rows)} of {total}):\n"
+        f"{prefix}Vulnerabilities for assessment "
+        f"({offset + 1}-{offset + len(rows)} of {total}):\n"
     ]
 
     import os as _os
@@ -897,7 +987,31 @@ async def _handle_export_sbom(input: dict, context: ToolContext) -> str:
                 "description": (vuln.description or "")[:200],
             })
 
+        # VEX asserts per-CVE exploitability status. Emitting one from an
+        # unenriched scan asserts "not affected" by omission, so the verdict
+        # rides at the TOP of the document (review D2).
+        vex_verdict = read_firmware_enrichment(
+            (
+                await context.db.execute(
+                    select(Firmware).where(Firmware.id == context.firmware_id)
+                )
+            ).scalar_one_or_none()
+        )
         summary = {
+            **(
+                {}
+                if vex_verdict.substantiated
+                else {
+                    "CVE_ENRICHMENT_WARNING": (
+                        f"This VEX summary is INCOMPLETE — CVE enrichment was "
+                        f"'{vex_verdict.status}'. Absence of a CVE below is not "
+                        f"a 'not affected' determination. "
+                        f"{vex_verdict.warning or ''}".strip()
+                    )
+                }
+            ),
+            "cve_enrichment_status": vex_verdict.status,
+            "cve_enrichment_source": vex_verdict.source_label,
             "format": "CycloneDX VEX 1.7 (MCP summary)",
             "total_components": total_components,
             "affected_components": len(affected_comp_ids),
@@ -1104,7 +1218,11 @@ async def _handle_assess_vulnerabilities(
 
     await context.db.flush()
 
-    header = f"Assessed {updated} vulnerability(ies)"
+    # Triage is a judgement about COVERAGE as much as about each row. If the
+    # underlying scan under-reported, "assessed everything" is false — the set
+    # being triaged is incomplete (review D2).
+    prefix = await _enrichment_prefix(context, "set of vulnerabilities triaged")
+    header = f"{prefix}Assessed {updated} vulnerability(ies)"
     if not_found:
         header += f", {not_found} not found"
     header += ":\n"

@@ -362,12 +362,54 @@ export interface SbomSummary {
   resolved_count: number
 }
 
+// WHICH CVE source enriched a vulnerability scan. Mirrors
+// ENRICHMENT_STATUSES in backend/app/services/nvd_provenance_surface.py —
+// adding a value there means extending this union AND the ENRICHMENT_CONFIG
+// Record map in components/sbom/EnrichmentBanner.tsx in the SAME commit
+// (Rule #9: an unmapped value returns undefined and blanks the page).
+//
+//   complete       — every lookup answered by a healthy pinned NVD cache
+//   live           — some lookups used the live NVD API (not reproducible)
+//   partial        — some lookups hit an unavailable/degraded cache: UNDER-REPORTS
+//   none           — no enrichment ran at all
+//   not_applicable — no CPE-bearing component was looked up (nothing checked)
+//   unknown        — provenance not recorded (predates stamping)
+export type NvdEnrichmentStatus =
+  | 'complete'
+  | 'live'
+  | 'partial'
+  | 'none'
+  | 'not_applicable'
+  | 'unknown'
+
+// Only these two constitute POSITIVE evidence that CVE enrichment ran, so a
+// count of 0 may be read as a clean verdict (Rule #53: an allowlist of proof,
+// never a denylist of known-bad labels — a new status defaults to NOT clean).
+export const SUBSTANTIATING_ENRICHMENT: readonly NvdEnrichmentStatus[] = [
+  'complete',
+  'live',
+]
+
+export function isEnrichmentSubstantiated(
+  status: NvdEnrichmentStatus | null | undefined,
+): boolean {
+  return !!status && SUBSTANTIATING_ENRICHMENT.includes(status)
+}
+
 export interface VulnerabilityScanResult {
   status: string
   total_components_scanned: number
   total_vulnerabilities_found: number
   findings_created: number
   vulns_by_severity: Record<string, number>
+  // Rule #37 truthfulness trio. `nvd_enrichment_warning` is meant to be
+  // rendered VERBATIM, ahead of the count it invalidates: a scan against a
+  // missing or half-populated pinned cache stores 0 vulnerabilities, which is
+  // byte-identical to a genuinely clean firmware. Never render the counts
+  // above without checking isEnrichmentSubstantiated(nvd_enrichment_status).
+  nvd_enrichment_status?: NvdEnrichmentStatus | null
+  nvd_enrichment_warning?: string | null
+  nvd_provenance?: Record<string, unknown> | null
 }
 
 // 202+polling response shape. Mirrors VulnerabilityScanStatusResponse in

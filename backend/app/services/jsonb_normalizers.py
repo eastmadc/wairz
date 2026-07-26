@@ -251,6 +251,68 @@ def _normalize_firmware_cve_match_result(value: Any) -> dict | None:
     return None
 
 
+# ── firmware.vuln_scan_provenance ────────────────────────────────────────────
+#
+# WHICH CVE source enriched the last completed vulnerability scan. The
+# sbom_vulnerabilities rows are the scan's RESULT, but they cannot answer "was a
+# pinned NVD cache actually consulted?" — a scan run against an unavailable or
+# half-populated cache (Rule #37) persists status='completed' with zero rows,
+# indistinguishable from a genuinely clean firmware. This column closes that.
+#
+# Canonical shape (written EXCLUSIVELY through the stamp helper below):
+#   {
+#     "schema_version": 1,
+#     "engine": "nvd_pinned_cache" | "grype",
+#     "manifest_sha": str | None,      # pinned cache generation identity
+#     "populated_at": str | None,
+#     "cve_count": int | None,         # CVEs the manifest declares
+#     "modes": {"cache_hit": n, "cache_miss": n, "cache_degraded": n,
+#               "cache_unavailable": n, "live_fallback": n},
+#     "lookups": int,
+#     "degraded": bool,                # sticky: ANY degraded lookup
+#     "degraded_reasons": list[str],
+#     "candidates_total": int, "resolved_total": int, "skipped_total": int,
+#     "worst_mode": str,
+#     "enrichment_status": "complete" | "live" | "partial" | "none"
+#                          | "not_applicable" | "unknown",
+#     "warning": str | None,           # human-readable, rendered verbatim
+#   }
+#
+# Producers: routers/sbom.py::_run_vuln_scan_background (via
+# vulnerability_service.summarise_nvd_provenance). Consumers: the 202+polling
+# status endpoint, the MCP run_vulnerability_scan tool, assessment_service —
+# 3+, so the schema_version stamp applies.
+
+FIRMWARE_VULN_SCAN_PROVENANCE_SCHEMA_VERSION = 1
+
+
+def _normalize_firmware_vuln_scan_provenance(value: Any) -> dict | None:
+    """Canonical ``dict`` (or ``None``) for ``Firmware.vuln_scan_provenance``.
+
+    ``None`` is preserved and means UNKNOWN provenance — "no completed scan has
+    recorded which CVE source it used" (every row that predates the column).
+    Consumers MUST read that as unknown, never as a healthy pinned-cache scan:
+    absence of provenance is not evidence of enrichment. Wrong-typed values
+    (list / str / int from a hand-edited row) collapse to ``None`` for the same
+    reason.
+    """
+    if isinstance(value, dict):
+        return value
+    return None
+
+
+def _stamp_firmware_vuln_scan_provenance(payload: dict | None) -> dict | None:
+    """Stamp ``schema_version`` onto a ``Firmware.vuln_scan_provenance`` payload.
+
+    ``None`` / empty payload returns ``None`` so the column's nullable
+    "unknown provenance" semantic survives. Idempotent.
+    """
+    if not payload:
+        return None
+    payload["schema_version"] = FIRMWARE_VULN_SCAN_PROVENANCE_SCHEMA_VERSION
+    return payload
+
+
 # ── firmware.authenticode_chain_result ───────────────────────────────────────
 #
 # Canonical shape: dict aggregate for the Phase β Authenticode batch

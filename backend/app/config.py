@@ -27,6 +27,12 @@ class Settings(BaseSettings):
     jadx_max_memory: str = "4g"
     jadx_threads: int = 4
     nvd_api_key: str = ""
+    # Pinned NVD cache (Rule #37 offline-trust-anchor): CVE lookups resolve from a
+    # build-time-pinned local cache (mirrors EMBA nvd-json-data-feeds) for
+    # reproducible + offline + provenance-stamped assessments. Live NVD is an
+    # EXPLICIT opt-in fallback only — default False keeps assessments reproducible.
+    nvd_cache_path: str = "/opt/wairz/nvd-cache"
+    nvd_allow_live_fallback: bool = False
     emulation_timeout_minutes: int = 30
     emulation_max_sessions: int = 3
     emulation_memory_limit_mb: int = 1024

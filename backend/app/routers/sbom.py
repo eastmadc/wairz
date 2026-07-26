@@ -42,9 +42,16 @@ from app.schemas.sbom import (
     VulnerabilityScanStatusResponse,
     VulnerabilityUpdateRequest,
 )
-from app.services.jsonb_normalizers import _normalize_firmware_device_metadata
+from app.services.jsonb_normalizers import (
+    _normalize_firmware_device_metadata,
+    _normalize_firmware_vuln_scan_provenance,
+    _stamp_firmware_vuln_scan_provenance,
+)
 from app.services.sbom import SbomService
-from app.services.vulnerability_service import VulnerabilityService
+from app.services.vulnerability_service import (
+    VulnerabilityService,
+    summarise_nvd_provenance,
+)
 from app.utils.background import _BACKGROUND_TASKS  # noqa: F401
 from app.utils.background import spawn_background_task as _spawn_background_task
 from app.utils.pagination import paginate_query_rows
@@ -516,14 +523,39 @@ async def _run_sbom_generate_background(
                                     sfw.vuln_scan_started_at = datetime.now(UTC)
                                     await scan_db.commit()
                                     svc = VulnerabilityService(scan_db)
-                                    await svc.scan_components(fid, sfw.project_id, force_rescan=False)
+                                    auto_summary = await svc.scan_components(
+                                        fid, sfw.project_id, force_rescan=False
+                                    )
                                     await scan_db.commit()
                                     sfw.vuln_scan_status = "completed"
                                     sfw.vuln_scan_finished_at = datetime.now(UTC)
+                                    # Rule #47 consumer enumeration: this is the
+                                    # SECOND writer of vuln_scan_status, so it
+                                    # must stamp provenance too — otherwise an
+                                    # auto-triggered scan lands 'completed' with
+                                    # NULL provenance (unknown enrichment).
+                                    auto_stamp = _vuln_scan_provenance_from_summary(
+                                        auto_summary, grype=False
+                                    )
+                                    if auto_stamp is not None:
+                                        sfw.vuln_scan_provenance = auto_stamp
                                     await scan_db.commit()
                                     logger.info(
-                                        "post-sbom auto-vuln-scan: firmware %s completed", fid,
+                                        "post-sbom auto-vuln-scan: firmware %s completed "
+                                        "(enrichment=%s)",
+                                        fid,
+                                        (sfw.vuln_scan_provenance or {}).get(
+                                            "enrichment_status"
+                                        ),
                                     )
+                                    auto_warning = (
+                                        sfw.vuln_scan_provenance or {}
+                                    ).get("warning")
+                                    if auto_warning:
+                                        logger.warning(
+                                            "post-sbom auto-vuln-scan: firmware %s — %s",
+                                            fid, auto_warning,
+                                        )
                             except Exception:
                                 logger.exception(
                                     "post-sbom auto-vuln-scan: firmware %s failed (non-fatal)", fid,
@@ -806,8 +838,50 @@ async def export_sbom(
 # ---------------------------------------------------------------------------
 
 
+def _vuln_scan_provenance_from_summary(
+    summary: dict, *, grype: bool
+) -> dict | None:
+    """Derive the persistable provenance stamp from a scan summary.
+
+    ``VulnerabilityService`` already computes the full pinned-cache aggregate
+    (manifest sha, per-mode histogram, degraded reasons, enrichment verdict) into
+    ``summary["nvd_provenance"]``; this only stamps the schema version.
+
+    The Grype backend does NOT consult the pinned NVD cache — it queries its own
+    vulnerability DB, which wairz does not pin — so it stamps
+    ``engine="grype"`` + ``enrichment_status="unpinned"`` with a warning saying
+    so. Writing engine=grype instead of leaving the column NULL matters: a NULL
+    reads as "unknown provenance", and "we know it was Grype" is strictly more
+    truthful than "we don't know".
+    """
+    if summary.get("status") == "cached":
+        # Cached short-circuit — no lookup ran, so the PREVIOUS run's stamp is
+        # still the truth. Returning None tells the caller to leave the column
+        # alone; overwriting it would erase a real manifest sha with a verdict
+        # this run did not earn.
+        return None
+    if grype:
+        ran = summary.get("status") == "success"
+        return _stamp_firmware_vuln_scan_provenance({
+            "engine": "grype",
+            "enrichment_status": "unpinned" if ran else "not_applicable",
+            "warning": (
+                "CVE data came from the Grype vulnerability database, NOT the "
+                "pinned NVD cache — wairz does not pin the Grype DB, so this "
+                "scan is not reproducible from the firmware + image alone."
+            ) if ran else None,
+            "modes": {},
+            "lookups": summary.get("total_components_scanned") or 0,
+            "degraded": False,
+            "grype_summary_status": summary.get("status"),
+        })
+    return _stamp_firmware_vuln_scan_provenance(
+        summarise_nvd_provenance(summary.get("nvd_provenance"))
+    )
+
+
 async def _build_vuln_scan_summary(
-    db: AsyncSession, firmware_id: uuid.UUID
+    db: AsyncSession, firmware: Firmware
 ) -> VulnerabilityScanResponse:
     """Build the last-completed-result summary for a finished vuln scan.
 
@@ -819,7 +893,15 @@ async def _build_vuln_scan_summary(
     the row count + per-severity breakdown is cheap to recompute, and
     the user data (5,104 SbomVulnerability rows for the user's affected
     firmware) round-trips through this helper unchanged.
+
+    The ONE fact the rows cannot supply is WHICH CVE source enriched the
+    scan — an unavailable or degraded pinned NVD cache (Rule #37)
+    produces zero rows, identical to a clean firmware. That comes from
+    ``firmware.vuln_scan_provenance`` (Rule #35c normalised); a NULL
+    column is reported as ``unknown`` WITH a warning, never silently as
+    a healthy scan.
     """
+    firmware_id = firmware.id
     total_components = await db.scalar(
         select(func.count(SbomComponent.id)).where(
             SbomComponent.firmware_id == firmware_id
@@ -842,12 +924,28 @@ async def _build_vuln_scan_summary(
         .group_by(SbomVulnerability.severity)
     )).all()
     vulns_by_severity: dict[str, int] = {sev or "unknown": cnt for sev, cnt in severity_rows}
+    prov = _normalize_firmware_vuln_scan_provenance(firmware.vuln_scan_provenance)
+    if prov is None:
+        enrichment_status = "unknown"
+        warning = (
+            "CVE ENRICHMENT PROVENANCE NOT RECORDED for this scan — it predates "
+            "provenance stamping (or was written by another path). "
+            f"{total_vulns} vulnerabilit(y/ies) here cannot be attributed to a "
+            "pinned NVD cache generation; re-run the scan to obtain a "
+            "reproducible, provenance-stamped result."
+        )
+    else:
+        enrichment_status = prov.get("enrichment_status") or "unknown"
+        warning = prov.get("warning")
     return VulnerabilityScanResponse(
         status="completed",
         total_components_scanned=total_components,
         total_vulnerabilities_found=total_vulns,
         findings_created=findings_created,
         vulns_by_severity=vulns_by_severity,
+        nvd_enrichment_status=enrichment_status,
+        nvd_enrichment_warning=warning,
+        nvd_provenance=prov,
     )
 
 
@@ -863,7 +961,7 @@ async def _firmware_to_vuln_scan_status(
     """
     summary: VulnerabilityScanResponse | None = None
     if firmware.vuln_scan_status == "completed":
-        summary = await _build_vuln_scan_summary(db, firmware.id)
+        summary = await _build_vuln_scan_summary(db, firmware)
     return VulnerabilityScanStatusResponse(
         firmware_id=firmware.id,
         status=firmware.vuln_scan_status,
@@ -947,12 +1045,27 @@ async def _run_vuln_scan_background(
                 fw.vuln_scan_status = "completed"
                 fw.vuln_scan_finished_at = datetime.now(UTC)
                 fw.vuln_scan_error = None
+                # Rule #37 truthfulness: persist WHICH CVE source enriched this
+                # scan. Without it a completed scan with 0 vulnerabilities is
+                # indistinguishable from "the pinned cache was missing".
+                # None ⇒ cached short-circuit: keep the prior run's stamp.
+                stamp = _vuln_scan_provenance_from_summary(summary, grype=use_grype)
+                if stamp is not None:
+                    fw.vuln_scan_provenance = stamp
                 await db.commit()
                 logger.info(
-                    "vuln-scan background: firmware %s completed (vulns=%d)",
+                    "vuln-scan background: firmware %s completed (vulns=%d, "
+                    "enrichment=%s)",
                     firmware_id,
                     summary.get("total_vulnerabilities_found", -1),
+                    (fw.vuln_scan_provenance or {}).get("enrichment_status"),
                 )
+                warning = (fw.vuln_scan_provenance or {}).get("warning")
+                if warning:
+                    logger.warning(
+                        "vuln-scan background: firmware %s — %s",
+                        firmware_id, warning,
+                    )
             except Exception as exc:
                 await db.rollback()
                 err_summary = "\n".join(

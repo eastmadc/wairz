@@ -15,12 +15,50 @@ from sqlalchemy.orm import selectinload
 
 from app.models.cra_compliance import CraAssessment, CraRequirementResult
 from app.models.finding import Finding
+from app.models.firmware import Firmware
 from app.models.sbom import SbomVulnerability
 from app.services.jsonb_normalizers import (
     _normalize_cra_requirement_results_finding_ids,
     _normalize_cra_requirement_results_related_cves,
     _normalize_cra_requirement_results_related_cwes,
     _normalize_cra_requirement_results_tool_sources,
+)
+from app.services.nvd_provenance_surface import (
+    EnrichmentVerdict,
+    read_firmware_enrichment,
+    substantiates_no_known_vulnerabilities,
+)
+
+# Tool sources whose ABSENCE of findings is only meaningful if CVE enrichment
+# actually ran. A vulnerability scan against a missing or half-populated pinned
+# NVD cache (Rule #37) emits zero findings — indistinguishable from a firmware
+# with no known CVEs. Any requirement substantiated by one of these cannot be
+# auto-passed on an empty match set unless enrichment is substantiated.
+#
+# Rule #53: this gate keys on the POSITIVE evidence recorded in
+# firmware.vuln_scan_provenance, never on a self-asserted "scan completed" flag
+# — a status column asserts the conclusion; the provenance stamp carries the
+# proof.
+CVE_ENRICHMENT_TOOL_SOURCES: frozenset[str] = frozenset(
+    {
+        "run_vulnerability_scan",
+        "check_known_cves",
+        "check_component_cves",
+    }
+)
+
+# Rendered verbatim into evidence_summary when a CVE-dependent requirement is
+# demoted. The regulator-facing artifact must say WHY it is not a pass.
+_UNSUBSTANTIATED_EVIDENCE = (
+    "NOT SUBSTANTIATED — this requirement is evidenced by an automated CVE "
+    "scan, and CVE enrichment for this firmware was '{status}'. No relevant "
+    "findings were detected, but the scan did not (or could not) consult a "
+    "healthy pinned NVD source, so an empty result is NOT evidence that no "
+    "known exploitable vulnerabilities exist. Repopulate the pinned NVD cache "
+    "(scripts/refresh-nvd-cache.sh --apply, Rule #37), re-run the scan, and "
+    "re-run auto-population before relying on this requirement.\n"
+    "CVE source: {source}\n"
+    "{warning}"
 )
 
 # ---------------------------------------------------------------------------
@@ -398,10 +436,23 @@ class CRAComplianceService:
            - No matching findings but tool_sources exist: "pass"
            - not_automatable: left as "not_tested"
         3. Update evidence, finding_ids, tool_sources, counts
+
+        Rule #37 / Rule #53 gate: step 2's "no matching findings ⇒ pass" is
+        only sound when the tool that would have produced those findings
+        actually ran. For requirements evidenced by a CVE scan
+        (:data:`CVE_ENRICHMENT_TOOL_SOURCES`), an empty match set is demoted
+        from ``pass`` to ``not_tested`` unless ``firmware.vuln_scan_provenance``
+        carries positive evidence the scan consulted a healthy CVE source. A
+        CRA Annex I assertion of "no known exploitable vulnerabilities" backed
+        by a scan that never looked is the highest-consequence false clean this
+        codebase can emit.
         """
         assessment = await self.get_assessment(assessment_id)
         if assessment is None:
             raise ValueError(f"Assessment {assessment_id} not found")
+
+        enrichment = await self._resolve_enrichment(assessment)
+        cve_evidence_ok = substantiates_no_known_vulnerabilities(enrichment)
 
         # Load all findings for the project
         stmt = select(Finding).where(Finding.project_id == assessment.project_id)
@@ -456,6 +507,21 @@ class CRAComplianceService:
 
             # Build evidence summary
             evidence = self._build_evidence_summary(matched)
+
+            # Rule #37 / #53 — refuse to auto-pass a CVE-evidenced requirement
+            # on an empty match set when enrichment is not substantiated.
+            if (
+                status == "pass"
+                and not matched
+                and not cve_evidence_ok
+                and self._is_cve_evidenced(req_def)
+            ):
+                status = "not_tested"
+                evidence = _UNSUBSTANTIATED_EVIDENCE.format(
+                    status=enrichment.status,
+                    source=enrichment.source_label,
+                    warning=enrichment.warning or "",
+                ).strip()
 
             # Update the requirement result
             req_result.status = status
@@ -537,16 +603,33 @@ class CRAComplianceService:
             raise ValueError(f"Assessment {assessment_id} not found")
 
         req_defs = {r["requirement_id"]: r for r in CRA_REQUIREMENTS}
+        enrichment = await self._resolve_enrichment(assessment)
+        cve_evidence_ok = substantiates_no_known_vulnerabilities(enrichment)
 
         part1_results = []
         part2_results = []
 
         for req_result in assessment.requirement_results:
             req_def = req_defs.get(req_result.requirement_id, {})
+            cve_evidenced = self._is_cve_evidenced(req_def)
             entry = {
                 "requirement_id": req_result.requirement_id,
                 "requirement_title": req_result.requirement_title,
                 "status": req_result.status,
+                # Rule #37: a requirement whose evidence is an automated CVE
+                # scan carries the enrichment caveat INTO the exported
+                # artifact — the checklist leaves the building and is read
+                # without access to this service.
+                "cve_evidenced": cve_evidenced,
+                "enrichment_caveat": (
+                    None
+                    if not cve_evidenced or cve_evidence_ok
+                    else (
+                        f"CVE enrichment was '{enrichment.status}' — an absence "
+                        f"of findings for this requirement is NOT evidence of "
+                        f"compliance. {enrichment.warning or ''}".strip()
+                    )
+                ),
                 "auto_populated": req_result.auto_populated,
                 "evidence_summary": req_result.evidence_summary,
                 "finding_count": len(_normalize_cra_requirement_results_finding_ids(req_result.finding_ids)),
@@ -580,6 +663,22 @@ class CRAComplianceService:
             },
             "assessor": assessment.assessor_name,
             "overall_status": assessment.overall_status,
+            # Rule #37 evidence-chain provenance. A CRA checklist asserting
+            # "no known exploitable vulnerabilities" is only as good as the CVE
+            # source behind it; this block states that source explicitly rather
+            # than leaving the reader to assume one was consulted.
+            "cve_enrichment": {
+                "status": enrichment.status,
+                "substantiates_no_known_vulnerabilities": cve_evidence_ok,
+                "source": enrichment.source_label,
+                "warning": enrichment.warning,
+                "provenance": enrichment.provenance,
+                "affected_requirements": sorted(
+                    r["requirement_id"]
+                    for r in CRA_REQUIREMENTS
+                    if self._is_cve_evidenced(r)
+                ),
+            },
             "summary": {
                 "total_requirements": len(CRA_REQUIREMENTS),
                 "pass": assessment.auto_pass_count,
@@ -668,11 +767,22 @@ class CRAComplianceService:
         ]
 
         now = datetime.now(UTC)
+        enrichment = await self._resolve_enrichment(assessment)
 
         return {
             "notification_type": "actively_exploited_vulnerability",
             "article": "Article 14 — Reporting obligations of manufacturers",
             "regulation": "Regulation (EU) 2024/2847",
+            # Rule #37: an ENISA notification enumerating affected components
+            # is bounded by what the CVE scan actually resolved. An empty or
+            # short affected_components list under degraded enrichment means
+            # "not fully determined", not "not affected".
+            "cve_enrichment": {
+                "status": enrichment.status,
+                "affected_components_complete": enrichment.substantiated,
+                "source": enrichment.source_label,
+                "warning": enrichment.warning,
+            },
             "product": {
                 "name": assessment.product_name or "Unknown Product",
                 "version": assessment.product_version or "Unknown Version",
@@ -747,6 +857,33 @@ class CRAComplianceService:
                 return True
 
         return False
+
+    async def _resolve_enrichment(
+        self, assessment: CraAssessment
+    ) -> EnrichmentVerdict:
+        """CVE-enrichment verdict for the assessment's firmware.
+
+        A project-scoped assessment (no ``firmware_id``) cannot be tied to a
+        single provenance stamp, so it reads as ``unknown`` — which does NOT
+        substantiate a clean claim (Rule #53 fails safe).
+        """
+        if assessment.firmware_id is None:
+            return read_firmware_enrichment(None)
+        fw = (
+            await self.db.execute(
+                select(Firmware).where(Firmware.id == assessment.firmware_id)
+            )
+        ).scalar_one_or_none()
+        return read_firmware_enrichment(fw)
+
+    @staticmethod
+    def _is_cve_evidenced(req_def: dict) -> bool:
+        """True when this requirement is substantiated by an automated CVE scan."""
+        return bool(
+            CVE_ENRICHMENT_TOOL_SOURCES.intersection(
+                req_def.get("tool_sources") or []
+            )
+        )
 
     def _determine_status(
         self, req_def: dict, matched_findings: list[Finding]

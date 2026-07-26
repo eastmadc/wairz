@@ -29,8 +29,28 @@ from app.services.jsonb_normalizers import (
     _normalize_fuzzing_campaigns_stats,
     _normalize_sbom_components_metadata,
 )
+from app.services.nvd_provenance_surface import (
+    EnrichmentVerdict,
+    read_firmware_enrichment,
+)
 
 ARCHIVE_VERSION = 1
+
+
+def _enrichment_block(verdict: EnrichmentVerdict) -> dict:
+    """Rule #37 marker embedded in every exported artifact.
+
+    ``trustworthy=False`` means the sibling vulnerability list UNDER-REPORTS
+    (or is empty because nothing was looked up). An importer or auditor reading
+    the archive offline has no other way to distinguish that from a clean scan.
+    """
+    return {
+        "status": verdict.status,
+        "trustworthy": verdict.substantiated,
+        "source": verdict.source_label,
+        "warning": verdict.warning,
+        "provenance": verdict.provenance,
+    }
 
 # Minimum date_time tuple that the ZIP format supports (use Jan 2 to avoid
 # edge-cases around the exact boundary).
@@ -134,6 +154,10 @@ class ExportService:
         helper are correct since the helper is not async.
         """
         buf = io.BytesIO()
+        # Firmware whose vulnerability list cannot be read as a clean verdict.
+        # Collected while walking, surfaced in a top-level README the reader
+        # cannot miss (Rule #37: the warning must accompany the number).
+        unenriched: list[tuple[str, str | None, dict]] = []
         with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
             # Manifest
             manifest = {
@@ -185,10 +209,54 @@ class ExportService:
                 zf.writestr(f"{fw_prefix}/analysis_cache.json", _dumps(fwd["analysis_cache"]))
                 zf.writestr(f"{fw_prefix}/sbom_components.json", _dumps(fwd["sbom_components"]))
                 zf.writestr(f"{fw_prefix}/sbom_vulnerabilities.json", _dumps(fwd["sbom_vulnerabilities"]))
+                # Sibling of the vulnerability list, not buried in metadata:
+                # whoever opens sbom_vulnerabilities.json sees this next to it.
+                # An empty array here means "no CVE source was consulted" just
+                # as often as it means "no CVEs" — only this file says which.
+                enrichment = fw_dict["cve_enrichment"]
+                zf.writestr(
+                    f"{fw_prefix}/sbom_vulnerabilities.enrichment.json",
+                    _dumps({
+                        "applies_to": "sbom_vulnerabilities.json",
+                        "vulnerability_count": len(fwd["sbom_vulnerabilities"]),
+                        **enrichment,
+                    }),
+                )
+                if not enrichment["trustworthy"]:
+                    unenriched.append((fw_id_str, fw.original_filename, enrichment))
 
                 # Fuzzing campaigns + crashes
                 campaigns = fwd["fuzzing_campaigns"]
                 zf.writestr(f"{fw_prefix}/fuzzing_campaigns.json", _dumps(campaigns))
+
+            # Top-level, unmissable. Written only when at least one firmware's
+            # vulnerability data is not backed by a healthy CVE source, so a
+            # clean archive stays clean and the file's PRESENCE is the signal.
+            if unenriched:
+                lines = [
+                    "CVE ENRICHMENT WARNING — READ BEFORE USING THE "
+                    "VULNERABILITY DATA IN THIS ARCHIVE",
+                    "=" * 78,
+                    "",
+                    f"{len(unenriched)} firmware image(s) in this export carry "
+                    "vulnerability data that was NOT produced by a healthy CVE "
+                    "source. For these images an empty or short "
+                    "sbom_vulnerabilities.json means 'not looked up', NOT 'no "
+                    "known CVEs'. Do not treat them as clean.",
+                    "",
+                ]
+                for fw_id_str, fname, enrichment in unenriched:
+                    lines.append(f"- firmware/{fw_id_str}  ({fname or 'unknown'})")
+                    lines.append(f"    enrichment status : {enrichment['status']}")
+                    lines.append(f"    CVE source        : {enrichment['source']}")
+                    if enrichment["warning"]:
+                        lines.append(f"    {enrichment['warning']}")
+                    lines.append("")
+                lines.append(
+                    "Per-firmware detail: "
+                    "firmware/<id>/sbom_vulnerabilities.enrichment.json"
+                )
+                zf.writestr("CVE_ENRICHMENT_WARNING.txt", "\n".join(lines))
 
         buf.seek(0)
         return buf
@@ -220,6 +288,7 @@ class ExportService:
         return list(result.scalars().all())
 
     def _firmware_to_dict(self, fw: Firmware) -> dict:
+        verdict = read_firmware_enrichment(fw)
         return {
             "id": str(fw.id),
             "project_id": str(fw.project_id),
@@ -233,6 +302,12 @@ class ExportService:
             "version_label": fw.version_label,
             "unpack_log": fw.unpack_log,
             "created_at": fw.created_at,
+            "vuln_scan_status": fw.vuln_scan_status,
+            # Rule #37: the archive leaves the building. Without this, a
+            # sbom_vulnerabilities.json containing `[]` is indistinguishable
+            # from a genuinely clean firmware — the importer/reader has no way
+            # to tell "no CVEs" from "no CVE source was consulted".
+            "cve_enrichment": _enrichment_block(verdict),
         }
 
     async def _load_findings(self, project_id: uuid.UUID) -> list[dict]:
