@@ -65,11 +65,12 @@ backend/vol3-symbols/*.zip
 backend/vol3-symbols/SHA256SUMS.tmp
 backend/vol3-symbols/*.zip.tmp
 
-# Nested PRIVATE sibling repo (its own .git). It must NEVER be tracked or
-# embedded as a gitlink in this PUBLIC repo — a broad `git add -A` from the
-# repo root would otherwise leak the private repo's existence + commit pointer
-# to public GitHub.
+# Nested PRIVATE sibling repos (each has its own .git). They must NEVER be
+# tracked or embedded as a gitlink in this PUBLIC repo — a broad `git add -A`
+# from the repo root would otherwise leak the private repo's existence +
+# commit pointer to public GitHub.
 cve-assessment-framework/
+ds1-installer/
 
 # Local Claude / planning scratch output
 .planning/**/_*.txt
