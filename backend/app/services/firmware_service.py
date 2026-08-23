@@ -27,6 +27,10 @@ from app.services.jsonb_normalizers import (
     _normalize_firmware_device_metadata,
     _stamp_firmware_device_metadata,
 )
+from app.services.storage_paths import (
+    firmware_storage_dir,
+    purge_dir_within_root_sync,
+)
 from app.workers.safe_extract import safe_extract_zip
 from app.workers.unpack import (
     _run_hardware_firmware_detection_safe,
@@ -348,65 +352,75 @@ class FirmwareService:
         file_size = 0
         max_bytes = self.settings.max_upload_size_mb * 1024 * 1024
 
-        async with aiofiles.open(storage_path, "wb") as out_file:
-            while chunk := await file.read(8192):
-                sha256_hash.update(chunk)
-                await out_file.write(chunk)
-                file_size += len(chunk)
-                if file_size > max_bytes:
-                    try:
-                        os.remove(storage_path)
-                    except OSError:
-                        pass
-                    raise HTTPException(
-                        413,
-                        f"Upload exceeds MAX_UPLOAD_SIZE_MB "
-                        f"({self.settings.max_upload_size_mb} MB limit).",
+        # ``firmware_dir`` now exists on disk but no Firmware row points at
+        # it yet. Every exit path between here and the commit below must
+        # remove it, or the bytes are orphaned the moment the request ends
+        # — a client disconnect mid-upload used to leak the full partial
+        # payload with nothing in the DB to find it by. The bare
+        # ``except BaseException`` is deliberate: asyncio.CancelledError
+        # (client disconnect) inherits from BaseException, and that is the
+        # single most common way this block is left early.
+        try:
+            async with aiofiles.open(storage_path, "wb") as out_file:
+                while chunk := await file.read(8192):
+                    sha256_hash.update(chunk)
+                    await out_file.write(chunk)
+                    file_size += len(chunk)
+                    if file_size > max_bytes:
+                        raise HTTPException(
+                            413,
+                            f"Upload exceeds MAX_UPLOAD_SIZE_MB "
+                            f"({self.settings.max_upload_size_mb} MB limit).",
+                        )
+
+            sha256_hex = sha256_hash.hexdigest()
+            existing_id = (
+                await self.db.execute(
+                    select(Firmware.id).where(
+                        Firmware.project_id == project_id,
+                        Firmware.sha256 == sha256_hex,
                     )
-
-        sha256_hex = sha256_hash.hexdigest()
-        existing_id = (
-            await self.db.execute(
-                select(Firmware.id).where(
-                    Firmware.project_id == project_id,
-                    Firmware.sha256 == sha256_hex,
                 )
-            )
-        ).scalar_one_or_none()
-        if existing_id is not None:
-            try:
-                os.remove(storage_path)
-            except OSError:
-                pass
-            try:
-                os.rmdir(firmware_dir)
-            except OSError:
-                pass
-            raise HTTPException(
-                status_code=409,
-                detail=(
-                    f"This firmware is already in the project "
-                    f"(firmware_id={existing_id}). Open the existing entry "
-                    "or upload to a different project."
-                ),
-            )
+            ).scalar_one_or_none()
+            if existing_id is not None:
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        f"This firmware is already in the project "
+                        f"(firmware_id={existing_id}). Open the existing entry "
+                        "or upload to a different project."
+                    ),
+                )
 
-        firmware = Firmware(
-            id=firmware_id,
-            project_id=project_id,
-            original_filename=raw_filename,
-            sha256=sha256_hex,
-            file_size=file_size,
-            storage_path=storage_path,
-            version_label=version_label,
-            upload_stage="detecting",
-            upload_stage_started_at=datetime.now(UTC),
-        )
-        self.db.add(firmware)
-        # Commit so the background task's fresh AsyncSession observes the
-        # row (Rule #33 reference shape — the inner task uses
-        # async_session_factory(), not the request-scoped self.db).
-        await self.db.commit()
+            firmware = Firmware(
+                id=firmware_id,
+                project_id=project_id,
+                original_filename=raw_filename,
+                sha256=sha256_hex,
+                file_size=file_size,
+                storage_path=storage_path,
+                version_label=version_label,
+                upload_stage="detecting",
+                upload_stage_started_at=datetime.now(UTC),
+            )
+            self.db.add(firmware)
+            # Commit so the background task's fresh AsyncSession observes
+            # the row (Rule #33 reference shape — the inner task uses
+            # async_session_factory(), not the request-scoped self.db).
+            await self.db.commit()
+        except BaseException:
+            # Sync purge on purpose: the dominant path into this handler is
+            # CancelledError, and awaiting an executor hop while the task is
+            # being torn down is not reliable. The tree here is at most one
+            # partial upload, so the blocking rmtree is bounded.
+            try:
+                purge_dir_within_root_sync(self.settings.storage_root, firmware_dir)
+            except (OSError, ValueError):
+                logger.exception(
+                    "failed to purge orphaned upload dir %s", firmware_dir
+                )
+            raise
+
         return firmware
 
     async def upload(
@@ -509,17 +523,47 @@ class FirmwareService:
         return list(result.scalars().all())
 
     async def delete(self, firmware: Firmware) -> None:
-        """Delete a firmware record and its files on disk."""
-        # Remove files from disk
+        """Delete a firmware record and its files on disk.
+
+        The canonical directory is derived from the row's identity rather
+        than from ``storage_path``, because a row can legitimately reach
+        this method with ``storage_path`` NULL — an upload aborted while
+        still in ``upload_stage='detecting'`` has a directory on disk but
+        no path column set yet. Keying off the column alone left those
+        trees orphaned.
+        """
+        canonical_dir = firmware_storage_dir(
+            self.settings.storage_root, firmware.project_id, firmware.id
+        )
+        targets = [canonical_dir]
+
+        # Belt-and-braces for legacy rows whose stored paths predate the
+        # canonical layout (or point at a relocated tree).
+        for column in (firmware.storage_path, firmware.extracted_path):
+            if not column:
+                continue
+            parent = os.path.dirname(column)  # noqa: ASYNC240 — pure-string path math; no filesystem I/O
+            if parent and parent not in targets:
+                targets.append(parent)
+
         loop = asyncio.get_running_loop()
-        if firmware.storage_path:
-            # The firmware directory is the parent of the storage_path
-            firmware_dir = os.path.dirname(firmware.storage_path)  # noqa: ASYNC240 — pure-string path math; no filesystem I/O
-            await loop.run_in_executor(None, _rmtree_if_isdir_sync, firmware_dir)
-        elif firmware.extracted_path:
-            # Fallback: remove extracted path's parent
-            parent = os.path.dirname(firmware.extracted_path)  # noqa: ASYNC240 — pure-string path math; no filesystem I/O
-            await loop.run_in_executor(None, _rmtree_if_isdir_sync, parent)
+        for target in targets:
+            try:
+                await loop.run_in_executor(
+                    None,
+                    purge_dir_within_root_sync,
+                    self.settings.storage_root,
+                    target,
+                )
+            except ValueError:
+                # Outside the storage root — refuse rather than rmtree it.
+                logger.exception(
+                    "refused to purge %s for firmware %s", target, firmware.id
+                )
+            except OSError:
+                logger.exception(
+                    "failed to purge %s for firmware %s", target, firmware.id
+                )
 
         await self.db.delete(firmware)
         await self.db.flush()
