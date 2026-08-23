@@ -97,8 +97,9 @@ services:
 
   # Nightly PostgreSQL backup (infra-volumes V3). ``pg_dump -Fc`` against
   # the primary postgres service, written into ``${BACKUP_DIR:-./backups}``
-  # on the host. 30-day retention, enforced inside the container via
-  # ``find -mtime +30 -delete``. Recovery procedure documented in
+  # on the host. Retention is ``${BACKUP_RETENTION_DAYS:-14}`` days,
+  # enforced inside the container via ``find -mtime -delete``. Recovery
+  # procedure documented in
   # docs/operations/backup-recovery.md.
   pg-backup:
     image: postgres:16-alpine
@@ -131,8 +132,10 @@ services:
             echo "[pg-backup] dump FAILED" >&2
             rm -f "$$OUT"
           fi
-          # 30-day retention: delete dumps older than 30 days.
-          find /backups -maxdepth 1 -name 'wairz_*.dump' -mtime +30 -delete
+          # Retention: consecutive dumps are near-identical (ten in a row
+          # measured byte-identical in size), so 30 days bought redundancy
+          # rather than recovery depth. Tunable via BACKUP_RETENTION_DAYS.
+          find /backups -maxdepth 1 -name 'wairz_*.dump' -mtime +$${BACKUP_RETENTION_DAYS:-14} -delete
           echo "[pg-backup] sleeping 24h"
           sleep 86400
         done
