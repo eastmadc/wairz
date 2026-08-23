@@ -230,3 +230,102 @@ class TestCreateProjectLiveCanary:
 # implicitly by the live-canary in TestCreateProjectLiveCanary above
 # plus the 404 boundary in TestProjectNotFound. Production runs against
 # PostgreSQL where the refresh path is greenlet-safe.
+
+
+# ===========================================================================
+# DELETE /{id} — storage purge (the orphan-leak regression)
+# ===========================================================================
+
+
+class TestDeleteProjectPurgesStorage:
+    """``Project.firmware`` cascades ``all, delete-orphan``, so deleting a
+    project removes the child firmware rows WITHOUT ever calling
+    ``FirmwareService.delete`` — the only code that removes bytes. Before
+    the fix, every project deletion orphaned its entire storage tree.
+
+    These tests pin the router's explicit purge so the leak cannot recur.
+    """
+
+    @staticmethod
+    def _db_returning(project):
+        result = MagicMock()
+        result.scalar_one_or_none.return_value = project
+        db = AsyncMock()
+        db.execute = AsyncMock(return_value=result)
+        return db
+
+    @staticmethod
+    def _patch_storage_root(monkeypatch, storage_root):
+        fake = MagicMock()
+        fake.storage_root = str(storage_root)
+        monkeypatch.setattr(
+            "app.routers.projects.get_settings", lambda: fake,
+        )
+
+    @pytest.mark.asyncio
+    async def test_delete_removes_project_storage_tree(
+        self, client, tmp_path, monkeypatch,
+    ):
+        project_id = uuid.uuid4()
+        storage_root = tmp_path / "firmware"
+        project_dir = storage_root / "projects" / str(project_id)
+        (project_dir / "firmware" / str(uuid.uuid4())).mkdir(parents=True)
+        (project_dir / "payload.bin").write_bytes(b"z" * 64)
+
+        sibling = storage_root / "projects" / str(uuid.uuid4())
+        sibling.mkdir(parents=True)
+
+        self._patch_storage_root(monkeypatch, storage_root)
+        db = self._db_returning(MagicMock(spec=Project))
+        app.dependency_overrides[get_db] = lambda: db
+
+        resp = await client.delete(f"/api/v1/projects/{project_id}")
+
+        assert resp.status_code == 204, resp.text
+        assert not project_dir.exists(), (
+            "DELETE /projects/{id} must purge the project storage tree — "
+            "the ORM cascade never calls FirmwareService.delete"
+        )
+        assert sibling.exists(), "purge must not touch sibling projects"
+        db.delete.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_delete_succeeds_when_storage_dir_absent(
+        self, client, tmp_path, monkeypatch,
+    ):
+        """A project that never received an upload has no directory."""
+        storage_root = tmp_path / "firmware"
+        (storage_root / "projects").mkdir(parents=True)
+
+        self._patch_storage_root(monkeypatch, storage_root)
+        db = self._db_returning(MagicMock(spec=Project))
+        app.dependency_overrides[get_db] = lambda: db
+
+        resp = await client.delete(f"/api/v1/projects/{uuid.uuid4()}")
+        assert resp.status_code == 204, resp.text
+
+    @pytest.mark.asyncio
+    async def test_delete_still_succeeds_when_purge_refuses(
+        self, client, tmp_path, monkeypatch,
+    ):
+        """A containment refusal must not strand the caller in a 500.
+
+        The rows are already gone at that point; the operator gets a
+        logged exception and reconciles with the reconcile script.
+        """
+        storage_root = tmp_path / "firmware"
+        (storage_root / "projects").mkdir(parents=True)
+        self._patch_storage_root(monkeypatch, storage_root)
+
+        def _boom(_root, _target):
+            raise ValueError("outside storage root")
+
+        monkeypatch.setattr(
+            "app.routers.projects.purge_dir_within_root", AsyncMock(side_effect=_boom),
+        )
+        db = self._db_returning(MagicMock(spec=Project))
+        app.dependency_overrides[get_db] = lambda: db
+
+        resp = await client.delete(f"/api/v1/projects/{uuid.uuid4()}")
+        assert resp.status_code == 204, resp.text
+        db.delete.assert_awaited_once()

@@ -1,3 +1,4 @@
+import logging
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -5,6 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.config import get_settings
 from app.database import get_db
 from app.models.project import Project
 from app.schemas.pagination import Page
@@ -15,7 +17,10 @@ from app.schemas.project import (
     ProjectUpdate,
 )
 from app.services.document_service import DocumentService
+from app.services.storage_paths import project_storage_dir, purge_dir_within_root
 from app.utils.pagination import paginate_query
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/projects", tags=["projects"])
 
@@ -127,4 +132,27 @@ async def delete_project(project_id: uuid.UUID, db: AsyncSession = Depends(get_d
     project = result.scalar_one_or_none()
     if not project:
         raise HTTPException(404, "Project not found")
+
+    # Drop the DB rows first. ``Project.firmware`` cascades
+    # "all, delete-orphan", which removes the child rows WITHOUT calling
+    # FirmwareService.delete — so the cascade never touches the bytes on
+    # disk (Rule #47: the cascade is a consumer hook of this state change,
+    # and it bypasses the only file-removing code path). Purge the whole
+    # project storage tree explicitly instead of relying on that hook.
     await db.delete(project)
+    await db.flush()
+
+    settings = get_settings()
+    project_dir = project_storage_dir(settings.storage_root, project_id)
+    try:
+        removed = await purge_dir_within_root(settings.storage_root, project_dir)
+    except ValueError:
+        # Containment violation — never silently ignore, but never leave
+        # the caller with a half-deleted project either. The rows are
+        # gone; log loudly so the operator can reconcile by hand.
+        logger.exception("refused to purge project storage for %s", project_id)
+    except OSError:
+        logger.exception("failed to purge project storage for %s", project_id)
+    else:
+        if removed:
+            logger.info("purged project storage for %s at %s", project_id, project_dir)
