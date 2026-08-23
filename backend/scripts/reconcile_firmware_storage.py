@@ -18,6 +18,20 @@ Both leaks are fixed in the application code; this script exists to
 clear what already accumulated, and to run periodically as a drift
 check afterwards.
 
+**"No database row" is not sufficient evidence that a tree is dead.**
+A device's row can be deleted while its tree stays load-bearing for
+scripts and profiles. This has already cost real data: a firmware tree
+that every DB-based check cleared was the live tablet for an ongoing
+assessment, with its path hardcoded in a recovery script. The DB is the
+wrong oracle on its own.
+
+So before removing anything, this script greps the repositories for
+each orphan UUID and REFUSES any tree whose id appears in a source file
+(``.py``/``.sh``/``.js``/``.ts``). A hit in prose (a postmortem, a
+planning note) is reported but not blocking; a hit in code is decisive.
+Override with ``--force-referenced`` only when you have read the hit
+and know it is inert.
+
 DEFAULT IS DRY RUN. Nothing is removed unless ``--apply`` is passed.
 
 Usage::
@@ -51,6 +65,17 @@ from app.models.project import Project  # noqa: E402
 from app.services.storage_paths import purge_dir_within_root_sync  # noqa: E402
 
 
+def _default_repo_roots() -> list[str]:
+    """The wairz checkout this script lives in, if it is on disk.
+
+    Inside the container only /app exists; on the host the script runs
+    from the checkout. Both are searched when present.
+    """
+    here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    roots = [os.path.dirname(here), "/app"]
+    return [r for r in dict.fromkeys(roots) if os.path.isdir(r)]
+
+
 def _looks_like_uuid(name: str) -> bool:
     try:
         uuid.UUID(name)
@@ -68,6 +93,40 @@ def _dir_size_bytes(path: str) -> int:
             except OSError:
                 pass
     return total
+
+
+CODE_SUFFIXES = (".py", ".sh", ".js", ".ts", ".tsx", ".yml", ".yaml", ".json")
+SKIP_DIRS = {".git", ".venv", "node_modules", "__pycache__", ".worktrees", "output"}
+
+
+def _scan_repo_refs(roots: list[str], ids: set[str]) -> dict[str, dict[str, list[str]]]:
+    """Map each id -> {"code": [files], "prose": [files]}.
+
+    Walks the trees once, reading each candidate file a single time and
+    testing every id against it. Grepping per (id x file) is what made
+    the naive version of this check too slow to actually run — and a
+    check too slow to run is a check that does not happen.
+    """
+    hits: dict[str, dict[str, list[str]]] = {i: {"code": [], "prose": []} for i in ids}
+    for root in roots:
+        if not os.path.isdir(root):
+            continue
+        for dirpath, dirnames, filenames in os.walk(root):
+            dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
+            for name in filenames:
+                path = os.path.join(dirpath, name)
+                try:
+                    if os.path.getsize(path) > 8 * 1024 * 1024:
+                        continue
+                    with open(path, encoding="utf-8", errors="ignore") as fh:
+                        blob = fh.read()
+                except OSError:
+                    continue
+                for i in ids:
+                    if i in blob:
+                        kind = "code" if name.endswith(CODE_SUFFIXES) else "prose"
+                        hits[i][kind].append(path)
+    return hits
 
 
 def _human(n: int) -> str:
@@ -143,6 +202,19 @@ async def main() -> int:
         help="actually remove the orphans (default is dry run)",
     )
     parser.add_argument("--json", action="store_true", help="emit JSON")
+    parser.add_argument(
+        "--repo",
+        action="append",
+        default=None,
+        help="repository root to grep for orphan ids (repeatable). "
+        "Defaults to the wairz checkout containing this script.",
+    )
+    parser.add_argument(
+        "--force-referenced",
+        action="store_true",
+        help="remove even trees whose id appears in a source file. "
+        "Read the hits first — this is how live data gets destroyed.",
+    )
     args = parser.parse_args()
 
     settings = get_settings()
@@ -153,8 +225,24 @@ async def main() -> int:
     orphans.sort(key=lambda o: o["bytes"], reverse=True)
     total = sum(o["bytes"] for o in orphans)
 
+    # The id whose directory would actually be removed.
+    for o in orphans:
+        o["target_id"] = o["firmware_id"] or o["project_id"]
+
+    repo_roots = args.repo or _default_repo_roots()
+    refs = _scan_repo_refs(repo_roots, {o["target_id"] for o in orphans})
+    for o in orphans:
+        r = refs.get(o["target_id"], {"code": [], "prose": []})
+        o["code_refs"] = r["code"]
+        o["prose_refs"] = r["prose"]
+        o["blocked"] = bool(r["code"]) and not args.force_referenced
+
     if args.apply:
         for orphan in orphans:
+            if orphan["blocked"]:
+                orphan["removed"] = False
+                orphan["error"] = "blocked: referenced by source code"
+                continue
             try:
                 purge_dir_within_root_sync(storage_root, orphan["path"])
                 orphan["removed"] = True
@@ -188,15 +276,29 @@ async def main() -> int:
         else:
             for orphan in orphans:
                 flag = ""
-                if args.apply:
-                    flag = " [removed]" if orphan.get("removed") else " [FAILED]"
-                label = orphan["firmware_id"] or orphan["project_id"]
+                if orphan["blocked"]:
+                    flag = "  << BLOCKED: referenced in code"
+                elif orphan["code_refs"]:
+                    flag = "  << code refs OVERRIDDEN"
+                elif orphan["prose_refs"]:
+                    flag = f"  (prose refs: {len(orphan['prose_refs'])})"
+                if args.apply and not orphan["blocked"]:
+                    flag += " [removed]" if orphan.get("removed") else " [FAILED]"
                 print(
                     f"  {_human(orphan['bytes']):>10}  {orphan['kind']:<16} "
-                    f"{label}{flag}"
+                    f"{orphan['target_id']}{flag}"
                 )
+                for p in orphan["code_refs"][:3]:
+                    print(f"                  code: {p}")
             print()
+            blocked = [o for o in orphans if o["blocked"]]
             print(f"TOTAL: {len(orphans)} orphans, {_human(total)}")
+            if blocked:
+                print(
+                    f"BLOCKED: {len(blocked)} tree(s), "
+                    f"{_human(sum(o['bytes'] for o in blocked))} — "
+                    "read the code refs above before using --force-referenced."
+                )
 
     if orphans and not args.apply:
         return 1
