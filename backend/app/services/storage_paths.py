@@ -76,8 +76,22 @@ def purge_dir_within_root_sync(storage_root: str, target: str) -> bool:
     all three blocking calls (Rule #5 minimum-hop discipline).
 
     Returns True when a directory was removed, False when there was
-    nothing to remove. Raises ValueError when ``target`` escapes the
-    root — that is a programming error or an attack, never a no-op.
+    nothing to remove.
+
+    Raises ValueError when ``target`` escapes the root — that is a
+    programming error or an attack, never a no-op.
+
+    Raises OSError when the tree could not be fully removed. This
+    matters more than it looks: firmware extractions routinely contain
+    files the API process cannot unlink (root-owned worker output,
+    archive members restored with awkward modes). ``rmtree`` with
+    ``ignore_errors=True`` swallows every one of those and returns
+    normally, so a delete that actually left gigabytes behind reports
+    success and the residue is invisible until something goes looking
+    for it. Observed live: deleting one 11 GB firmware left a 6 GB /
+    416-file subtree with the caller none the wiser. Surface it instead
+    — every caller already logs OSError, and the reconcile script
+    reports the directory as still-present on its next run.
     """
     root_real = os.path.realpath(storage_root)
     target_real = os.path.realpath(target)
@@ -91,7 +105,18 @@ def purge_dir_within_root_sync(storage_root: str, target: str) -> bool:
     if not os.path.isdir(target_real):
         return False
 
-    shutil.rmtree(target_real, ignore_errors=True)
+    failures: list[tuple[str, BaseException]] = []
+
+    # onexc= (3.12+, and the project floor is 3.12) rather than the
+    # onerror= callback, which was removed in 3.14.
+    shutil.rmtree(target_real, onexc=lambda _f, path, exc: failures.append((path, exc)))
+
+    if failures or os.path.exists(target_real):
+        sample = ", ".join(f"{p} ({e.__class__.__name__})" for p, e in failures[:3])
+        raise OSError(
+            f"incomplete purge of {target_real!r}: {len(failures)} path(s) "
+            f"could not be removed{': ' + sample if sample else ''}"
+        )
     return True
 
 
